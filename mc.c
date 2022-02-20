@@ -549,18 +549,20 @@ void expr(int lev)
         d = id; next();
         // function call
         if (tk == '(') {
+            if (d->class == Func && d->val == 0) goto resolve_fnproto;
             if (d->class < Func || d->class > ClearCache) {
                 if (d->class != 0) fatal("bad function call");
+                d->type = INT;
+resolve_fnproto:
+                d->class = Syscall;
                 int namelen = d->hash & 0x3f;
                 char ch = d->name[namelen];
                 d->name[namelen] = 0;
                 d->val = ef_getidx(d->name) ;
                 d->name[namelen] = ch;
-                d->class = Syscall;
-                d->type = INT;
             }
             next();
-            t = 0; b = 0; // parameters count
+            t = 0; b = 0; // argument count
             while (tk != ')') {
                 expr(Assign); *--n = (int) b; b = n; ++t;
                 if (tk == ',') {
@@ -1189,9 +1191,9 @@ void stmt(int ctx)
                 bt = tnew++;
             }
             if (tk == '{') {
-                tsize[bt] = 0; // for unions
                 next();
                 if (members[bt]) fatal("duplicate structure definition");
+                tsize[bt] = 0; // for unions
                 i = 0;
                 while (tk != '}') {
                     int mbt = INT;
@@ -1247,7 +1249,11 @@ void stmt(int ctx)
             switch (ctx) {
             case Glo:
                 if (tk != Id) fatal("bad global declaration");
-                if (id->class >= ctx) fatal("duplicate global definition");
+                if (id->class == Syscall && id->val)
+                    fatal("forward decl failed one pass compilation");
+                if (id->class >= ctx &&
+                    id->val > (int) text && id->val < (int) e)
+                    fatal("duplicate global definition");
                 break;
             case Loc:
                 if (tk != Id) fatal("bad local declaration");
@@ -1257,14 +1263,15 @@ void stmt(int ctx)
             next();
             id->type = ty;
             if (tk == '(') { // function
+                struct ident_s *dd = id;
                 if (ctx != Glo) fatal("nested function");
                 if (ty > INT && ty < PTR) fatal("return type can't be struct");
                 id->class = Func; // type is function
                 id->val = (int) (e + 1); // function Pointer? offset/address
-                id->type = ty;
                 next(); ld = 0; // "ld" is parameter's index.
                 while (tk != ')') { stmt(Par); if (tk == ',') next(); }
                 next();
+                if (tk == ';') { dd->val = 0; goto unwind_func; } // fn proto
                 if (tk != '{') fatal("bad function definition");
                 loc = ++ld;
                 next();
@@ -1279,8 +1286,8 @@ void stmt(int ctx)
                 *--n = ld - loc; *--n = Enter;
                 cas = 0;
                 gen(n);
-                id = sym; // unwind symbol table locals
-                while (id->tk) {
+unwind_func:    id = &sym[21]; // skip keywords
+                while (id->tk) { // unwind symbol table locals
                     if (id->class == Loc || id->class == Par) {
                         id->class = id->hclass;
                         id->type = id->htype;
