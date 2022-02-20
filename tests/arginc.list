@@ -1,0 +1,11 @@
+1: int main(int argc, char **argv)
+2: {
+3:     return argc - 2;
+4: }
+0000:     ENT  0
+0002:     LEA  3
+0004:     LI  
+0005:     PSH 
+0006:     IMM  2
+0008:     SUB 
+0009:     LEV 
