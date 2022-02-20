@@ -1,0 +1,17 @@
+Squint/mc.c is work based on the AMaCC compiler.
+AMaCC is based on the original C4 work from Robert Swierczek.
+
+AMaCC is written by:
+  Jim Huang <jserv.tw@gmail.com>
+  Ying-Ruei Liang (KK) <thumbd03803@gmail.com>
+  lecopzer <james455096@gmail.com>
+  yodalee <lc85301@gmail.com>
+  Logan Chien <tzuhsiang.chien@gmail.com>
+  splasky <henrychung860326@gmail.com>
+  HPCguy <https://github.com/HPCguy>
+
+Squint is written by:
+  HPCguy <https://github.com/HPCguy>
+
+All new mc.c development in this repository as of Feb 19 2022 is
+done by HPCguy <https://github.com/HPCguy>.
