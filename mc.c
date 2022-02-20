@@ -152,10 +152,8 @@ enum {
      * If we need to refer to arg1, we need to fetch new_bp + 4, which can not
      * be achieved by restricted ADD instruction. Thus another special
      * instrcution is introduced to do this: LEA <offset>.
-     * The following pseudocode illustrates how LEA works.
-     *     if (op == LEA) { ax = (int) (bp + *pc++); } // load address for arguments
-     * Together with JSR, ENT, ADJ, LEV, and LEA instruction, we are able to make
-     * function calls.
+     * Together with JSR, ENT, ADJ, LEV, and LEA instruction, we are able to
+     * make function calls.
      */
 
     IMM , /*  1 */
@@ -163,22 +161,9 @@ enum {
 
     JMP , /*  2 */
     /* JMP <addr> will unconditionally set the value PC register to <addr> */
-    /* The following pseudocode illustrates how JMP works:
-     *     if (op == JMP) { pc = (int *) *pc; } // jump to the address
-     * Note that PC points to the NEXT instruction to be executed. Thus *pc
-     * stores the argument of JMP instruction, i.e. the <addr>.
-     */
 
     JSR , /*  3 */
-    /* A function is a block of code, which may be far from the instruction
-     * we are currently executing. That is reason why JMP instruction exists,
-     * jumping into starting point of a function. JSR is introduced to perform
-     * some bookkeeping: store the current execution position so that the
-     * program can resume after function call returns.
-     *
-     * JSR <addr> to invoke the function whose starting point is <addr> and
-     * LEV to fetch the bookkeeping information to resume previous execution.
-     */
+    /* Jump to address, setting link register for return address */
 
     BZ  , /*  4 : conditional jump if general register is zero (jump-if-zero) */
     BNZ , /*  5 : conditional jump if general register is not zero */
@@ -236,9 +221,7 @@ enum {
      * Each operator has two arguments: the first one is stored on the top
      * of the stack while the second is stored in general register.
      * After the calculation is done, the argument on the stack will be poped
-     * out and the result will be stored in general register.
-     * So you are not able to fetch the first argument from the stack after
-     * the calculation.
+     * off and the result will be stored in general register.
      */
 
     SYSC, /* 30 system call */
@@ -373,28 +356,6 @@ void next()
         }
         switch (tk) {
         case '\n':
-            /* Take an integer (representing an operation) and printing out
-             * the name of that operation. First thing to say is that "* ++le"
-             * is the integer representing the operation to perform.
-             * This basically walks through the array of instructions
-             * returning each integer in turn.
-             *
-             * Starting at the beginning of the line, we have "printf" with
-             * a format string of "%8.4s". This means print out the first 4
-             * characters of the string that we are about to pass next (padded
-             * to 8 characters). There then follows a string containing all of
-             * the operation names, in numerical order, padded to 4 characters
-             * and separated by commas (so the start of each is 5 apart).
-             *
-             * Finally, we do a lookup into this string (treating it as an
-             * array) at offset "* ++le * 5", i.e. the integer representing
-             * the operation multipled by "5", being the number of characters
-             * between the start of each operation name). Doing this lookup
-             * gives us a char, but actually we wanted the pointer to this
-             * char (as we want printf to print out this char and the
-             * following 3 chars), so we take the address of this char
-             * (the "&" at the beginning of the whole expression).
-             */
             if (src) {
                 int *base = le;
                 printf("%d: %.*s", line, p - lp, lp);
@@ -447,11 +408,7 @@ void next()
         case '\'': // quotes start with character (string)
         case '"':
             pp = data;
-            // While current character is not `\0` and current character is
-            // not the quote character.
             while (*p != 0 && *p != tk) {
-                // If current character is '\', it is escape notation or simply
-                // '\' character.
                 if ((ival = *p++) == '\\') {
                     switch (ival = *p++) {
                     case 'n': ival = '\n'; break; // new line
@@ -467,7 +424,6 @@ void next()
                 if (tk == '"') *data++ = ival;
             }
             ++p;
-            //  if .text too big rwdata v_addr will overlap it, add that to stay away from .text
             if (tk == '"') ival = (int) pp; else tk = Num;
             return;
         case '=': if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return;
@@ -508,7 +464,6 @@ void next()
     }
 }
 
-// https://stackoverflow.com/questions/109023/how-to-count-the-number-of-set-bits-in-a-32-bit-integer
 int popcount(int i)
 {
     i = i - ((i >> 1) & 0x55555555); // add pairs of bits
@@ -563,22 +518,11 @@ void expr(int lev)
         *--n = ival; *--n = Num; next();
         // continuous `"` handles C-style multiline text such as `"abc" "def"`
         while (tk == '"') next();
-        /* Point "data" to next integer-aligned address.
-         * e.g. "-sizeof(int)" is -4, i.e. 0b11111100.
-         * This guarantees to leave at least one '\0' after the string.
-         *
-         * append the end of string character '\0', all the data is defaulted
-         * to 0, so just move data one position forward. Specify result value
-         * type to char pointer. CHAR + PTR = PTR because CHAR is 0.
-         */
         data = (char *) (((int) data + sizeof(int)) & (-sizeof(int)));
         ty = PTR;
         break;
     /* SIZEOF_expr -> 'sizeof' '(' 'TYPE' ')'
-     * sizeof is actually an unary operator.
-     * now only `sizeof(int)`, `sizeof(char)` and `sizeof(*...)` are supported.
      * FIXME: not support "sizeof (Id)".
-     * In second line will not get next token, match ')' will fail.
      */
     case Sizeof:
         next();
@@ -1220,11 +1164,6 @@ void stmt(int ctx)
                     if (*n != Num) fatal("bad enum initializer");
                     i = n[1]; // Set enum value
                 }
-                /* "id" is pointing to the enum name's symbol table entry.
-                 * Set the symbol table entry's symbol type be "Num".
-                 * Set the symbol table entry's associated value type be "INT".
-                 * Set the symbol table entry's associated value be enum value.
-                 */
                 id->class = Num; id->type = INT; id->val = i++;
                 if (tk == ',') next(); // If current token is ",", skip.
             }
@@ -1321,7 +1260,6 @@ void stmt(int ctx)
                 if (ctx != Glo) fatal("nested function");
                 if (ty > INT && ty < PTR) fatal("return type can't be struct");
                 id->class = Func; // type is function
-                // "+ 1" is because the code to add instruction always uses "++e".
                 id->val = (int) (e + 1); // function Pointer? offset/address
                 id->type = ty;
                 next(); ld = 0; // "ld" is parameter's index.
@@ -1542,7 +1480,6 @@ void stmt(int ctx)
         *--n = ';';
         return;
     default:
-        // general statements are considered assignment statements/expressions
         expr(Assign);
         if (tk != ';' && tk != ',') fatal("semicolon expected");
         next();
@@ -2456,7 +2393,7 @@ int main(int argc, char **argv)
     memset(tsize,   0, PTR * sizeof(int));
     memset(members, 0, PTR * sizeof(struct member_s *));
     memset(ast, 0, poolsz);
-    ast = (int *) ((int) ast + poolsz); // abstract syntax tree is most efficiently built as a stack
+    ast = (int *) ((int) ast + poolsz); // AST is built as a stack
 
     /* Resgister keywords and system calls to symbol stack
      * must match the sequence of enum
