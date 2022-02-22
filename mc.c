@@ -105,7 +105,7 @@ enum {
     Lor, Lan, Or, Xor, And, // operator: ||, &&, |, ^, &
     Eq, Ne, Lt, Gt, Le, Ge, // operator: ==, !=, <, >, <=, >=
     Shl, Shr, Add, Sub, Mul, Div, Mod, // operator: <<, >>, +, -, *, /, %
-    Inc, Dec, Dot, Arrow, Bracket, // operator: ++, --, ., ->, [
+    Inc, Dec, Dot, Arrow, Bracket // operator: ++, --, ., ->, [
 };
 
 // opcodes
@@ -243,7 +243,7 @@ char *freebuf;
 char *append_strtab(char **strtab, char *str)
 {
     char *s;
-    for (s = str; *s && (*s != ' '); s++) ; /* ignore trailing space */
+    for (s = str; *s && (*s != ' '); ++s) ; /* ignore trailing space */
     int nbytes = s - str + 1;
     char *res = *strtab;
     memcpy(res, str, nbytes);
@@ -313,7 +313,7 @@ void next()
             tk = (tk << 6) + (p - pp);  // hash plus symbol length
             // hash value is used for fast comparison. Since it is inaccurate,
             // we have to validate the memory content as well.
-            for (id = sym; id->tk; id++) { // find one free slot in table
+            for (id = sym; id->tk; ++id) { // find one free slot in table
                 if (tk == id->hash && /* if token is found (hash match), overwrite */
                     !memcmp(id->name, pp, p - pp)) {
                     tk = id->tk;
@@ -396,7 +396,7 @@ void next()
                 int t = 0;
                 for (++p; (*p != 0) && (t == 0); ++p) {
                     pp = p + 1;
-                    if (*p == '\n') line++;
+                    if (*p == '\n') ++line;
                     else if (*p == '*' && *pp == '/') t = 1;
                 }
                 ++p;
@@ -1021,7 +1021,7 @@ void gen(int *n)
     case Syscall:
     case ClearCache:
         c = b = (int *) n[1]; k = 0; l = 1;
-        // how many parameters
+        // how many arguments
         while (b && l) { ++k; if (!(int *) *b) l = 0; else b = (int *) *b; }
         j = 0; a = malloc(sizeof(int *) * k); b = c; l = 1;
         while (b && l) {
@@ -1307,6 +1307,16 @@ unwind_func:    id = sym;
             }
             else {
                 int sz = ((ty <= INT || ty >= PTR) ? sizeof(int) : tsize[ty]);
+                if (tk == Bracket) { // support 1d global array
+                    if (ctx != Glo)
+                        fatal("Array decl only supported for global variables");
+                    next(); expr(Cond);
+                    if (*n != Num) fatal("non-const array size");
+                    if (tk != ']') fatal("missing ]");
+                    next();
+                    sz *= n[1]; n += 2;
+                    ty += PTR; id->type = ty;
+                }
                 id->hclass = id->class; id->class = ctx;
                 id->htype = id->type; id->type = ty;
                 id->hval = id->val;
@@ -1687,7 +1697,7 @@ int *codegen(int *jitmem, int *jitmap)
             while (il > immloc) {
                 tmp = *--il;
                 if ((int) je > tmp + 4096 + 8) die("codegen: can't reach the pool");
-                iv--; if (iv[0] == iv[1]) je--;
+                --iv; if (iv[0] == iv[1]) --je;
                 if (tmp & 1) {
                     // ldr pc, [pc, #..]
                     *(int *) (tmp - 1) = 0xe59ff000 | ((int) je - tmp - 7);
@@ -2153,7 +2163,7 @@ int elf32(int poolsz, int *main, int elf_fd)
     data += 4;  // reserved 2 and 3 entry for interp
     // .got function slot
     char **got_func_slot = malloc(sizeof(char *) * ef_count);
-    for (i = 0; i < ef_count; i++) {
+    for (i = 0; i < ef_count; ++i) {
         got_func_slot[i] = data;
         *(int *) data = (int) plt_addr; data += 4;
     }
@@ -2178,7 +2188,7 @@ int elf32(int poolsz, int *main, int elf_fd)
     *(int *) to = 0xe59ef000; to += 4;  // ldr pc, [lr]
 
     // We must preserve ip for code below, dyn link use this as return address
-    for (i = 0; i < ef_count; i++) {
+    for (i = 0; i < ef_count; ++i) {
         plt_func_addr[i] = to;
         // movt ip addr_to_got
         *(int *) to = 0xe300c000 | (0xfff & (int) (got_func_slot[i])) |
@@ -2194,7 +2204,7 @@ int elf32(int poolsz, int *main, int elf_fd)
 
     // .rel.plt
     to = rel_addr;
-    for (i = 0; i < ef_count; i++) {
+    for (i = 0; i < ef_count; ++i) {
         *(int *) to = (int) got_func_slot[i]; to += 4;
         *(int *) to = 0x16 | (i + 1) << 8 ; to += 4;
         // 0x16 R_ARM_JUMP_SLOT | .dymstr index << 8
@@ -2411,7 +2421,7 @@ int main(int argc, char **argv)
 
     // call "next" to create symbol table entry.
     // store the keyword's token type in the symbol table entry's "tk" field.
-    for (i = Break; i <= Goto; i++) {
+    for (i = Break; i <= Goto; ++i) {
         next(); id->tk = i; id->class = Keyword; // add keywords to symbol table
     }
 
