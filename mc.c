@@ -1246,14 +1246,10 @@ void stmt(int ctx)
             // if the beginning of * is a pointer type, then type plus `PTR`
             // indicates what kind of pointer
             while (tk == Mul) { next(); ty += PTR; }
-            switch (ctx) {
+            switch (ctx) { // check non-function identifiers
             case Glo:
                 if (tk != Id) fatal("bad global declaration");
-                if (id->class == Syscall && id->val)
-                    fatal("forward decl failed one pass compilation");
-                if (id->class >= ctx &&
-                    id->val > (int) text && id->val < (int) e)
-                    fatal("duplicate global definition");
+                if (id->class >= ctx) fatal("duplicate global definition");
                 break;
             case Loc:
                 if (tk != Id) fatal("bad local declaration");
@@ -1266,6 +1262,11 @@ void stmt(int ctx)
                 struct ident_s *dd = id;
                 if (ctx != Glo) fatal("nested function");
                 if (ty > INT && ty < PTR) fatal("return type can't be struct");
+                if (id->class == Syscall && id->val)
+                    fatal("forward decl location failed one pass compilation");
+                if (id->class == Func &&
+                    id->val > (int) text && id->val < (int) e)
+                    fatal("duplicate global definition");
                 id->class = Func; // type is function
                 id->val = (int) (e + 1); // function Pointer? offset/address
                 next(); ld = 0; // "ld" is parameter's index.
@@ -1286,7 +1287,7 @@ void stmt(int ctx)
                 *--n = ld - loc; *--n = Enter;
                 cas = 0;
                 gen(n);
-unwind_func:    id = &sym[21]; // skip keywords
+unwind_func:    id = sym;
                 while (id->tk) { // unwind symbol table locals
                     if (id->class == Loc || id->class == Par) {
                         id->class = id->hclass;
