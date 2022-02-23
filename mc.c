@@ -391,6 +391,15 @@ void next()
         case '/':
             if (*p == '/') { // comment
         case '#': // skip #include statement, preprocessor directives ignored
+                if (tk == '#' && !strncmp(p, "define", 6)) {
+                    p += 6; next();
+                    if (tk == Id) {
+                        next();
+                        if (tk == Num) {
+                            id->class = Num; id->type = INT; id->val = ival;
+                        }
+                    }
+                }
                 while (*p != 0 && *p != '\n') ++p;
             } else if (*p == '*') { // C-style multiline comments
                 int t = 0;
@@ -1142,6 +1151,7 @@ void check_label(int **tt)
 // statement parsing (syntax analysis, except for declarations)
 void stmt(int ctx)
 {
+    struct ident_s *dd;
     int *a, *b, *c, *d;
     int i, j, atk;
     int bt;
@@ -1159,18 +1169,19 @@ void stmt(int ctx)
                 // Current token should be enum name.
                 // If current token is not identifier, stop parsing.
                 if (tk != Id) fatal("bad enum identifier");
-                next();
+                dd = id; next();
                 if (tk == Assign) {
                     next();
                     expr(Cond);
                     if (*n != Num) fatal("bad enum initializer");
-                    i = n[1]; // Set enum value
+                    i = n[1]; n += 2; // Set enum value
                 }
-                id->class = Num; id->type = INT; id->val = i++;
+                dd->class = Num; dd->type = INT; dd->val = i++;
                 if (tk == ',') next(); // If current token is ",", skip.
             }
             next(); // Skip "}"
         } else if (tk == Id) {
+            if (ctx != Par) fatal("enum can only be declared as parameter");
             id->type = INT; id->class = ctx; id->val = ld++;
             next();
         }
@@ -1259,7 +1270,6 @@ void stmt(int ctx)
             next();
             id->type = ty;
             if (tk == '(') { // function
-                struct ident_s *dd = id;
                 if (ctx != Glo) fatal("nested function");
                 if (ty > INT && ty < PTR) fatal("return type can't be struct");
                 if (id->class == Syscall && id->val)
@@ -1267,7 +1277,7 @@ void stmt(int ctx)
                 if (id->class == Func &&
                     id->val > (int) text && id->val < (int) e)
                     fatal("duplicate global definition");
-                id->class = Func; // type is function
+                dd = id; id->class = Func; // type is function
                 id->val = (int) (e + 1); // function Pointer? offset/address
                 next(); ld = 0; // "ld" is parameter's index.
                 while (tk != ')') { stmt(Par); if (tk == ',') next(); }
@@ -2355,7 +2365,45 @@ int main(int argc, char **argv)
 
     int *freed_ast, *ast;
     int elf_fd;
-    int i;
+    int fd, i;
+    int poolsz = 1024 * 1024; // arbitrary size
+
+    if (!(sym = malloc(poolsz)))
+        die("could not allocate symbol area");
+    memset(sym, 0, poolsz);
+
+    // Register keywords in symbol stack. Must match the sequence of enum
+    p = "break continue case char default else enum if int return sizeof "
+        "struct union switch for while do goto __clear_cache void main";
+
+    // call "next" to create symbol table entry.
+    // store the keyword's token type in the symbol table entry's "tk" field.
+    for (i = Break; i <= Goto; ++i) {
+        next(); id->tk = i; id->class = Keyword; // add keywords to symbol table
+    }
+
+    // add __clear_cache to symbol table
+    next(); id->class = ClearCache; id->type = INT; id->val = CLCA;
+
+    next(); id->tk = Char; id->class = Keyword; // handle void type
+    next();
+    struct ident_s *idmain = id; id->class = Main; // keep track of main
+
+    if (!(freedata = _data = data = malloc(poolsz)))
+        printf("could not allocat data area");
+    memset(data, 0, poolsz);
+    if (!(tsize = malloc(PTR * sizeof(int))))
+        die("could not allocate tsize area");
+    memset(tsize,   0, PTR * sizeof(int)); // not strictly necessary
+    if (!(freed_ast = ast = malloc(poolsz)))
+        die("could not allocate abstract syntax tree area");
+    memset(ast, 0, poolsz); // not strictly necessary
+    ast = (int *) ((int) ast + poolsz); // AST is built as a stack
+    n = ast;
+
+    // add primitive types
+    tsize[tnew++] = sizeof(char);
+    tsize[tnew++] = sizeof(int);
 
     --argc; ++argv;
     while (argc > 0 && **argv == '-') {
@@ -2376,6 +2424,19 @@ int main(int argc, char **argv)
             }
             --argc; ++argv;
         }
+        else if ((*argv)[1] == 'D') {
+            p = &(*argv)[2]; next();
+            if (tk != Id) fatal("-D bad identifier");
+            struct ident_s *dd = id; next(); i = 0;
+            if (tk == Assign) {
+                next();
+                expr(Cond);
+                if (*n != Num) fatal("bad -D initializer");
+                i = n[1]; n += 2;
+            }
+            dd->class = Num; dd->type = INT; dd->val = i;
+            --argc; ++argv;
+        }
         else {
             argc = 0; // bad compiler option. Force exit.
         }
@@ -2383,54 +2444,20 @@ int main(int argc, char **argv)
     if (argc < 1)
        die("usage: amacc [-s] [-Op] [-fsigned-char] [-o object] file");
 
-    int fd;
     if ((fd = open(*argv, 0)) < 0) {
         printf("could not open(%s)\n", *argv); return -1;
     }
 
-    int poolsz = 256 * 1024; // arbitrary size
     if (!(text = le = e = malloc(poolsz)))
         die("could not allocate text area");
-    if (!(sym = malloc(poolsz)))
-        die("could not allocate symbol area");
-    if (!(freedata = _data = data = malloc(poolsz)))
-        printf("could not allocat data area");
-    if (!(tsize = malloc(PTR * sizeof(int))))
-        die("could not allocate tsize area");
     if (!(members = malloc(PTR * sizeof(struct member_s *))))
         die("could not malloc() members area");
-    if (!(freed_ast = ast = malloc(poolsz)))
-        die("could not allocate abstract syntax tree area");
     if (!(ef_cache = malloc(PTR * sizeof(struct ef_s *))))
         die("could not malloc() external function cache");
 
-    memset(sym, 0, poolsz);
     memset(e, 0, poolsz);
-    memset(data, 0, poolsz);
 
-    memset(tsize,   0, PTR * sizeof(int));
     memset(members, 0, PTR * sizeof(struct member_s *));
-    memset(ast, 0, poolsz);
-    ast = (int *) ((int) ast + poolsz); // AST is built as a stack
-
-    /* Resgister keywords and system calls to symbol stack
-     * must match the sequence of enum
-     */
-    p = "break continue case char default else enum if int return sizeof "
-        "struct union switch for while do goto __clear_cache void main";
-
-    // call "next" to create symbol table entry.
-    // store the keyword's token type in the symbol table entry's "tk" field.
-    for (i = Break; i <= Goto; ++i) {
-        next(); id->tk = i; id->class = Keyword; // add keywords to symbol table
-    }
-
-    // add __clear_cache to symbol table
-    next(); id->class = ClearCache; id->type = INT; id->val = CLCA;
-
-    next(); id->tk = Char; id->class = Keyword; // handle void type
-    next();
-    struct ident_s *idmain = id; id->class = Main; // keep track of main
 
     if (elf) elf32_init(poolsz); // call before source code parsing
 
@@ -2441,15 +2468,10 @@ int main(int argc, char **argv)
     p[i] = 0;
     close(fd);
 
-    // add primitive types
-    tsize[tnew++] = sizeof(char);
-    tsize[tnew++] = sizeof(int);
-
     // real C parser begins here
     // parse the program
     line = 1;
     next();
-    n = ast;
     while (tk) {
         stmt(Glo);
         next();
