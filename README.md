@@ -6,8 +6,8 @@ complete, C compiler (mc.c) that supports JIT execution, ELF executable
 generation, and peephole optimization.  mc.c is a follow on to the AMaCC
 compiler.  See the AMaCC documentation referenced below for more information.
 
-The Squint peephole optimizer, written by HPCguy, ***cuts executable
-instructions in compiled code roughly in half***.  The tests/sieve.c
+The Squint peephole optimizer ***roughly halves the number of executable
+instructions in compiled code***.  The tests/sieve.c
 benchmark provides an optimization example, and runs roughly
 ***3.5x faster after peephole optimization***.
 
