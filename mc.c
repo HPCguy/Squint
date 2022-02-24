@@ -94,10 +94,9 @@ struct member_s {
 // tokens and classes (operators last and in precedence order)
 // ( >= 128 so not to collide with ASCII-valued tokens)
 enum {
-   Num = 128, // the character set of given source is limited to 7-bit ASCII
-   Func, Syscall, Main, ClearCache, Glo, Par, Loc, Keyword, Id, Label, Load, Enter,
-   Break, Continue, Case, Char, Default, Else, Enum, If, Int, Return,
-   Sizeof, Struct, Union, Switch, For, While, DoWhile, Goto,
+   Func=128, Syscall, Main, ClearCache, Glo, Par, Loc, Keyword, Id, Load, Enter,
+   Num, Enum, Char, Int, Float, Struct, Union, Sizeof, Return, Goto, Break,
+   Continue, If, DoWhile, While, For, Switch, Case, Default, Else, Label,
    Assign, // operator =, keep Assign as highest priority operator
    OrAssign, XorAssign, AndAssign, ShlAssign, ShrAssign, // |=, ^=, &=, <<=, >>=
    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, // +=, -=, *=, /=, %=
@@ -462,6 +461,8 @@ void next()
          if (tk == '"') ival = (int) pp; else tk = Num;
          return;
       case '=': if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return;
+      case '*': if (*p == '=') { ++p; tk = MulAssign; }
+                else tk = Mul; return;
       case '+': if (*p == '+') { ++p; tk = Inc; }
                 else if (*p == '=') { ++p; tk = AddAssign; }
                 else tk = Add; return;
@@ -469,6 +470,10 @@ void next()
                 else if (*p == '>') { ++p; tk = Arrow; }
                 else if (*p == '=') { ++p; tk = SubAssign; }
                 else tk = Sub; return;
+      case '[': tk = Bracket; return;
+      case '&': if (*p == '&') { ++p; tk = Lan; }
+                else if (*p == '=') { ++p; tk = AndAssign; }
+                else tk = And; return;
       case '!': if (*p == '=') { ++p; tk = Ne; } return;
       case '<': if (*p == '=') { ++p; tk = Le; }
                 else if (*p == '<') {
@@ -483,15 +488,9 @@ void next()
       case '|': if (*p == '|') { ++p; tk = Lor; }
                 else if (*p == '=') { ++p; tk = OrAssign; }
                 else tk = Or; return;
-      case '&': if (*p == '&') { ++p; tk = Lan; }
-                else if (*p == '=') { ++p; tk = AndAssign; }
-                else tk = And; return;
       case '^': if (*p == '=') { ++p; tk = XorAssign; } else tk = Xor; return;
-      case '*': if (*p == '=') { ++p; tk = MulAssign; }
-                else tk = Mul; return;
       case '%': if (*p == '=') { ++p; tk = ModAssign; }
                 else tk = Mod; return;
-      case '[': tk = Bracket; return;
       case '?': tk = Cond; return;
       case '.': tk = Dot; return;
       default: return;
@@ -545,41 +544,6 @@ void expr(int lev)
    struct member_s *m;
 
    switch (tk) {
-   case 0: fatal("unexpected EOF in expression");
-   // directly take an immediate value as the expression value
-   // IMM recorded in emit sequence
-   case Num: *--n = ival; *--n = Num; next(); ty = INT; break;
-   case '"': // string, as a literal in data segment
-      *--n = ival; *--n = Num; next();
-      // continuous `"` handles C-style multiline text such as `"abc" "def"`
-      while (tk == '"') next();
-      data = (char *) (((int) data + sizeof(int)) & (-sizeof(int)));
-      ty = PTR;
-      break;
-   /* SIZEOF_expr -> 'sizeof' '(' 'TYPE' ')'
-    * FIXME: not support "sizeof (Id)".
-    */
-   case Sizeof:
-      next();
-      if (tk != '(') fatal("open parentheses expected in sizeof");
-      next();
-      ty = INT;
-      switch (tk) {
-      case Int: next(); break;
-      case Char: next(); ty = CHAR; break;
-      case Struct:
-      case Union:
-         next();
-         if (tk != Id) fatal("bad struct/union type");
-         ty = id->stype; next(); break;
-      }
-      // multi-level pointers, plus `PTR` for each level
-      while (tk == Mul) { next(); ty += PTR; }
-      if (tk != ')') fatal("close parentheses expected in sizeof");
-      next();
-      *--n = ty >= PTR ? sizeof(int) : tsize[ty]; *--n = Num;
-      ty = INT;
-      break;
    case Id:
       d = id; next();
       // function call
@@ -621,6 +585,40 @@ resolve_fnproto:
          }
          *--n = ty = d->type; *--n = Load;
       }
+      break;
+   // directly take an immediate value as the expression value
+   // IMM recorded in emit sequence
+   case Num: *--n = ival; *--n = Num; next(); ty = INT; break;
+   case '"': // string, as a literal in data segment
+      *--n = ival; *--n = Num; next();
+      // continuous `"` handles C-style multiline text such as `"abc" "def"`
+      while (tk == '"') next();
+      data = (char *) (((int) data + sizeof(int)) & (-sizeof(int)));
+      ty = PTR;
+      break;
+   /* SIZEOF_expr -> 'sizeof' '(' 'TYPE' ')'
+    * FIXME: not support "sizeof (Id)".
+    */
+   case Sizeof:
+      next();
+      if (tk != '(') fatal("open parentheses expected in sizeof");
+      next();
+      ty = INT;
+      switch (tk) {
+      case Int: next(); break;
+      case Char: next(); ty = CHAR; break;
+      case Struct:
+      case Union:
+         next();
+         if (tk != Id) fatal("bad struct/union type");
+         ty = id->stype; next(); break;
+      }
+      // multi-level pointers, plus `PTR` for each level
+      while (tk == Mul) { next(); ty += PTR; }
+      if (tk != ')') fatal("close parentheses expected in sizeof");
+      next();
+      *--n = ty >= PTR ? sizeof(int) : tsize[ty]; *--n = Num;
+      ty = INT;
       break;
    // Type cast or parenthesis
    case '(':
@@ -696,6 +694,7 @@ resolve_fnproto:
       if (*n != Load) fatal("bad lvalue in pre-increment");
       *n = t;
       break;
+   case 0: fatal("unexpected EOF in expression");
    default: fatal("bad expression");
    }
 
@@ -962,21 +961,17 @@ void gen(int *n)
    case Num: // get the value of integer
       *++e = IMM; *++e = n[1];
       break;
-   case Loc: // get the value of variable
-      *++e = LEA; *++e = n[1];
-      break;
-   case Label: // target of goto
-      label = (struct ident_s *) n[1];
-      if (label->class != 0) fatal("duplicate label definition");
-      d = e + 1; b = (int *) label->val;
-      while (b != 0) { t = (int *) *b; *b = (int) d; b = t; }
-      label->val = (int) d; label->class = Label;
-      break;
    case Load:
       gen(n + 2); // load the value
       if (n[1] > INT && n[1] < PTR) fatal("struct copies not yet supported");
       *++e = (n[1] == CHAR) ? LC : LI;
       break;
+   case Loc: // get the value of variable
+      *++e = LEA; *++e = n[1];
+      break;
+   case '{':
+      // parse expression or statment from AST
+      gen((int *) n[1]); gen(n + 2); break;
    case Assign: // assign the value to variables
       gen((int *) n[2]); *++e = PSH; gen(n + 3);
       // Add SC/SI instruction to save value in register to variable address
@@ -1147,11 +1142,15 @@ void gen(int *n)
       gen((int *) n[1]); break;
    case Return:
       if (n[1]) gen((int *) n[1]); *++e = LEV; break; // parse return AST
-   case '{':
-      // parse expression or statment from AST
-      gen((int *) n[1]); gen(n + 2); break;
    case Enter: *++e = ENT; *++e = n[1]; gen(n + 2);
             if (*e != LEV) *++e = LEV; break;
+   case Label: // target of goto
+      label = (struct ident_s *) n[1];
+      if (label->class != 0) fatal("duplicate label definition");
+      d = e + 1; b = (int *) label->val;
+      while (b != 0) { t = (int *) *b; *b = (int) d; b = t; }
+      label->val = (int) d; label->class = Label;
+      break;
    default:
       if (i != ';') {
          printf("%d: compiler error gen=%d\n", line, i); exit(-1);
@@ -1181,6 +1180,9 @@ void stmt(int ctx)
    int *a, *b, *c, *d;
    int i, j, atk;
    int bt;
+
+   if (ctx == Glo && (tk < Enum || tk > Union))
+      fatal("syntax: statement used outside function");
 
    switch (tk) {
    case Enum:
@@ -1763,11 +1765,11 @@ int *codegen(int *jitmem, int *jitmap)
       // If the instruction is one of the jumps.
       if (i == JSR || i == JMP || i == BZ || i == BNZ) {
          switch (i) {
-         case JSR:
-            *je = 0xeb000000;  // bl #(tmp)
-            break;
          case JMP:
             *je = 0xea000000;  // b #(tmp)
+            break;
+         case JSR:
+            *je = 0xeb000000;  // bl #(tmp)
             break;
          case BZ:
             *++je = 0x0a000000; // beq #(tmp)
@@ -2401,12 +2403,12 @@ int main(int argc, char **argv)
    memset(sym, 0, poolsz);
 
    // Register keywords in symbol stack. Must match the sequence of enum
-   p = "break continue case char default else enum if int return sizeof "
-      "struct union switch for while do goto __clear_cache void main";
+   p = "enum char int float struct union sizeof return goto break continue "
+       "if do while for switch case default else __clear_cache void main";
 
    // call "next" to create symbol table entry.
    // store the keyword's token type in the symbol table entry's "tk" field.
-   for (i = Break; i <= Goto; ++i) {
+   for (i = Enum; i <= Else; ++i) {
       next(); id->tk = i; id->class = Keyword; // add keywords to symbol table
    }
 
