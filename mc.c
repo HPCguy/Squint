@@ -26,11 +26,6 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 
-/* 64-bit host support */
-#if defined(__x86_64__) || defined(__aarch64__)
-#define int long
-#endif
-
 char *freep, *p, *lp; // current position in source code
 char *freedata, *data, *_data;   // data/bss pointer
 
@@ -60,6 +55,7 @@ int *n;             // current position in emitted abstract syntax tree
                     // emitted and pushed on the stack in the proper
                     // right-to-left order.
 int ld;             // local variable depth
+int pplev, pplevt;  // preprocessor conditional level
 
 // identifier
 struct ident_s {
@@ -297,6 +293,7 @@ int ef_getidx(char *name) // get cache index of external function
 void next()
 {
    char *pp;
+   int t;
 
    /* using loop to ignore whitespace characters, but characters that
     * cannot be recognized by the lexical analyzer are considered blank
@@ -387,21 +384,47 @@ void next()
       case '\f':
       case '\r':
          break;
-      case '/':
-         if (*p == '/') { // comment
-      case '#': // skip #include statement, preprocessor directives ignored
-            if (tk == '#' && !strncmp(p, "define", 6)) {
-               p += 6; next();
-               if (tk == Id) {
-                  next();
-                  if (tk == Num) {
-                     id->class = Num; id->type = INT; id->val = ival;
-                  }
+      case '#': // skip include statements, and most preprocessor directives
+         if (!strncmp(p, "define", 6)) {
+            p += 6; next();
+            if (tk == Id) {
+               next();
+               if (tk == Num) {
+                  id->class = Num; id->type = INT; id->val = ival;
                }
             }
+         }
+         else if ((t = !strncmp(p, "ifdef", 5)) || !strncmp(p, "ifndef", 6)) {
+            p += 6; next();
+            if (tk != Id) fatal("No identifier");
+            ++pplev;
+            if (( ((id->class != Num) ? 0 : 1) ^ (t ? 1 : 0) ) & 1) {
+               t = pplevt; pplevt = pplev - 1;
+               while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
+               do next();
+               while (pplev != pplevt);
+               pplevt = t;
+               break;
+            }
+         }
+         else if (!strncmp(p, "if", 2)) {
+            // ignore side effects of preprocessor if-statements
+            ++pplev;
+         }
+         else if(!strncmp(p, "endif", 5)) {
+            if (--pplev < 0) fatal("preprocessor context nesting error");
+            if (pplev == pplevt) {
+               while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
+               return;
+            }
+         }
+         while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
+         break;
+      case '/':
+         if (*p == '/') { // comment
             while (*p != 0 && *p != '\n') ++p;
          } else if (*p == '*') { // C-style multiline comments
-            int t = 0;
+            t = 0;
             for (++p; (*p != 0) && (t == 0); ++p) {
                pp = p + 1;
                if (*p == '\n') ++line;
@@ -2350,19 +2373,8 @@ int elf32(int poolsz, int *main, int elf_fd)
 
 enum { _O_CREAT = 64, _O_WRONLY = 1 };
 
-#ifdef int
-/* Eliminate clang compilation error:
- *   first parameter of 'main' (argument count) must be of type 'int'
- */
-#undef int
-#endif
 int main(int argc, char **argv)
 {
-/* 64-bit host support */
-#if defined(__x86_64__) || defined(__aarch64__)
-#define int long
-#endif
-
    int *freed_ast, *ast;
    int elf_fd;
    int fd, i;
@@ -2471,6 +2483,7 @@ int main(int argc, char **argv)
    // real C parser begins here
    // parse the program
    line = 1;
+   pplevt = -1;
    next();
    while (tk) {
       stmt(Glo);
@@ -2478,7 +2491,7 @@ int main(int argc, char **argv)
    }
 
    int ret = elf ? elf32(poolsz, (int *) idmain->val, elf_fd) :
-               jit(poolsz,   (int *) idmain->val, argc, argv);
+                   jit(poolsz,   (int *) idmain->val, argc, argv);
    free(freep);
    free(freed_ast);
    free(tsize);
