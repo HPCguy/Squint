@@ -81,18 +81,18 @@
 #define NOP1      0xe1a01001
 #define NOP13     0xe1a0d00d
 
-enum search_direction { S_BACK = -1, S_FWD = 1 };
+enum search_dir { S_BACK = -1, S_FWD = 1 };
 
 struct ia_s {
    int inst_addr; // inst address
    struct ia_s *next;
 };
 
-struct pd_s {
+static struct pd_s {
    int data_addr; // data address
    struct ia_s *inst;
 } *cnst_pool;
-int cnst_pool_size;
+static int cnst_pool_size;
 
 struct loop_s {
    struct loop_s *next;
@@ -102,13 +102,13 @@ struct loop_s {
    int info; // stats between begin/end
 };
 
-int *cbegin;
+static int *cbegin;
 
 /**********************************************************/
 /*************** general utility functions ****************/
 /**********************************************************/
 
-int popcount32b(int i)
+static int popcount32b(int i)
 {
    i = i - ((i >> 1) & 0x55555555); // add pairs of bits
    i = (i & 0x33333333) + ((i >> 2) & 0x33333333); // quads
@@ -123,7 +123,7 @@ int popcount32b(int i)
 /* The ARM processor allows use of pc-relative constants */
 
 /* constants are sorted by the address they are stored in memory */
-int find_const(int addr)
+static int find_const(int addr)
 {
    int low, high, mid;
 
@@ -144,7 +144,7 @@ int find_const(int addr)
    return low;
 }
 
-int is_const(int *inst)
+static int is_const(int *inst)
 {
    int addr = (inst-cbegin)*4;
 
@@ -155,7 +155,7 @@ int is_const(int *inst)
 /* stream after the instructions that reference them.  Because */
 /* of this we can safely scan an instruction stream forward, */
 /* skipping any constants we encounter. */
-void create_const_map(int *begin, int *end)
+static void create_const_map(int *begin, int *end)
 {
    int *scan = begin;
    int i;
@@ -194,12 +194,12 @@ void create_const_map(int *begin, int *end)
    }
 }
 
-void destroy_const_map()
+static void destroy_const_map()
 {
    struct ia_s *inst, *next;
    int i;
 
-   for (i = 0;  i < cnst_pool_size; ++i) {
+   for (i = 0; i < cnst_pool_size; ++i) {
       inst = cnst_pool[i].inst;
       while (inst != 0) {
          next = inst->next;
@@ -211,7 +211,7 @@ void destroy_const_map()
 }
 
 /* convert special ARM consts to mov immediate */
-void const_imm_opt(int *begin, int *end)
+static void const_imm_opt(int *begin, int *end)
 {
    struct ia_s *inst, *next;
    int *newinst;
@@ -256,7 +256,7 @@ void const_imm_opt(int *begin, int *end)
 }
 
 /* relocate a ldr rX, [pc, #X] instruction */
-void rel_pc_ldr(int *dst, int *src)
+static void rel_pc_ldr(int *dst, int *src)
 {
    if (dst == src) return;
 
@@ -276,7 +276,7 @@ void rel_pc_ldr(int *dst, int *src)
 }
 
 /* relocate a constant referenced by pc-relative instructions */
-void rel_pc_const(int *dst, int *src)
+static void rel_pc_const(int *dst, int *src)
 {
    /* assume no constants are added or removed */
    /* just migrated to a lower address, in order */
@@ -305,7 +305,7 @@ void rel_pc_const(int *dst, int *src)
 /**********************************************************/
 
 /* check for nop, PHD, and PHR0 instructions */
-int is_nop(int inst) {
+static int is_nop(int inst) {
    return ( (inst == NOP) || (inst == NOP1) || (inst == NOP13) );
 }
 
@@ -314,7 +314,7 @@ int is_nop(int inst) {
 /*             1 means move toward higher addresses */
 /* Note that a NOP1 (PHD) will treat the instruction */
 /* after it (+1) as though it were a nop */
-int *skip_nop(int *begin, enum search_direction dir)
+static int *skip_nop(int *begin, enum search_dir dir)
 { /* -1 = backward, 1 = forward */
    int *scan = begin;
    int done;
@@ -357,9 +357,9 @@ int *skip_nop(int *begin, enum search_direction dir)
 /* to move through the instruction stream. e.g. */
 /* index == 0 means return immediately */
 /* index == -5 means move backward 5 active instructions */
-int *active_inst(int *cursor, int index)
+static int *active_inst(int *cursor, int index)
 {
-   enum search_direction dir;
+   enum search_dir dir;
    int count;
 
    if (index != 0) {
@@ -384,7 +384,7 @@ int *active_inst(int *cursor, int index)
 
 /* This is executed immediately before compressing */
 /* all nops out of the instruction stream */
-void rename_nop(int *begin, int *end)
+static void rename_nop(int *begin, int *end)
 {
    int *scan;
 
@@ -402,7 +402,7 @@ void rename_nop(int *begin, int *end)
 /* The following bit masks are used to transfer 'active' register
    slots between the def/use descriptors and the A32 opcodes.
 */
-int activeRegMask[16] =
+static int activeRegMask[16] =
 {
    0x00000000,
    0x0000000f,
@@ -426,13 +426,13 @@ int activeRegMask[16] =
 
 #define MAX_RENAME_REG 8
 
-int regtest(int inst, int opmask)
+static int regtest(int inst, int opmask)
 {
    return ((inst & opmask) == opmask);
 }
 
 /* funcBegin and funcEnd instructions guaranteed not to be NOP */
-void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
+static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
 {
    int *scan;
    int *rInfo = instInfo;
@@ -578,7 +578,7 @@ void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
 }
 
 /* find first def of reg in given direction */
-int *find_def(int *instInfo, int *rInfo, int reg, enum search_direction dir)
+static int *find_def(int *instInfo, int *rInfo, int reg, enum search_dir dir)
 {
    int *retVal = 0;
    int info;
@@ -605,7 +605,7 @@ int *find_def(int *instInfo, int *rInfo, int reg, enum search_direction dir)
 }
 
 /* find first use of reg in given direction */
-int *find_use(int *instInfo, int *rInfo, int reg, enum search_direction dir)
+static int *find_use(int *instInfo, int *rInfo, int reg, enum search_dir dir)
 {
    int *retVal = 0;
    int info;
@@ -645,7 +645,7 @@ int *find_use(int *instInfo, int *rInfo, int reg, enum search_direction dir)
 /********** peephole optimization funcs *******************/
 /**********************************************************/
 
-void apply_peepholes1(int *funcBegin, int *funcEnd)
+static void apply_peepholes1(int *funcBegin, int *funcEnd)
 {
    int *scan;
    int *scanp1, *scanp2, *scanp3;
@@ -708,7 +708,7 @@ void apply_peepholes1(int *funcBegin, int *funcEnd)
    funcEnd += 2;
 }
 
-void apply_peepholes2(int *instInfo, int *funcBegin, int *funcEnd)
+static void apply_peepholes2(int *instInfo, int *funcBegin, int *funcEnd)
 {
    int *scan;
    int *scanp1, *scanp2, *scanp3, *scanp4, *scanp5;
@@ -785,7 +785,7 @@ void apply_peepholes2(int *instInfo, int *funcBegin, int *funcEnd)
    funcEnd += 6;
 }
 
-void apply_peepholes3(int *instInfo, int *funcBegin, int *funcEnd)
+static void apply_peepholes3(int *instInfo, int *funcBegin, int *funcEnd)
 {
    int *scan;
    int info;
@@ -822,7 +822,7 @@ void apply_peepholes3(int *instInfo, int *funcBegin, int *funcEnd)
    funcEnd += 5;
 }
 
-void apply_peepholes4(int *funcBegin, int *funcEnd)
+static void apply_peepholes4(int *funcBegin, int *funcEnd)
 {
    int *scan, *scanp1;
 
@@ -856,7 +856,7 @@ void apply_peepholes4(int *funcBegin, int *funcEnd)
 /**********************************************************/
 
 /* remove unreachable code by setting to NOP */
-void simplify_branch1(int *funcBegin, int *funcEnd)
+static void simplify_branch1(int *funcBegin, int *funcEnd)
 {
    int **queue;
    char *reachable;
@@ -946,7 +946,7 @@ void simplify_branch1(int *funcBegin, int *funcEnd)
 
 /* recursively follow a chain of unconditional branches */
 /* add set all branch targets to the final address */
-int *rethread_branch(int *branchInst)
+static int *rethread_branch(int *branchInst)
 {
    int* retVal;
    if  ((*branchInst & 0xff000000) == 0xea000000) { // uncond branch
@@ -964,7 +964,7 @@ int *rethread_branch(int *branchInst)
 }
 
 /* rethread unconditional branch chains */
-void simplify_branch2(int *funcBegin, int *funcEnd) {
+static void simplify_branch2(int *funcBegin, int *funcEnd) {
    int *scan;
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
@@ -976,7 +976,7 @@ void simplify_branch2(int *funcBegin, int *funcEnd) {
 
 /* amacc has condtional branches that jump to a compare instruction */
 /* follow chains of these instructions to go directly to final address */
-void simplify_branch3(int *funcBegin, int *funcEnd) {
+static void simplify_branch3(int *funcBegin, int *funcEnd) {
    int *scan;
    int match, tmp;
    for (scan = funcBegin; scan < funcEnd; ++scan) {
@@ -1017,7 +1017,7 @@ void simplify_branch3(int *funcBegin, int *funcEnd) {
 
 /* Now that we have simplified all final branch targets, we */
 /* will simplify and compress out extraneous comparison opcodes. */
-void simplify_branch4(int *funcBegin, int *funcEnd)
+static void simplify_branch4(int *funcBegin, int *funcEnd)
 {
    int *scan;
    for (scan = funcBegin; scan < funcEnd; ++scan) {
@@ -1049,7 +1049,7 @@ void simplify_branch4(int *funcBegin, int *funcEnd)
 
 /* "bcond target1 ; b target2 ; taget1: <inst>;" -> "bnotcond target2;" */
 /* todo: may want to check for chains of intervening nops here */
-void simplify_branch5(int *funcBegin, int *funcEnd)
+static void simplify_branch5(int *funcBegin, int *funcEnd)
 {
    int *scan;
    for (scan = funcBegin; scan < funcEnd; ++scan) {
@@ -1066,7 +1066,7 @@ void simplify_branch5(int *funcBegin, int *funcEnd)
 
 
 /* optimize branch-specific code sequences */
-void simplify_branch(int *funcBegin, int *funcEnd) {
+static void simplify_branch(int *funcBegin, int *funcEnd) {
    simplify_branch1(funcBegin, funcEnd);
    simplify_branch2(funcBegin, funcEnd);
    simplify_branch3(funcBegin, funcEnd);
@@ -1077,7 +1077,7 @@ void simplify_branch(int *funcBegin, int *funcEnd) {
 
 /* remove all NOP instructions ( mov r0, r0 ) and adjust branches */
 /* mode == 0: intra-function repack, mode != 0, inter-function */
-int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
+static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
 {
    int *retVal = funcEnd;
    int *memblk;
@@ -1242,9 +1242,9 @@ int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
 /**** Eliminate nested push/pop pairs where possible ******/
 /**********************************************************/
 
-struct { int *push, *pop; int lev; } pair[2000];
+static struct { int *push, *pop; int lev; } pair[2000];
 
-void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
+static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
 {
    int i, lev = 0;
    int maxlev = 0;
@@ -1401,7 +1401,7 @@ void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
 /****       convert frame vars to registers          ******/
 /**********************************************************/
 
-void rename_register1(int *funcBegin, int *funcEnd)
+static void rename_register1(int *funcBegin, int *funcEnd)
 {
 #define BR 3  /* base register */
 #define MAX_REN_REG 8
@@ -1513,7 +1513,7 @@ int squint_opt(int *begin, int *end)
          funcEnd = scan /* retAddr */;
 
          // verify this function has been prepared for peephole opt
-         if (funcBegin[8] != NOP) continue;
+         if (funcBegin[3] != NOP) continue;
 
          /******************************************/
          /***   convert stack VM to frame VM     ***/
@@ -1545,6 +1545,8 @@ int squint_opt(int *begin, int *end)
    free(tmpbuf);
    return optApplied;
 }
+
+#ifndef SQUINT_SO
 
 /**********************************************************/
 /******** read exe, optimize, write exe *******************/
@@ -1609,3 +1611,5 @@ int main(int argc, char *argv[])
 
    return 0;
 }
+
+#endif

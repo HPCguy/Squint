@@ -26,6 +26,10 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 
+#ifdef SQUINT_SO
+void squint_opt(int *begin, int *end);
+#endif
+
 char *freep, *p, *lp; // current position in source code
 char *freedata, *data, *_data;   // data/bss pointer
 
@@ -505,7 +509,7 @@ int popcount(int i)
 
 /* expression parsing
  * lev represents an operator.
- * because each operator `token` is arranged in order of priority, so
+ * because each operator `token` is arranged in order of priority,
  * large `lev` indicates a high priority.
  *
  * Operator precedence (lower first):
@@ -1821,6 +1825,10 @@ int jit(int poolsz, int *main, int argc, char **argv)
    if (je >= jitmap) die("jitmem too small");
    *tje = reloc_bl(jitmap[((int) main - (int) text) >> 2] - (int) tje);
 
+#ifdef SQUINT_SO
+   if (peephole) squint_opt((int *)jitmem, je);
+#endif
+
    // hack to jump into specific function pointer
    __clear_cache(jitmem, je);
    int *res = bsearch(&sym, sym, 1, 1, (void *) _start);
@@ -2065,6 +2073,10 @@ int elf32(int poolsz, int *main, int elf_fd)
    if (!je) return 1;
    if ((int *) je >= jitmap) die("elf32: jitmem too small");
 
+#ifdef SQUINT_SO
+   if (peephole) squint_opt((int *)code, (int *) je);
+#endif
+
    // elf32_hdr
    *o++ = 0x7f; *o++ = 'E'; *o++ = 'L'; *o++ = 'F';
    *o++ = 1;    *o++ = 1;   *o++ = 1;   *o++ = 0;
@@ -2268,15 +2280,15 @@ int elf32(int poolsz, int *main, int elf_fd)
    // .dynamic (embedded in PT_LOAD of data)
    to = pt_dyn;
    *(int *) to =  5; to += 4; *(int *) to = (int) dynstr_addr;  to += 4;
-   *(int *) to = 10; to += 4; *(int *) to = dynstr_size;       to += 4;
+   *(int *) to = 10; to += 4; *(int *) to = dynstr_size;        to += 4;
    *(int *) to =  6; to += 4; *(int *) to = (int) dynsym_addr;  to += 4;
-   *(int *) to = 11; to += 4; *(int *) to = 16;              to += 4;
+   *(int *) to = 11; to += 4; *(int *) to = 16;                 to += 4;
    *(int *) to = 17; to += 4; *(int *) to = (int) rel_addr;     to += 4;
-   *(int *) to = 18; to += 4; *(int *) to = rel_size;         to += 4;
-   *(int *) to = 19; to += 4; *(int *) to = 8;               to += 4;
+   *(int *) to = 18; to += 4; *(int *) to = rel_size;           to += 4;
+   *(int *) to = 19; to += 4; *(int *) to = 8;                  to += 4;
    *(int *) to =  3; to += 4; *(int *) to = (int) got_addr;     to += 4;
-   *(int *) to =  2; to += 4; *(int *) to = rel_size;         to += 4;
-   *(int *) to = 20; to += 4; *(int *) to = 17;              to += 4;
+   *(int *) to =  2; to += 4; *(int *) to = rel_size;           to += 4;
+   *(int *) to = 20; to += 4; *(int *) to = 17;                 to += 4;
    *(int *) to = 23; to += 4; *(int *) to = (int) rel_addr;     to += 4;
    *(int *) to =  1; to += 4; *(int *) to = libc - dynstr_addr; to += 4;
    *(int *) to =  1; to += 4; *(int *) to = ldso - dynstr_addr; to += 4;
@@ -2293,6 +2305,10 @@ int elf32(int poolsz, int *main, int elf_fd)
       return 1;
    }
    if ((int *) je >= jitmap) die("elf32: jitmem too small");
+
+#ifdef SQUINT_SO
+   if (peephole) squint_opt((int *)code, (int *) je);
+#endif
 
    // Relocate __libc_start_main() and main().
    *((int *) (code + 0x28)) = reloc_bl(plt_func_addr[0] - code_addr - 0x28);

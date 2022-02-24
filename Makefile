@@ -1,4 +1,5 @@
 CFLAGS = -O0 -Wall -Wno-misleading-indentation
+CURR_DIR=$(abspath $(shell pwd))
 OBJ_DIR = elf
 TEST_DIR = tests
 TEST_SRC = $(wildcard $(TEST_DIR)/*.c)
@@ -6,7 +7,7 @@ TEST_OBJ = $(TEST_SRC:.c=.o)
 
 BIN = mc
 PEEP = squint
-EXEC = $(BIN) $(BIN)-native $(PEEP)
+EXEC = $(BIN) $(BIN)-native $(PEEP) $(BIN)-so
 
 include mk/arm.mk
 include mk/common.mk
@@ -16,6 +17,12 @@ all: $(EXEC)
 $(BIN): $(BIN).c
 	$(VECHO) "  CC+LD\t\t$@\n"
 	$(Q)$(ARM_CC) $(CFLAGS) -o $@ $< -g -ldl
+
+$(BIN)-so: $(BIN).c $(PEEP).c
+	$(VECHO) "  CC+LD\t\t$@\n"
+	$(Q)$(ARM_CC) -DSQUINT_SO $(CFLAGS) -c -fpic $(PEEP).c
+	$(Q)$(ARM_CC) -shared -o lib$(PEEP).so $(PEEP).o
+	$(Q)$(ARM_CC) -DSQUINT_SO -g $(CFLAGS) $(CURR_DIR)/lib$(PEEP).so -o $@ $< -ldl
 
 $(BIN)-native: $(BIN).c
 	$(VECHO) "  CC+LD\t\t$@\n"
@@ -59,12 +66,17 @@ SHELL_HACK := $(shell mkdir -p $(OBJ_DIR))
 $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
 	$(VECHO) "[*** verify $< <JIT> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN) $< 2 $(REDIR)
+	$(VECHO) "[*** verify $< <JIT-opt> *******]\n"
+	$(Q)$(ARM_EXEC) ./$(BIN)-so -Op $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN) -o $(OBJ_DIR)/$(notdir $(basename $<)) $< $(REDIR)
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<)) 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF-opt> *******]\n"
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt -Op -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
 	$(Q) scripts/peep $(OBJ_DIR)/$(notdir $(basename $<))-opt
+	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
+	$(VECHO) "[*** verify $< <ELF-so-opt> *******]\n"
+	$(Q)$(ARM_EXEC) ./$(BIN)-so -Op -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF-self> **]\n"
 	$(Q)$(ARM_EXEC) ./$(OBJ_DIR)/$(BIN) $< 2 $(REDIR)
@@ -81,4 +93,4 @@ dump-ir: $(BIN)
 
 ## Remove all generated files
 clean:
-	$(RM) $(EXEC) $(OBJ_DIR)/*
+	$(RM) $(EXEC) $(OBJ_DIR)/* $(PEEP).o lib$(PEEP).so
