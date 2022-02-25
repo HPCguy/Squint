@@ -26,6 +26,10 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 
+#if 0
+float strtof(char *s, char **e);
+#endif
+
 #ifdef SQUINT_SO
 void squint_opt(int *begin, int *end);
 #endif
@@ -44,7 +48,10 @@ int  cntc;          // !0 -> in a continue-stmt context
 int *tsize;         // array (indexed by type) of type sizes
 int tnew;           // next available type
 int tk;             // current token
-int ival;           // current token value
+union {
+   int i;
+   float f;
+} tkv;              // current token value
 int ty;             // current expression type
 int loc;            // local variable offset
 int line;           // current line number
@@ -95,8 +102,8 @@ struct member_s {
 // ( >= 128 so not to collide with ASCII-valued tokens)
 enum {
    Func=128, Syscall, Main, ClearCache, Glo, Par, Loc, Keyword, Id, Load, Enter,
-   Num, Enum, Char, Int, Float, Struct, Union, Sizeof, Return, Goto, Break,
-   Continue, If, DoWhile, While, For, Switch, Case, Default, Else, Label,
+   Num, NumF, Enum, Char, Int, Float, Struct, Union, Sizeof, Return, Goto,
+   Break, Continue, If, DoWhile, While, For, Switch, Case, Default, Else, Label,
    Assign, // operator =, keep Assign as highest priority operator
    OrAssign, XorAssign, AndAssign, ShlAssign, ShrAssign, // |=, ^=, &=, <<=, >>=
    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, // +=, -=, *=, /=, %=
@@ -156,31 +163,34 @@ enum {
     */
 
    IMM , /*  1 */
-   /* IMM <num> to put immediate <num> into general register */
+   /* IMM <num> to put immediate <num> into R0 */
 
-   JMP , /*  2 */
+   IMMF , /* 2 */
+   /* IMM <num> to put immediate <num> into S0 */
+
+   JMP , /*  3 */
    /* JMP <addr> will unconditionally set the value PC register to <addr> */
 
-   JSR , /*  3 */
+   JSR , /*  4 */
    /* Jump to address, setting link register for return address */
 
-   BZ  , /*  4 : conditional jump if general register is zero (jump-if-zero) */
-   BNZ , /*  5 : conditional jump if general register is not zero */
+   BZ  , /*  5 : conditional jump if R0 is zero (jump-if-zero) */
+   BNZ , /*  6 : conditional jump if R0 is not zero */
 
-   ENT , /*  6 */
+   ENT , /*  7 */
    /* ENT <size> is called when we are about to enter the function call to
     * "make a new calling frame". It will store the current PC value onto
     * the stack, and save some space(<size> bytes) to store the local
     * variables for function.
     */
 
-   ADJ , /*  7 */
+   ADJ , /*  8 */
    /* ADJ <size> is to adjust the stack, to "remove arguments from frame"
     * The following pseudocode illustrates how ADJ works:
     *     if (op == ADJ) { sp += *pc++; } // add esp, <size>
     */
 
-   LEV , /*  8 */
+   LEV , /*  9 */
    /* LEV fetches bookkeeping info to resume previous execution.
     * There is no POP instruction in our design, and the following pseudocode
     * illustrates how LEV works:
@@ -188,52 +198,62 @@ enum {
     *                  pc = (int *) *sp++; } // restore call frame and PC
     */
 
-   LI  , /*  9 */
-   /* LI loads an integer into general register from a given memory
-    * address which is stored in general register before execution.
+   PSH , /* 10 */
+   /* PSH pushes the value in R0 onto the stack */
+
+   LC  , /* 11 */
+   /* LC loads a character into R0 from a given memory
+    * address which is stored in R0 before execution.
     */
 
-   LC  , /* 10 */
-   /* LC loads a character into general register from a given memory
-    * address which is stored in general register before execution.
+   LI  , /* 12 */
+   /* LI loads an integer into R0 from a given memory
+    * address which is stored in R0 before execution.
     */
 
-   SI  , /* 11 */
-   /* SI stores the integer in general register into the memory whose
+   LF  , /* 13 */
+   /* LI loads a float into S0 from a given memory
+    * address which is stored in R0 before execution.
+    */
+
+   SC  , /* 14 */
+   /* SC stores the character in R0 into the memory whose
     * address is stored on the top of the stack.
     */
 
-   SC  , /* 12 */
-   /* SC stores the character in general register into the memory whose
+   SI  , /* 15 */
+   /* SI stores the integer in R0 into the memory whose
     * address is stored on the top of the stack.
     */
 
-   PSH , /* 13 */
-   /* PSH pushes the value in general register onto the stack */
+   SF  , /* 16 */
+   /* SI stores the float in S0 into the memory whose
+    * address is stored on the top of the stack.
+    */
 
-   OR  , /* 14 */  XOR , /* 15 */  AND , /* 16 */
-   EQ  , /* 17 */  NE  , /* 18 */
-   LT  , /* 19 */  GT  , /* 20 */  LE  , /* 21 */ GE  , /* 22 */
-   SHL , /* 23 */  SHR , /* 24 */
-   ADD , /* 25 */  SUB , /* 26 */  MUL , /* 27 */ DIV, /* 28 */ MOD, /* 29 */
+   OR  , /* 17 */  XOR , /* 18 */  AND , /* 19 */
+   EQ  , /* 20 */  NE  , /* 21 */
+   LT  , /* 22 */  GT  , /* 23 */  LE  , /* 24 */ GE  , /* 25 */
+   SHL , /* 26 */  SHR , /* 27 */
+   ADD , /* 28 */  SUB , /* 29 */  MUL , /* 30 */ DIV, /* 31 */ MOD, /* 32 */
    /* arithmetic instructions
     * Each operator has two arguments: the first one is stored on the top
-    * of the stack while the second is stored in general register.
+    * of the stack while the second is stored in R0.
     * After the calculation is done, the argument on the stack will be poped
-    * off and the result will be stored in general register.
+    * off and the result will be stored in R0.
     */
 
-   SYSC, /* 30 system call */
-   CLCA, /* 31 clear cache, used by JIT compilation */
+   SYSC, /* 33 system call */
+   CLCA, /* 34 clear cache, used by JIT compilation */
 
-   PHD ,  /* 32 PeepHole Disable next assembly instruction in optimizer */
-   PHR0 , /* 33 Inform PeepHole optimizer that R0 holds a return value */
+   PHD ,  /* 35 PeepHole Disable next assembly instruction in optimizer */
+   PHR0 , /* 36 Inform PeepHole optimizer that R0 holds a return value */
 
    INVALID
 };
 
 // types
-enum { CHAR, INT, PTR = 256, PTR2 = 512 };
+enum { CHAR, INT, FLOAT, PTR = 256, PTR2 = 512 };
 
 // ELF generation
 char **plt_func_addr;
@@ -330,27 +350,9 @@ void next()
       /* Calculate the constant */
       // first byte is a number, and it is considered a numerical value
       else if (tk >= '0' && tk <= '9') {
-         /* Parse with 3 conditions:
-          * 1) not starting with 0 :=> decimal number;
-          * 2) starting with 0x :=> hex number;
-          * 3) starting with 0: octal number;
-          */
-         if ((ival = tk - '0')) {
-            while (*p >= '0' && *p <= '9')
-               ival = ival * 10 + *p++ - '0';
-         }
-         // first digit is 0 and it starts with 'x', and it is considered
-         // to be a hexadecimal number
-         else if (*p == 'x' || *p == 'X') {
-            while ((tk = *++p) &&
-                   ((tk >= '0' && tk <= '9') ||
-                    (tk >= 'a' && tk <= 'f') || (tk >= 'A' && tk <= 'F')))
-               ival = ival * 16 + (tk & 15) + (tk >= 'A' ? 9 : 0);
-         } else { // considered octal
-            while (*p >= '0' && *p <= '7')
-               ival = ival * 8 + *p++ - '0';
-         }
-         tk = Num; // token is numeric, return
+         tk = Num; // token is char or int
+         tkv.i = strtoul((pp = p - 1), &p, 0); // octal, decimal, hex parsing
+         if (*p == '.') { tkv.f = strtof(pp, &p); tk = NumF; } // float
          return;
       }
       switch (tk) {
@@ -362,8 +364,8 @@ void next()
             while (le < e) {
                int off = le - base; // Func IR instruction memory offset
                printf("%04d: %8.4s", off,
-                     & "LEA  IMM  JMP  JSR  BZ   BNZ  ENT  ADJ  LEV  "
-                       "LI   LC   SI   SC   PSH  "
+                     & "LEA  IMM  IMMF JMP  JSR  BZ   BNZ  ENT  ADJ  LEV  "
+                       "PSH  LC   LI   LF   SC   SI   SF   "
                        "OR   XOR  AND  EQ   NE   LT   GT   LE   GE   "
                        "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
                        "SYSC CLCA PHD  PHR0" [*++le * 5]);
@@ -387,42 +389,6 @@ void next()
       case '\f':
       case '\r':
          break;
-      case '#': // skip include statements, and most preprocessor directives
-         if (!strncmp(p, "define", 6)) {
-            p += 6; next();
-            if (tk == Id) {
-               next();
-               if (tk == Num) {
-                  id->class = Num; id->type = INT; id->val = ival;
-               }
-            }
-         }
-         else if ((t = !strncmp(p, "ifdef", 5)) || !strncmp(p, "ifndef", 6)) {
-            p += 6; next();
-            if (tk != Id) fatal("No identifier");
-            ++pplev;
-            if (( ((id->class != Num) ? 0 : 1) ^ (t ? 1 : 0) ) & 1) {
-               t = pplevt; pplevt = pplev - 1;
-               while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
-               do next();
-               while (pplev != pplevt);
-               pplevt = t;
-               break;
-            }
-         }
-         else if (!strncmp(p, "if", 2)) {
-            // ignore side effects of preprocessor if-statements
-            ++pplev;
-         }
-         else if(!strncmp(p, "endif", 5)) {
-            if (--pplev < 0) fatal("preprocessor context nesting error");
-            if (pplev == pplevt) {
-               while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
-               return;
-            }
-         }
-         while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
-         break;
       case '/':
          if (*p == '/') { // comment
             while (*p != 0 && *p != '\n') ++p;
@@ -439,26 +405,57 @@ void next()
             else tk = Div; return;
          }
          break;
+      case '#': // skip include statements, and most preprocessor directives
+         if (!strncmp(p, "define", 6)) {
+            p += 6; next();
+            if (tk == Id) {
+               next();
+               if (tk == Num) {
+                  id->class = Num; id->type = INT; id->val = tkv.i;
+               }
+            }
+         }
+         else if ((t = !strncmp(p, "ifdef", 5)) || !strncmp(p, "ifndef", 6)) {
+            p += 6; next();
+            if (tk != Id) fatal("No identifier");
+            ++pplev;
+            if (( ((id->class != Num) ? 0 : 1) ^ (t ? 1 : 0) ) & 1) {
+               t = pplevt; pplevt = pplev - 1;
+               while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
+               do next(); while (pplev != pplevt);
+               pplevt = t;
+            }
+         }
+         else if (!strncmp(p, "if", 2)) {
+            // ignore side effects of preprocessor if-statements
+            ++pplev;
+         }
+         else if(!strncmp(p, "endif", 5)) {
+            if (--pplev < 0) fatal("preprocessor context nesting error");
+            if (pplev == pplevt) return;
+         }
+         while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
+         break;
       case '\'': // quotes start with character (string)
       case '"':
          pp = data;
          while (*p != 0 && *p != tk) {
-            if ((ival = *p++) == '\\') {
-               switch (ival = *p++) {
-               case 'n': ival = '\n'; break; // new line
-               case 't': ival = '\t'; break; // horizontal tab
-               case 'v': ival = '\v'; break; // vertical tab
-               case 'f': ival = '\f'; break; // form feed
-               case 'r': ival = '\r'; break; // carriage return
-               case '0': ival = '\0'; break; // an int with value 0
+            if ((tkv.i = *p++) == '\\') {
+               switch (tkv.i = *p++) {
+               case 'n': tkv.i = '\n'; break; // new line
+               case 't': tkv.i = '\t'; break; // horizontal tab
+               case 'v': tkv.i = '\v'; break; // vertical tab
+               case 'f': tkv.i = '\f'; break; // form feed
+               case 'r': tkv.i = '\r'; break; // carriage return
+               case '0': tkv.i = '\0'; break; // an int with value 0
                }
             }
             // if it is double quotes (string literal), it is considered as
             // a string, copying characters to data
-            if (tk == '"') *data++ = ival;
+            if (tk == '"') *data++ = tkv.i;
          }
          ++p;
-         if (tk == '"') ival = (int) pp; else tk = Num;
+         if (tk == '"') tkv.i = (int) pp; else tk = Num;
          return;
       case '=': if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return;
       case '*': if (*p == '=') { ++p; tk = MulAssign; }
@@ -541,7 +538,7 @@ void expr(int lev)
    int otk;
    int t, *b, sz, *c;
    struct ident_s *d;
-   struct member_s *m;
+   struct member_s *m /* jk = 0 */;
 
    switch (tk) {
    case Id:
@@ -588,9 +585,10 @@ resolve_fnproto:
       break;
    // directly take an immediate value as the expression value
    // IMM recorded in emit sequence
-   case Num: *--n = ival; *--n = Num; next(); ty = INT; break;
+   case Num : *--n = tkv.i; *--n = Num;  next(); ty = INT; break;
+   case NumF: *--n = tkv.i; *--n = NumF; next(); ty = FLOAT; break;
    case '"': // string, as a literal in data segment
-      *--n = ival; *--n = Num; next();
+      *--n = tkv.i; *--n = Num; next();
       // continuous `"` handles C-style multiline text such as `"abc" "def"`
       while (tk == '"') next();
       data = (char *) (((int) data + sizeof(int)) & (-sizeof(int)));
@@ -603,10 +601,12 @@ resolve_fnproto:
       next();
       if (tk != '(') fatal("open parentheses expected in sizeof");
       next();
-      ty = INT;
+      ty = INT; // Enum
       switch (tk) {
-      case Int: next(); break;
-      case Char: next(); ty = CHAR; break;
+      case Char:
+      case Int:
+      case Float:
+         ty = tk - Char; next(); break;
       case Struct:
       case Union:
          next();
@@ -617,16 +617,18 @@ resolve_fnproto:
       while (tk == Mul) { next(); ty += PTR; }
       if (tk != ')') fatal("close parentheses expected in sizeof");
       next();
-      *--n = ty >= PTR ? sizeof(int) : tsize[ty]; *--n = Num;
+      *--n = (ty >= PTR) ? sizeof(int) : tsize[ty]; *--n = Num;
       ty = INT;
       break;
    // Type cast or parenthesis
    case '(':
       next();
-      if (tk == Int || tk == Char || tk == Struct || tk == Union) {
+      if (tk >= Char && tk <= Union) {
          switch (tk) {
-         case Int: next(); t = INT; break;
-         case Char: next(); t = CHAR; break;
+         case Char:
+         case Int:
+         case Float:
+            t = tk - Char; next(); break;
          default:
             next();
             if (tk != Id) fatal("bad struct/union type");
@@ -680,9 +682,10 @@ resolve_fnproto:
    case Sub:
       next();
       expr(Inc);
-      if (*n == Num) n[1] = -n[1];
-      else { *--n = -1; *--n = Num; --n; *n = (int) (n + 3); *--n = Mul; }
       ty = INT;
+      if (*n == Num) n[1] = -n[1];
+      else if (*n == NumF) { n[1] ^= 0x80000000; ty = FLOAT; }
+      else { *--n = -1; *--n = Num; --n; *n = (int) (n + 3); *--n = Mul; }
       break;
    case Div:
    case Mod:
@@ -907,9 +910,9 @@ resolve_fnproto:
          break;
       case Dot:
          ty += PTR;
-         if (n[0] == Load && n[1] > INT && n[1] < PTR) n += 2; // struct
+         if (n[0] == Load && n[1] > FLOAT && n[1] < PTR) n += 2; // struct
       case Arrow:
-         if (ty <= PTR+INT || ty >= PTR2) fatal("structure expected");
+         if (ty <= PTR+FLOAT || ty >= PTR2) fatal("structure expected");
          next();
          if (tk != Id) fatal("structure member expected");
          m = members[ty - PTR]; while (m && m->id != id) m = m->next;
@@ -919,9 +922,7 @@ resolve_fnproto:
             *--n = Add;
          }
          ty = m->type;
-         if (ty <= INT || ty >= PTR) *--n = (ty == CHAR) ? CHAR : INT;
-         else *--n = ty; // struct, not struct pointer
-         *--n = Load;
+         *--n = (ty >= PTR) ? INT : ty; *--n = Load;
          next();
          break;
       case Bracket:
@@ -938,9 +939,7 @@ resolve_fnproto:
          }
          if (*n == Num && *b == Num) n[1] += b[1];
          else { *--n = (int) b; *--n = Add; }
-         if ((ty = t) <= INT || ty >= PTR) *--n = (ty == CHAR) ? CHAR : INT;
-         else *--n = ty; // struct, not struct pointer
-         *--n = Load;
+         *--n = ((ty = t) >= PTR) ? INT : ty; *--n = Load;
          break;
       default:
          printf("%d: compiler error tk=%d\n", line, tk); exit(-1);
@@ -961,25 +960,27 @@ void gen(int *n)
    case Num: // get the value of integer
       *++e = IMM; *++e = n[1];
       break;
+   case NumF: // get the value of float
+      *++e = IMMF; *++e = n[1];
+      break;
    case Load:
       gen(n + 2); // load the value
-      if (n[1] > INT && n[1] < PTR) fatal("struct copies not yet supported");
-      *++e = (n[1] == CHAR) ? LC : LI;
+      if (n[1] > FLOAT && n[1] < PTR) fatal("struct copies not yet supported");
+      *++e = (n[1] >= PTR) ? LI : LC + n[1];
       break;
    case Loc: // get the value of variable
       *++e = LEA; *++e = n[1];
       break;
-   case '{':
-      // parse expression or statment from AST
+   case '{': // parse expression or statment from AST
       gen((int *) n[1]); gen(n + 2); break;
    case Assign: // assign the value to variables
       gen((int *) n[2]); *++e = PSH; gen(n + 3);
       // Add SC/SI instruction to save value in register to variable address
       // held on stack.
-      *++e = (n[1] == CHAR) ? SC : SI;
+      if (n[1] > FLOAT && n[1] < PTR) fatal("struct assign not yet supported");
+      *++e = (n[1] >= PTR) ? SI : SC + n[1];
       break;
-   // increment or decrement variables
-   case Inc:
+   case Inc: // increment or decrement variables
    case Dec:
       gen(n + 2);
       *++e = PSH; *++e = (n[1] == CHAR) ? LC : LI; *++e = PSH;
@@ -1059,8 +1060,7 @@ void gen(int *n)
          if (!(int *) *b) l = 0; else b = (int *) *b; ++j;
       }
       if (j > 0) --j;
-      // push parameters
-      while (j >= 0 && k > 0) {
+      while (j >= 0 && k > 0) { // push arguments
          gen(b + 1);
          if (peephole && i != ClearCache) *++e = PHD;
          *++e = PSH; --j; b = (int *) a[j];
@@ -1214,11 +1214,16 @@ void stmt(int ctx)
          next();
       }
       return;
-   case Int:
    case Char:
+   case Int:
+   case Float:
    case Struct:
    case Union:
       switch (tk) {
+      case Char:
+      case Int:
+      case Float:
+         bt = tk - Char; next(); break;
       case Struct:
       case Union:
          atk = tk; next();
@@ -1235,10 +1240,12 @@ void stmt(int ctx)
             tsize[bt] = 0; // for unions
             i = 0;
             while (tk != '}') {
-               int mbt = INT;
+               int mbt = INT; // Enum
                switch (tk) {
-               case Int: next(); break;
-               case Char: next(); mbt = CHAR; break;
+               case Char:
+               case Int:
+               case Float:
+                  mbt = tk - Char; next(); break;
                case Struct:
                case Union:
                   next();
@@ -1270,11 +1277,6 @@ void stmt(int ctx)
             if (atk != Union) tsize[bt] = i;
          }
          break;
-      case Int:
-      case Char:
-         bt = (tk == Int) ? INT : CHAR; // basetype
-         next();
-         break;
       }
       /* parse statement such as 'int a, b, c;'
        * "enum" finishes by "tk == ';'", so the code below will be skipped.
@@ -1299,7 +1301,7 @@ void stmt(int ctx)
          id->type = ty;
          if (tk == '(') { // function
             if (ctx != Glo) fatal("nested function");
-            if (ty > INT && ty < PTR) fatal("return type can't be struct");
+            if (ty > FLOAT && ty < PTR) fatal("return type can't be struct");
             if (id->class == Syscall && id->val)
                fatal("forward decl location failed one pass compilation");
             if (id->class == Func &&
@@ -1325,7 +1327,7 @@ void stmt(int ctx)
             *--n = ld - loc; *--n = Enter;
             cas = 0;
             gen(n);
-unwind_func:   id = sym;
+unwind_func: id = sym;
             while (id->tk) { // unwind symbol table locals
                if (id->class == Loc || id->class == Par) {
                   id->class = id->hclass;
@@ -1344,7 +1346,7 @@ unwind_func:   id = sym;
             }
          }
          else {
-            int sz = ((ty <= INT || ty >= PTR) ? sizeof(int) : tsize[ty]);
+            int sz = (ty >= PTR) ? sizeof(int) : tsize[ty];
             if (tk == Bracket) { // support 1d global array
                if (ctx != Glo)
                   fatal("Array decl only supported for global variables");
@@ -1355,13 +1357,14 @@ unwind_func:   id = sym;
                sz *= n[1]; n += 2;
                ty += PTR; id->type = ty;
             }
+            sz = (sz + 3) & -4;
             id->hclass = id->class; id->class = ctx;
             id->htype = id->type; id->type = ty;
             id->hval = id->val;
             if (ctx == Glo) { id->val = (int) data; data += sz; }
             else if (ctx == Loc) { id->val = (ld += sz / sizeof(int)); }
             else if (ctx == Par) {
-               if (ty > INT && ty < PTR) // local struct decl
+               if (ty > FLOAT && ty < PTR) // local struct decl
                   fatal("struct parameters must be pointers");
                id->val = ld++;
             }
@@ -1583,8 +1586,12 @@ int *codegen(int *jitmem, int *jitmap)
             *je++ = 0xe3a00000 + tmp;         // mov r0, #(tmp)
          else { if (!imm0) imm0 = je; *il++ = (int) (je++); *iv++ = tmp; }
          break;
-      case JSR:
+      case IMMF:
+         tmp = (int) *pc++;
+         if (!imm0) imm0 = je; *il++ = (int) (je++) + 2; *iv++ = tmp;
+         break;
       case JMP:
+      case JSR:
          pc++; je++; // postponed till second pass
          break;
       case BZ:
@@ -1609,20 +1616,26 @@ int *codegen(int *jitmem, int *jitmap)
       case LEV:
          *je++ = 0xe28bd000; *je++ = 0xe8bd8800; // add sp, fp, #0; pop {fp, pc}
          break;
+      case PSH:
+         *je++ = 0xe52d0004;                     // push {r0}
+         break;
+      case LC:
+         *je++ = 0xe5d00000; if (signed_char)  *je++ = 0xe6af0070; // ldrb r0, [r0]
+         break;
       case LI:
          *je++ = 0xe5900000;                     // ldr r0, [r0]
          break;
-      case LC:
-         *je++ = 0xe5d00000; if (signed_char)  *je++ = 0xe6af0070; // ldrb r0, [r0]; (sxtb r0, r0)
-         break;
-      case SI:
-         *je++ = 0xe49d1004; *je++ = 0xe5810000; // pop {r1}; str r0, [r1]
+      case LF:
+         *je++ = 0xed900a00;                     // vldr s0, [r0]
          break;
       case SC:
          *je++ = 0xe49d1004; *je++ = 0xe5c10000; // pop {r1}; strb r0, [r1]
          break;
-      case PSH:
-         *je++ = 0xe52d0004;                     // push {r0}
+      case SI:
+         *je++ = 0xe49d1004; *je++ = 0xe5810000; // pop {r1}; str r0, [r1]
+         break;
+      case SF:
+         *je++ = 0xe49d1004; *je++ = 0xed810a00; // pop {r1}; vstr s0, [r1]
          break;
       case OR:
          *je++ = 0xe49d1004; *je++ = 0xe1810000; // pop {r1}; orr r0, r1, r0
@@ -1739,6 +1752,11 @@ int *codegen(int *jitmem, int *jitmap)
             if (tmp & 1) {
                // ldr pc, [pc, #..]
                *(int *) (tmp - 1) = 0xe59ff000 | ((int) je - tmp - 7);
+            } else if (tmp & 2) {
+               if ((int) je > ((tmp - 2) + 255*4 + 8))
+                  die("codegen: float constant too far");
+               // vldr s0, [pc, #..]
+               *(int *) (tmp - 2) = 0xed9f0a00 | (((int) je - tmp - 6) >> 2);
             } else {
                // ldr r0, [pc, #..]
                *(int *) tmp = 0xe59f0000 | ((int) je - tmp - 8);
@@ -2434,6 +2452,7 @@ int main(int argc, char **argv)
    // add primitive types
    tsize[tnew++] = sizeof(char);
    tsize[tnew++] = sizeof(int);
+   tsize[tnew++] = sizeof(float);
 
    --argc; ++argv;
    while (argc > 0 && **argv == '-') {
