@@ -371,6 +371,17 @@ void next()
                   ++le;
                   if (*le > (int) base && *le <= (int) e)
                      printf(" %04d\n", off + ((*le - (int) le) >> 2) + 1);
+                  else if (*le < -256000000) {
+                     struct ident_s *scan = sym;
+                     for (; scan->tk; ++scan)
+                        if (scan->val == *le) {
+                           printf(" &%.*s", scan->hash & 0x3f, scan->name);
+                           if (src == 2) printf(" (%08x)", *le);
+                           printf("\n");
+                           break;
+                        }
+                     if (!scan->tk) printf(" %08x\n", *le);
+                  }
                   else
                      printf(" %d\n", *le);
                }
@@ -2438,7 +2449,7 @@ int main(int argc, char **argv)
    --argc; ++argv;
    while (argc > 0 && **argv == '-') {
       if ((*argv)[1] == 's') {
-         src = 1; --argc; ++argv;
+         src = ((*argv)[2] == 'i') ? 2 : 1; --argc; ++argv;
       }
       else if (!strcmp(*argv, "-fsigned-char")) {
          signed_char = 1; --argc; ++argv;
