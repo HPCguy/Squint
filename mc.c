@@ -80,7 +80,7 @@ struct ident_s {
    int class, hclass; // FUNC, GLO (global var), LOC (local var), Syscall
    int type, htype;   // data type such as char and int
    int val, hval;
-   int stype;
+   int etype; // extended type info
 } *id,  // currently parsed identifier
   *sym; // symbol table (simple list of identifiers)
 
@@ -201,41 +201,44 @@ enum {
    PSH , /* 10 */
    /* PSH pushes the value in R0 onto the stack */
 
-   LC  , /* 11 */
+   PSHF , /* 11 */
+   /* PSH pushes the value in R0 onto the stack */
+
+   LC  , /* 12 */
    /* LC loads a character into R0 from a given memory
     * address which is stored in R0 before execution.
     */
 
-   LI  , /* 12 */
+   LI  , /* 13 */
    /* LI loads an integer into R0 from a given memory
     * address which is stored in R0 before execution.
     */
 
-   LF  , /* 13 */
+   LF  , /* 14 */
    /* LI loads a float into S0 from a given memory
     * address which is stored in R0 before execution.
     */
 
-   SC  , /* 14 */
+   SC  , /* 15 */
    /* SC stores the character in R0 into the memory whose
     * address is stored on the top of the stack.
     */
 
-   SI  , /* 15 */
+   SI  , /* 16 */
    /* SI stores the integer in R0 into the memory whose
     * address is stored on the top of the stack.
     */
 
-   SF  , /* 16 */
+   SF  , /* 17 */
    /* SI stores the float in S0 into the memory whose
     * address is stored on the top of the stack.
     */
 
-   OR  , /* 17 */  XOR , /* 18 */  AND , /* 19 */
-   EQ  , /* 20 */  NE  , /* 21 */
-   LT  , /* 22 */  GT  , /* 23 */  LE  , /* 24 */ GE  , /* 25 */
-   SHL , /* 26 */  SHR , /* 27 */
-   ADD , /* 28 */  SUB , /* 29 */  MUL , /* 30 */ DIV, /* 31 */ MOD, /* 32 */
+   OR  , /* 18 */  XOR , /* 19 */  AND , /* 20 */
+   EQ  , /* 21 */  NE  , /* 22 */
+   LT  , /* 23 */  GT  , /* 24 */  LE  , /* 25 */ GE  , /* 26 */
+   SHL , /* 27 */  SHR , /* 28 */
+   ADD , /* 29 */  SUB , /* 30 */  MUL , /* 31 */ DIV, /* 32 */ MOD, /* 33 */
    /* arithmetic instructions
     * Each operator has two arguments: the first one is stored on the top
     * of the stack while the second is stored in R0.
@@ -243,11 +246,11 @@ enum {
     * off and the result will be stored in R0.
     */
 
-   SYSC, /* 33 system call */
-   CLCA, /* 34 clear cache, used by JIT compilation */
+   SYSC, /* 34 system call */
+   CLCA, /* 35 clear cache, used by JIT compilation */
 
-   PHD ,  /* 35 PeepHole Disable next assembly instruction in optimizer */
-   PHR0 , /* 36 Inform PeepHole optimizer that R0 holds a return value */
+   PHD ,  /* 36 PeepHole Disable next assembly instruction in optimizer */
+   PHR0 , /* 37 Inform PeepHole optimizer that R0 holds a return value */
 
    INVALID
 };
@@ -302,7 +305,13 @@ int ef_getidx(char *name) // get cache index of external function
          void *divmod_handle = dlopen("libgcc_s.so.1", 1);
          if (!divmod_handle) fatal("failed to open libgcc_s.so.1");
          dladdr = (int) dlsym(divmod_handle, name);
-         if (!dladdr) fatal("bad function call");
+         if (!dladdr) // fatal("bad function call");
+         {
+            void *libm_handle = dlopen("libm.so.6", 1);
+            if (!libm_handle) fatal("failed to open libm.so.6");
+            dladdr = (int) dlsym(libm_handle, name);
+            if (!dladdr) fatal("bad function call");
+         }
          ef_add(name, dladdr);
       }
    }
@@ -365,11 +374,11 @@ void next()
                int off = le - base; // Func IR instruction memory offset
                printf("%04d: %8.4s", off,
                      & "LEA  IMM  IMMF JMP  JSR  BZ   BNZ  ENT  ADJ  LEV  "
-                       "PSH  LC   LI   LF   SC   SI   SF   "
+                       "PSH  PSHF LC   LI   LF   SC   SI   SF   "
                        "OR   XOR  AND  EQ   NE   LT   GT   LE   GE   "
                        "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
                        "SYSC CLCA PHD  PHR0" [*++le * 5]);
-               if (*le <= ADJ) {
+               if (*le < ADJ) {
                   ++le;
                   if (*le > (int) base && *le <= (int) e)
                      printf(" %04d\n", off + ((*le - (int) le) >> 2) + 1);
@@ -386,6 +395,10 @@ void next()
                   }
                   else
                      printf(" %d\n", *le);
+               }
+               else if (*le == ADJ) {
+                  ++le;
+                  printf(" %d\n", *le & 0xf);
                }
                else if (*le == SYSC) {
                   printf(" %s\n", ef_cache[*(++le)]->name);
@@ -547,7 +560,7 @@ int popcount(int i)
 void expr(int lev)
 {
    int otk;
-   int t, *b, sz, *c;
+   int t, tt, nf, *b, sz, *c;
    struct ident_s *d;
    struct member_s *m /* jk = 0 */;
 
@@ -560,6 +573,9 @@ void expr(int lev)
          if (d->class < Func || d->class > ClearCache) {
             if (d->class != 0) fatal("bad function call");
             d->type = INT;
+            d->etype = 0;
+            // printf("%d: %.*s(): assuming any/all args are type int\n",
+            //        line, d->hash & 0x3f, d->name);
 resolve_fnproto:
             d->class = Syscall;
             int namelen = d->hash & 0x3f;
@@ -569,17 +585,20 @@ resolve_fnproto:
             d->name[namelen] = ch;
          }
          next();
-         t = 0; b = 0; // argument count
+         t = 0; b = 0; tt = 0; nf = 0; // argument count
          while (tk != ')') {
             expr(Assign); *--n = (int) b; b = n; ++t;
+            tt = tt * 2; if (ty == FLOAT) { ++nf; ++tt; }
             if (tk == ',') {
                next();
                if (tk == ')') fatal("unexpected comma in function call");
             } else if (tk != ')') fatal("missing comma in function call");
          }
+         tt = (tt << 8) + (nf << 4) + t;
+         if (d->etype && (d->etype != tt) ) fatal("argument type mismatch");
          next();
          // function or system call id
-         *--n = t; *--n = d->val; *--n = (int) b; *--n = d->class;
+         *--n = tt; *--n = t; *--n = d->val; *--n = (int) b; *--n = d->class;
          ty = d->type;
       }
       // enumeration, only enums have ->class == Num
@@ -603,7 +622,7 @@ resolve_fnproto:
       // continuous `"` handles C-style multiline text such as `"abc" "def"`
       while (tk == '"') next();
       data = (char *) (((int) data + sizeof(int)) & (-sizeof(int)));
-      ty = PTR;
+      ty = CHAR + PTR;
       break;
    /* SIZEOF_expr -> 'sizeof' '(' 'TYPE' ')'
     * FIXME: not support "sizeof (Id)".
@@ -622,7 +641,7 @@ resolve_fnproto:
       case Union:
          next();
          if (tk != Id) fatal("bad struct/union type");
-         ty = id->stype; next(); break;
+         ty = id->etype; next(); break;
       }
       // multi-level pointers, plus `PTR` for each level
       while (tk == Mul) { next(); ty += PTR; }
@@ -643,14 +662,14 @@ resolve_fnproto:
          default:
             next();
             if (tk != Id) fatal("bad struct/union type");
-            t = id->stype; next(); break;
+            t = id->etype; next(); break;
          }
          // t: pointer
          while (tk == Mul) { next(); t += PTR; }
          if (tk != ')') fatal("bad cast");
          next();
          expr(Inc); // cast has precedence as Inc(++)
-         ty = t;
+         ty = t;  // jk type conversion here... careful
       } else {
          expr(Assign);
          while (tk == ',') { next(); expr(Assign); }
@@ -664,7 +683,7 @@ resolve_fnproto:
       if (ty < PTR) fatal("bad dereference");
       ty -= PTR;
       if (ty < CHAR || ty >= PTR2) fatal("unexpected type");
-      *--n = ty; *--n = Load;
+      *--n = ty; *--n = Load; // jk PTR2 test too strict?
       break;
    case And: // "&", take the address operation
       /* when "token" is a variable, it takes the address first and
@@ -760,6 +779,7 @@ resolve_fnproto:
          next(); c = n;
          expr(Cond); --n;
          *n = (int) (n + 1); *--n = (int) c; *--n = (int) b; *--n = Cond;
+         ty = INT;
          break;
       case Lor: // short circuit, the logical or
          next(); expr(Lan);
@@ -1062,25 +1082,23 @@ void gen(int *n)
    case Func:
    case Syscall:
    case ClearCache:
-      c = b = (int *) n[1]; k = 0; l = 1;
-      // how many arguments
-      while (b && l) { ++k; if (!(int *) *b) l = 0; else b = (int *) *b; }
-      j = 0; a = malloc(sizeof(int *) * k); b = c; l = 1;
-      while (b && l) {
+      b = (int *) n[1]; k = b ? n[3] : 0;
+      if (k) {
+         l = (i != ClearCache) ? (n[4] >> 8) : 0;
+         a = malloc(sizeof(int *) * k);
+         for (j = 0; *b ; b = (int *) *b) a[j++] = (int) b;
          a[j] = (int) b;
-         if (!(int *) *b) l = 0; else b = (int *) *b; ++j;
+         while (j >= 0) { // push arguments
+            gen(b + 1);
+            if (peephole && i != ClearCache) *++e = PHD;
+            *++e = (l & (1 << j)) ? PSHF : PSH; --j; b = (int *) a[j];
+         }
+         free(a);
       }
-      if (j > 0) --j;
-      while (j >= 0 && k > 0) { // push arguments
-         gen(b + 1);
-         if (peephole && i != ClearCache) *++e = PHD;
-         *++e = PSH; --j; b = (int *) a[j];
-      }
-      free(a);
       if (i == Syscall) *++e = SYSC;
       if (i == Func) *++e = JSR;
       *++e = n[2];
-      if (n[3]) { *++e = ADJ; *++e = n[3]; }
+      if (n[3]) { *++e = ADJ; *++e = (i == Syscall) ? n[4] : n[3]; }
       if (peephole && i != ClearCache) *++e = PHR0;
       break;
    case While:
@@ -1189,7 +1207,7 @@ void stmt(int ctx)
 {
    struct ident_s *dd;
    int *a, *b, *c, *d;
-   int i, j, atk;
+   int i, j, nf, atk;
    int bt;
 
    if (ctx == Glo && (tk < Enum || tk > Union))
@@ -1239,8 +1257,8 @@ void stmt(int ctx)
       case Union:
          atk = tk; next();
          if (tk == Id) {
-            if (!id->stype) id->stype = tnew++;
-            bt = id->stype;
+            if (!id->etype) id->etype = tnew++;
+            bt = id->etype;
             next();
          } else {
             bt = tnew++;
@@ -1261,7 +1279,7 @@ void stmt(int ctx)
                case Union:
                   next();
                   if (tk != Id) fatal("bad struct/union declaration");
-                  mbt = id->stype;
+                  mbt = id->etype;
                   next(); break;
                }
                while (tk != ';') {
@@ -1298,7 +1316,7 @@ void stmt(int ctx)
          // if the beginning of * is a pointer type, then type plus `PTR`
          // indicates what kind of pointer
          while (tk == Mul) { next(); ty += PTR; }
-         switch (ctx) { // check non-function identifiers
+         switch (ctx) { // check non-callable identifiers
          case Glo:
             if (tk != Id) fatal("bad global declaration");
             if (id->class >= ctx) fatal("duplicate global definition");
@@ -1318,11 +1336,15 @@ void stmt(int ctx)
             if (id->class == Func &&
                id->val > (int) text && id->val < (int) e)
                fatal("duplicate global definition");
-            dd = id; id->class = Func; // type is function
-            id->val = (int) (e + 1); // function Pointer? offset/address
-            next(); ld = 0; // "ld" is parameter's index.
-            while (tk != ')') { stmt(Par); if (tk == ',') next(); }
-            next();
+            dd = id; dd->etype = 0; dd->class = Func; // type is function
+            dd->val = (int) (e + 1); // function Pointer? offset/address
+            next(); nf = 0; ld = 0; // "ld" is parameter's index.
+            while (tk != ')') {
+               stmt(Par);
+               dd->etype = dd->etype * 2; if (ty == FLOAT) { ++nf; ++(dd->etype); }
+               if (tk == ',') next();
+            }
+            next(); dd->etype = (dd->etype << 8) + (nf << 4) + ld; // param info
             if (tk == ';') { dd->val = 0; goto unwind_func; } // fn proto
             if (tk != '{') fatal("bad function definition");
             loc = ++ld;
@@ -1563,7 +1585,7 @@ int reloc_bl(int offset) { return 0xeb000000 | reloc_imm(offset); }
 
 int *codegen(int *jitmem, int *jitmap)
 {
-   int i, ii, tmp, c;
+   int i, ii, tmp, c, ni, nf;
    int *je, *tje;    // current position in emitted native code
    int *immloc, *il;
 
@@ -1622,13 +1644,16 @@ int *codegen(int *jitmem, int *jitmap)
          }
          break;
       case ADJ:
-         *je++ = 0xe28dd000 + *pc++ * 4;         // add sp, sp, #(tmp * 4)
+         *je++ = 0xe28dd000 + ( *pc++ & 0xf) * 4; // add sp, sp, #(tmp * 4)
          break;
       case LEV:
          *je++ = 0xe28bd000; *je++ = 0xe8bd8800; // add sp, fp, #0; pop {fp, pc}
          break;
       case PSH:
          *je++ = 0xe52d0004;                     // push {r0}
+         break;
+      case PSHF:
+         *je++ = 0xed2d0a01;                     // push {s0}
          break;
       case LC:
          *je++ = 0xe5d00000; if (signed_char)  *je++ = 0xe6af0070; // ldrb r0, [r0]
@@ -1697,14 +1722,18 @@ int *codegen(int *jitmem, int *jitmap)
       case SYSC:
          tmp = ef_getaddr(*pc++);  // look up address from ef index
          if (*pc++ != ADJ) die("codegen: no ADJ after native proc");
-         ii = *pc;
+         c = *pc; ii = c & 0xf; c >>= 4; nf = c & 0xf; ni = ii - nf; c >>= 4;
          if (ii > 10) die("codegen: no support for 10+ arguments");
          while (ii > 0) {
             if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
-            *je++ = 0xe49d0004 | (--ii << 12); // pop r(ii-1)
+            if (c & 1)
+               *je++ = 0xecbd0a01;                // pop {nf}
+            else
+               *je++ = 0xe49d0004 | (--ni << 12); // pop {ni}
+            c = c / 2; --ii;
          }
-         ii = *pc++;
-         if (ii > 4) {
+         ii = *pc++ & 0xf;
+         if (ii > 4) { // jk fix this for float
             if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
             *je++ = 0xe92d03f0;                // push {r4-r9}
          }
@@ -2019,7 +2048,7 @@ enum {
 
 enum {
    PAGE_SIZE = 0x1000, PHDR_NUM = 4, SHDR_NUM = 11,
-   DYN_NUM = 15
+   DYN_NUM = 16
 };
 
 void elf32_init(int poolsz)
@@ -2207,6 +2236,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    char *libc = append_strtab(&data, "libc.so.6");
    char *ldso = append_strtab(&data, "libdl.so.2");
    char *libgcc_s = append_strtab(&data, "libgcc_s.so.1");
+   char *libm = append_strtab(&data, "libm.so.6");
 
    int *func_entries = malloc(sizeof(int) * ef_count);
    if (!func_entries) die("elf32: could not malloc func_entries table");
@@ -2282,7 +2312,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    to = rel_addr;
    for (i = 0; i < ef_count; ++i) {
       *(int *) to = (int) got_func_slot[i]; to += 4;
-      *(int *) to = 0x16 | (i + 1) << 8 ; to += 4;
+      *(int *) to = 0x16 | ((i + 1) << 8) ; to += 4;
       // 0x16 R_ARM_JUMP_SLOT | .dymstr index << 8
    }
 
@@ -2324,6 +2354,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    *(int *) to =  1; to += 4; *(int *) to = libc - dynstr_addr; to += 4;
    *(int *) to =  1; to += 4; *(int *) to = ldso - dynstr_addr; to += 4;
    *(int *) to =  1; to += 4; *(int *) to = libgcc_s - dynstr_addr; to += 4;
+   *(int *) to =  1; to += 4; *(int *) to = libm - dynstr_addr; to += 4;
    *(int *) to =  0;
 
    /* Generate code again bacause address of .plt function slots must
