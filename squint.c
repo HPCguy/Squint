@@ -167,8 +167,10 @@ static void create_const_map(int *begin, int *end)
 
    while (scan < end) {
       if (!is_const(scan) &&
-          (*scan & 0xffff0000) == 0xe59f0000) { // ldr r0, [pc, #X]
-         int addr = ((scan + 2 + (*scan & 0xfff) / 4) - begin)*4;
+          ((i = (*scan & 0xffff0000) == 0xe59f0000) || // ldr  r0, [pc, #X]
+           (*scan & 0xffff0f00) == 0xed9f0a00)) {      // vldr s0, [pc, #X]
+         int offset = i ? ((*scan & 0xfff) / 4) : (*scan & 0xff);
+         int addr = ((scan + 2 + offset) - begin)*4;
          struct ia_s **inst;
          int low = find_const(addr);
 
@@ -233,6 +235,7 @@ static void const_imm_opt(int *begin, int *end)
          while (inst != 0) {
             next = inst->next;
             newinst = cbegin + inst->inst_addr/4;
+            if ((*newinst & 0xffff0f00) == 0xed9f0a00) goto skip_fp; // vldr
             if (rotate) {
                *newinst = 0xe3a00000 | (*newinst & RI_Rd) | rotate | val; // mov
             }
@@ -242,10 +245,10 @@ static void const_imm_opt(int *begin, int *end)
             free(inst);
             inst = next;
          }
-         cbegin[cnst_pool[i].data_addr/4] = NOP; // do this now for safety
+         cbegin[cnst_pool[i].data_addr/4] = NOP; // for safety
       }
       else {
-         if (i != j) {
+skip_fp: if (i != j) {
             cnst_pool[j].data_addr = cnst_pool[i].data_addr;
             cnst_pool[j].inst      = cnst_pool[i].inst;
          }
@@ -255,20 +258,27 @@ static void const_imm_opt(int *begin, int *end)
    cnst_pool_size = j;
 }
 
-/* relocate a ldr rX, [pc, #X] instruction */
+/* relocate a (v)ldr rX, [pc, #X] instruction */
 static void rel_pc_ldr(int *dst, int *src)
 {
    if (dst == src) return;
 
+   int is_vldr = ((*src & 0xffff0f00) == 0xed9f0a00); // vldr
+   if (is_vldr && ((src - dst + (*src & 0xff)) > 0xff)) {
+      printf("Squint can't relocate vldr -- out of range\n");
+      exit(-1);
+   }
+
    struct ia_s **inst;
-   int addr = ((src + 2 + (*src & 0xfff) / 4) - cbegin)*4;
+   int offset = is_vldr ? (*src & 0xff) : ((*src & 0xfff) / 4);
+   int addr = ((src + 2 + offset) - cbegin)*4;
    int low = find_const(addr);
    if (cnst_pool[low].data_addr == addr) { // verify 'low' is index of const
       for (inst = &cnst_pool[low].inst; *inst != 0; inst = &(*inst)->next) {
          if ((*inst)->inst_addr == (src - cbegin)*4) {
             /* make sure pc-relative addr is still valid after move */
             (*inst)->inst_addr = (dst - cbegin)*4;
-            *dst = *src + (src - dst)*4;
+            *dst = *src + (src - dst)*(is_vldr ? 1 : 4);
             break;
          }
       }
@@ -285,17 +295,18 @@ static void rel_pc_const(int *dst, int *src)
       int addr = (src - cbegin)*4;
       int low = find_const(addr);
       if (cnst_pool[low].data_addr == addr) { // verify 'low' is index of const
-         int offset = (src - dst)*4;
+         int offset = (src - dst);
          cnst_pool[low].data_addr = (dst - cbegin)*4;
          for (inst = &cnst_pool[low].inst; *inst != 0; inst = &(*inst)->next) {
             int *scan = cbegin + (*inst)->inst_addr/4;
-            *scan -= offset;
+            int is_vldr = ((*scan & 0xffff0f00) == 0xed9f0a00); // vldr
+            *scan -= (is_vldr ? offset : offset *4);
          }
          *dst = *src;
       }
    }
    else if (dst > src) {
-      printf("addresses can be moved to a lower addr, not arbitrarily moved");
+      printf("addresses can be moved to a lower addr, not arbitrarily moved\n");
       exit(-1);
    }
 }
@@ -533,6 +544,9 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
          if ( (*(scan+1) & 0x0e000000) != 0x0a000000 ) {
             info |= RI_bb; /* next inst is basic block begin */
          }
+      }
+      else if (instMask == 0x0c) { /* float */
+         info |= RI_RnAct;
       }
 
       if ((inst & 0xf0000000) != 0xe0000000) {
@@ -1198,11 +1212,10 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
             ++packed;
          }
          else if (*scan != NOP) {
-            if ((*scan>>16 & 0x0fff) == 0x59f) { // ldr rx, [pc, #x]
+            if ((*scan & 0xffff0000) == 0xe59f0000 || // ldr  rN, [pc, #X]
+                (*scan & 0xffff0f00) == 0xed9f0a00) { // vldr sN, [pc, #X]
                rel_pc_ldr(packed, scan);
                ++packed;
-               /* remap pc-relative load operations */
-               // *scan += (scan - packed)*sizeof(int);
             }
             else if ((*scan & 0x0e000000) == 0x0a000000) {
                if (*scan & (1<<24)) {
@@ -1591,7 +1604,7 @@ int main(int argc, char *argv[])
    if (!squint_opt(mem, mem + length/4)) {
       printf("Compile with amacc -Op flag to enable peephole optimizer\n");
       close(fd);
-      exit(-1);
+      exit(0);
    }
 
    if (lseek(fd, (off_t) offset, SEEK_SET) != offset) {

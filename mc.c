@@ -110,8 +110,8 @@ enum {
    Cond, // operator: ?
    Lor, Lan, Or, Xor, And,         // operator: ||, &&, |, ^, &
    Eq, Ne, Lt, Gt, Le, Ge,         // operator: ==, !=, <, >, <=, >=
-   Shl, Shr, Add, AddF, Sub, SubF, // operator: <<, >>, +, -
-   Mul, MulF, Div, DivF, Mod,      // operator: *, /, %
+   Shl, Shr, Add, Sub, Mul, Div, Mod, // operator: <<, >>, +, -, *, /, %
+   AddF, SubF, MulF, DivF,       // float type operators (hidden)
    Inc, Dec, Dot, Arrow, Bracket // operator: ++, --, ., ->, [
 };
 
@@ -239,8 +239,8 @@ enum {
    EQ  , /* 21 */  NE  , /* 22 */
    LT  , /* 23 */  GT  , /* 24 */  LE  , /* 25 */ GE  , /* 26 */
    SHL , /* 27 */  SHR , /* 28 */
-   ADD , /* 29 */  ADDF, /* 30 */  SUB , /* 31 */ SUBF, /* 32 */
-   MUL , /* 33 */  MULF, /* 34 */  DIV , /* 35 */ DIVF, /* 36 */ MOD, /* 37 */
+   ADD , /* 29 */  SUB , /* 30 */  MUL , /* 31 */ DIV , /* 32 */ MOD, /* 33 */
+   ADDF, /* 34 */  SUBF, /* 35 */  MULF, /* 36 */ DIVF, /* 37 */
    /* arithmetic instructions
     * Each operator has two arguments: the first one is stored on the top
     * of the stack while the second is stored in R0.
@@ -562,7 +562,7 @@ int popcount(int i)
 void expr(int lev)
 {
    int otk;
-   int t, tt, nf, *b, sz, *c;
+   int t, tc, tt, nf, *b, sz, *c;
    union conv *c1, *c2;
    struct ident_s *d;
    struct member_s *m /* jk = 0 */;
@@ -672,7 +672,8 @@ resolve_fnproto:
          if (tk != ')') fatal("bad cast");
          next();
          expr(Inc); // cast has precedence as Inc(++)
-         if (((t ^ ty) & FLOAT)) fatal("type mismatch");
+         if (((t ^ ty) & FLOAT) && (t == FLOAT || ty == FLOAT))
+            fatal("type mismatch");
          ty = t;
       } else {
          expr(Assign);
@@ -711,15 +712,18 @@ resolve_fnproto:
       ty = INT;
       break;
    case Add:
-      next(); expr(Inc);
+      next(); expr(Inc); if (ty != FLOAT) ty = INT;
       break;
    case Sub:
       next();
       expr(Inc);
       if (*n == Num) n[1] = -n[1];
       else if (*n == NumF) { n[1] ^= 0x80000000; }
-      else { *--n = -1; *--n = Num; --n; *n = (int) (n + 3); *--n = Mul; }
-      // jk complete this
+      else if (ty != FLOAT) {
+         *--n = -1; *--n = Num; --n; *n = (int) (n + 3); *--n = Mul;
+      }
+      else fatal("type trouble here");
+      if (ty != FLOAT) ty = INT;
       break;
    case Div:
    case Mod:
@@ -778,10 +782,10 @@ resolve_fnproto:
          ty = INT;
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
-         next(); expr(Assign); t = ty;
+         next(); expr(Assign); tc = ty;
          if (tk != ':') fatal("conditional missing colon");
          next(); c = n;
-         expr(Cond); --n; if (t != ty) fatal("type mismatch");
+         expr(Cond); --n; if (tc != ty) fatal("type mismatch");
          *n = (int) (n + 1); *--n = (int) c; *--n = (int) b; *--n = Cond;
          break;
       case Lor: // short circuit, the logical or
@@ -867,8 +871,8 @@ resolve_fnproto:
          ty = INT;
          break;
       case Add:
-         t = ty; next(); expr(Mul);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         tc = ty; next(); expr(Mul);
+         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c1->f = c1->f + c2->f;
@@ -884,8 +888,8 @@ resolve_fnproto:
          }
          break;
       case Sub:
-         t = ty; next(); expr(Mul);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         tc = ty; next(); expr(Mul);
+         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c1->f = c2->f - c1->f;
@@ -912,8 +916,8 @@ resolve_fnproto:
          }
          break;
       case Mul:
-         t = ty; next(); expr(Inc);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         tc = ty; next(); expr(Inc);
+         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c1->f = c1->f * c2->f;
@@ -942,8 +946,8 @@ resolve_fnproto:
          next();
          break;
       case Div:
-         t = ty; next(); expr(Inc);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         tc = ty; next(); expr(Inc);
+         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c1->f = c2->f / c1->f;
@@ -1106,22 +1110,22 @@ void gen(int *n)
    case Shl:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = SHL; break;
    case Shr:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = SHR; break;
    case Add:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = ADD; break;
-   case AddF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = ADDF; break;
    case Sub:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = SUB; break;
-   case SubF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = SUBF; break;
    case Mul:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = MUL; break;
-   case MulF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = MULF; break;
    case Div:  gen((int *) n[1]);
               if (peephole) *++e = PHD;
               *++e = PSH; gen(n + 2); *++e = DIV;
               if (peephole) *++e = PHR0;
               break;
-   case DivF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = DIVF; break;
    case Mod:  gen((int *) n[1]);
               if (peephole) *++e = PHD;
               *++e = PSH; gen(n + 2); *++e = MOD;
               if (peephole) *++e = PHR0;
               break;
+   case AddF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = ADDF; break;
+   case SubF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = SUBF; break;
+   case MulF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = MULF; break;
+   case DivF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = DIVF; break;
    case Func:
    case Syscall:
    case ClearCache:
@@ -1734,23 +1738,11 @@ int *codegen(int *jitmem, int *jitmap)
       case ADD:
          *je++ = 0xe49d1004; *je++ = 0xe0810000; // pop {r1}; add r0, r1, r0
          break;
-      case ADDF:
-         *je++ = 0xecfd0a01; *je++ = 0xee300a80; // pop {s1}; add s0, s1, s0
-         break;
       case SUB:
          *je++ = 0xe49d1004; *je++ = 0xe0410000; // pop {r1}; sub r0, r1, r0
          break;
-      case SUBF:
-         *je++ = 0xecfd0a01; *je++ = 0xee300ac0; // pop {s1}; sub s0, s1, s0
-         break;
       case MUL:
          *je++ = 0xe49d1004; *je++ = 0xe0000091; // pop {r1}; mul r0, r1, r0
-         break;
-      case MULF:
-         *je++ = 0xecfd0a01; *je++ = 0xee200a80; // pop {s1}; mul s0, s1, s0
-         break;
-      case DIVF:
-         *je++ = 0xecfd0a01; *je++ = 0xee800a80; // pop {s1}; div s0, s1, s0
          break;
       case DIV:
       case MOD:
@@ -1774,6 +1766,18 @@ int *codegen(int *jitmem, int *jitmap)
             *je++ = 0xe1a00001;                 // mov r0, r1
          }
          break;
+      case ADDF:
+         *je++ = 0xecfd0a01; *je++ = 0xee300a80; // pop {s1}; add s0, s1, s0
+         break;
+      case SUBF:
+         *je++ = 0xecfd0a01; *je++ = 0xee300ac0; // pop {s1}; sub s0, s1, s0
+         break;
+      case MULF:
+         *je++ = 0xecfd0a01; *je++ = 0xee200a80; // pop {s1}; mul s0, s1, s0
+         break;
+      case DIVF:
+         *je++ = 0xecfd0a01; *je++ = 0xee800a80; // pop {s1}; div s0, s1, s0
+         break;
       case SYSC:
          tmp = ef_getaddr(*pc++);  // look up address from ef index
          if (*pc++ != ADJ) die("codegen: no ADJ after native proc");
@@ -1781,8 +1785,10 @@ int *codegen(int *jitmem, int *jitmap)
          if (ii > 10) die("codegen: no support for 10+ arguments");
          while (ii > 0) {
             if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
-            if (c & 1)
-               *je++ = 0xecbd0a01;                // pop {nf}
+            if (c & 1) {
+               --nf;  // pop {nf}
+               *je++ = 0xecbd0a01 | ((nf & 1) << 22) | ((nf & 0xe) << 11);
+            }
             else
                *je++ = 0xe49d0004 | (--ni << 12); // pop {ni}
             c = c / 2; --ii;
@@ -1797,8 +1803,10 @@ int *codegen(int *jitmem, int *jitmap)
          if (!imm0) imm0 = je;
          *il++ = (int) je++ + 1;
          *iv++ = tmp;
-         if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
-         if (ii > 4) *je++ = 0xe28dd018;       // add sp, sp, #24
+         if (ii > 4) {
+            if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
+            *je++ = 0xe28dd018;       // add sp, sp, #24
+         }
          break;
       case CLCA:
          *je++ = 0xe59d0004; *je++ = 0xe59d1000; // ldr r0, [sp, #4]
