@@ -109,9 +109,10 @@ enum {
    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, // +=, -=, *=, /=, %=
    Cond, // operator: ?
    Lor, Lan, Or, Xor, And,         // operator: ||, &&, |, ^, &
-   Eq, Ne, Lt, Gt, Le, Ge,         // operator: ==, !=, <, >, <=, >=
+   Eq, Ne, Ge, Lt, Gt, Le,         // operator: ==, !=, >=, <, >, <=
    Shl, Shr, Add, Sub, Mul, Div, Mod, // operator: <<, >>, +, -, *, /, %
    AddF, SubF, MulF, DivF,       // float type operators (hidden)
+   EqF, NeF, GeF, LtF, GtF, LeF,
    Inc, Dec, Dot, Arrow, Bracket // operator: ++, --, ., ->, [
 };
 
@@ -237,10 +238,12 @@ enum {
 
    OR  , /* 18 */  XOR , /* 19 */  AND , /* 20 */
    EQ  , /* 21 */  NE  , /* 22 */
-   LT  , /* 23 */  GT  , /* 24 */  LE  , /* 25 */ GE  , /* 26 */
+   GE  , /* 23 */  LT  , /* 24 */  GT  , /* 25 */ LE  , /* 26 */
    SHL , /* 27 */  SHR , /* 28 */
    ADD , /* 29 */  SUB , /* 30 */  MUL , /* 31 */ DIV , /* 32 */ MOD, /* 33 */
    ADDF, /* 34 */  SUBF, /* 35 */  MULF, /* 36 */ DIVF, /* 37 */
+   EQF , /* 38 */  NEF , /* 39 */
+   GEF , /* 40 */  LTF , /* 41 */  GTF , /* 42 */ LEF , /* 43 */
    /* arithmetic instructions
     * Each operator has two arguments: the first one is stored on the top
     * of the stack while the second is stored in R0.
@@ -248,12 +251,12 @@ enum {
     * off and the result will be stored in R0.
     */
 
-   SQRT, /* 38 float sqrtf(float); */
-   SYSC, /* 39 system call */
-   CLCA, /* 40 clear cache, used by JIT compilation */
+   SQRT, /* 44 float sqrtf(float); */
+   SYSC, /* 45 system call */
+   CLCA, /* 46 clear cache, used by JIT compilation */
 
-   PHD ,  /* 41 PeepHole Disable next assembly instruction in optimizer */
-   PHR0 , /* 42 Inform PeepHole optimizer that R0 holds a return value */
+   PHD ,  /* 47 PeepHole Disable next assembly instruction in optimizer */
+   PHR0 , /* 48 Inform PeepHole optimizer that R0 holds a return value */
 
    INVALID
 };
@@ -378,9 +381,10 @@ void next()
                printf("%04d: %8.4s", off,
                      & "LEA  IMM  IMMF JMP  JSR  BZ   BNZ  ENT  ADJ  LEV  "
                        "PSH  PSHF LC   LI   LF   SC   SI   SF   "
-                       "OR   XOR  AND  EQ   NE   LT   GT   LE   GE   "
+                       "OR   XOR  AND  EQ   NE   GE   LT   GT   LE   "
                        "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
                        "ADDF SUBF MULF DIVF SQRT "
+                       "EQF  NEF  GEF  LTF  GTF  LEF  "
                        "SYSC CLCA PHD  PHR0" [*++le * 5]);
                if (*le < ADJ) {
                   ++le;
@@ -546,10 +550,10 @@ int popcount(int i)
  * And    &
  * Eq     ==
  * Ne     !=
+ * Ge     >=
  * Lt     <
  * Gt     >
  * Le     <=
- * Ge     >=
  * Shl    <<
  * Shr    >>
  * Add    +
@@ -821,40 +825,94 @@ resolve_fnproto:
          ty = INT;
          break;
       case Eq:
-         next(); expr(Lt);
-         if (*n == Num && *b == Num) n[1] = b[1] == n[1];
-         else { *--n = (int) b; *--n = Eq; }
-         ty = INT;
+         tc = ty; next(); expr(Ge);
+         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         if (ty == FLOAT) {
+            if (*n == NumF && *b == NumF) {
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f == c1->f);
+               *n = Num; ty = INT;
+            }
+            else { *--n = (int) b; *--n = EqF; }
+         } else {
+            if (*n == Num && *b == Num) n[1] = b[1] == n[1];
+            else { *--n = (int) b; *--n = Eq; }
+            ty = INT;
+         }
          break;
       case Ne:
-         next(); expr(Lt);
-         if (*n == Num && *b == Num) n[1] = b[1] != n[1];
-         else { *--n = (int) b; *--n = Ne; }
-         ty = INT;
-         break;
-      case Lt:
-         next(); expr(Shl);
-         if (*n == Num && *b == Num) n[1] = b[1] < n[1];
-         else { *--n = (int) b; *--n = Lt; }
-         ty = INT;
-         break;
-      case Gt:
-         next(); expr(Shl);
-         if (*n == Num && *b == Num) n[1] = b[1] > n[1];
-         else { *--n = (int) b; *--n = Gt; }
-         ty = INT;
-         break;
-      case Le:
-         next(); expr(Shl);
-         if (*n == Num && *b == Num) n[1] = b[1] <= n[1];
-         else { *--n = (int) b; *--n = Le; }
-         ty = INT;
+         tc = ty; next(); expr(Ge);
+         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         if (ty == FLOAT) {
+            if (*n == NumF && *b == NumF) {
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f != c1->f);
+               *n = Num; ty = INT;
+            }
+            else { *--n = (int) b; *--n = NeF; }
+         } else {
+            if (*n == Num && *b == Num) n[1] = b[1] != n[1];
+            else { *--n = (int) b; *--n = Ne; }
+            ty = INT;
+         }
          break;
       case Ge:
-         next(); expr(Shl);
-         if (*n == Num && *b == Num) n[1] = b[1] >= n[1];
-         else { *--n = (int) b; *--n = Ge; }
-         ty = INT;
+         tc = ty; next(); expr(Shl);
+         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         if (ty == FLOAT) {
+            if (*n == NumF && *b == NumF) {
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f >= c1->f);
+               *n = Num; ty = INT;
+            }
+            else { *--n = (int) b; *--n = GeF; }
+         } else {
+            if (*n == Num && *b == Num) n[1] = b[1] >= n[1];
+            else { *--n = (int) b; *--n = Ge; }
+            ty = INT;
+         }
+         break;
+      case Lt:
+         tc = ty; next(); expr(Shl);
+         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         if (ty == FLOAT) {
+            if (*n == NumF && *b == NumF) {
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f < c1->f);
+               *n = Num; ty = INT;
+            }
+            else { *--n = (int) b; *--n = LtF; }
+         } else {
+            if (*n == Num && *b == Num) n[1] = b[1] < n[1];
+            else { *--n = (int) b; *--n = Lt; }
+            ty = INT;
+         }
+         break;
+      case Gt:
+         tc = ty; next(); expr(Shl);
+         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         if (ty == FLOAT) {
+            if (*n == NumF && *b == NumF) {
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f > c1->f);
+               *n = Num; ty = INT;
+            }
+            else { *--n = (int) b; *--n = GtF; }
+         } else {
+            if (*n == Num && *b == Num) n[1] = b[1] > n[1];
+            else { *--n = (int) b; *--n = Gt; }
+            ty = INT;
+         }
+         break;
+      case Le:
+         tc = ty; next(); expr(Shl);
+         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         if (ty == FLOAT) {
+            if (*n == NumF && *b == NumF) {
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f <= c1->f);
+               *n = Num; ty = INT;
+            }
+            else { *--n = (int) b; *--n = LeF; }
+         } else {
+            if (*n == Num && *b == Num) n[1] = b[1] <= n[1];
+            else { *--n = (int) b; *--n = Le; }
+            ty = INT;
+         }
          break;
       case Shl:
          next(); expr(Add);
@@ -1098,10 +1156,10 @@ void gen(int *n)
    case And:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = AND; break;
    case Eq:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = EQ; break;
    case Ne:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = NE; break;
+   case Ge:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = GE; break;
    case Lt:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = LT; break;
    case Gt:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = GT; break;
    case Le:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = LE; break;
-   case Ge:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = GE; break;
    case Shl:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = SHL; break;
    case Shr:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = SHR; break;
    case Add:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = ADD; break;
@@ -1121,6 +1179,12 @@ void gen(int *n)
    case SubF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = SUBF; break;
    case MulF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = MULF; break;
    case DivF: gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = DIVF; break;
+   case EqF:  gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = EQF; break;
+   case NeF:  gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = NEF; break;
+   case GeF:  gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = GEF; break;
+   case LtF:  gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = LTF; break;
+   case GtF:  gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = GTF; break;
+   case LeF:  gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = LEF; break;
    case Func:
    case Syscall:
    case ClearCache:
@@ -1807,10 +1871,16 @@ int *codegen(int *jitmem, int *jitmap)
       case PHD:  *je++ = 0xe1a01001; break;      // mov r1, r1
       case PHR0: *je++ = 0xe1a0d00d; break;      // mov sp, sp
       default:
-         if (EQ <= i && i <= GE) {
-            *je++ = 0xe49d1004; *je++ = 0xe1510000; // pop {r1}; cmp r1, r0
+         if ((EQ <= i && i <= LE) || (EQF <= i && i <= LEF)) {
+            if (EQ <= i && i <= LE) {
+               *je++ = 0xe49d1004; *je++ = 0xe1510000; // pop {r1}; cmp r1, r0
+            }
+            else {
+               *je++ = 0xecfd0a01; *je++ = 0xeef40ac0; // pop {s1}; vcmpe s1, s0
+               *je++ = 0xeef1fa10; i -= (EQF - EQ);    // vmrs APSR_nzcv, fpscr
+            }
             if (i <= NE) { je[0] = 0x03a00000; je[1] = 0x13a00000; }   // moveq r0, #0; movne r0, #0
-            else if (i == LT || i == GE) { je[0] = 0xb3a00000; je[1] = 0xa3a00000; } // movlt r0, #0; movge   r0, #0
+            else if (i <= LT) { je[0] = 0xb3a00000; je[1] = 0xa3a00000; } // movlt r0, #0; movge   r0, #0
             else { je[0] = 0xc3a00000; je[1] = 0xd3a00000; }           // movgt r0, #0; movle r0, #0
             if (i == EQ || i == LT || i == GT) je[0] = je[0] | 1;
             else je[1] = je[1] | 1;
