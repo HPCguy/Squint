@@ -11,13 +11,10 @@ int main()
    float c = ( a + 3.0) * b + 8.0;
    strfromf(result, 32, "%f", c);
    printf("%s\n", result);
-   c = a / b;
+   c = (a / b) * (a - b);
    strfromf(result, 32, "%f", c);
    printf("%s\n", result);
-   c = a - b;
-   strfromf(result, 32, "%f", c);
-   printf("%s\n", result);
-   c =  (7.0 + 3.0 * 2.0 - -3.0) / 4.0;
+   c = sqrtf((7.0 + 3.0 * 2.0 - -3.0) / 4.0);
    strfromf(result, 32, "%f", c);
    printf("%s\n", result);
    return 0;

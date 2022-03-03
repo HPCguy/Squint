@@ -101,8 +101,8 @@ struct member_s {
 // tokens and classes (operators last and in precedence order)
 // ( >= 128 so not to collide with ASCII-valued tokens)
 enum {
-   Func=128, Syscall, Main, ClearCache, Glo, Par, Loc, Keyword, Id, Load, Enter,
-   Num, NumF, Enum, Char, Int, Float, Struct, Union, Sizeof, Return, Goto,
+   Func=128, Syscall, Main, ClearCache, Sqrt, Glo, Par, Loc, Keyword, Id, Load,
+   Enter, Num, NumF, Enum, Char, Int, Float, Struct, Union, Sizeof, Return, Goto,
    Break, Continue, If, DoWhile, While, For, Switch, Case, Default, Else, Label,
    Assign, // operator =, keep Assign as highest priority operator
    OrAssign, XorAssign, AndAssign, ShlAssign, ShrAssign, // |=, ^=, &=, <<=, >>=
@@ -248,11 +248,12 @@ enum {
     * off and the result will be stored in R0.
     */
 
-   SYSC, /* 38 system call */
-   CLCA, /* 39 clear cache, used by JIT compilation */
+   SQRT, /* 38 float sqrtf(float); */
+   SYSC, /* 39 system call */
+   CLCA, /* 40 clear cache, used by JIT compilation */
 
-   PHD ,  /* 40 PeepHole Disable next assembly instruction in optimizer */
-   PHR0 , /* 41 Inform PeepHole optimizer that R0 holds a return value */
+   PHD ,  /* 41 PeepHole Disable next assembly instruction in optimizer */
+   PHR0 , /* 42 Inform PeepHole optimizer that R0 holds a return value */
 
    INVALID
 };
@@ -379,6 +380,7 @@ void next()
                        "PSH  PSHF LC   LI   LF   SC   SI   SF   "
                        "OR   XOR  AND  EQ   NE   LT   GT   LE   GE   "
                        "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
+                       "ADDF SUBF MULF DIVF SQRT "
                        "SYSC CLCA PHD  PHR0" [*++le * 5]);
                if (*le < ADJ) {
                   ++le;
@@ -573,7 +575,7 @@ void expr(int lev)
       // function call
       if (tk == '(') {
          if (d->class == Func && d->val == 0) goto resolve_fnproto;
-         if (d->class < Func || d->class > ClearCache) {
+         if (d->class < Func || d->class > Sqrt) {
             if (d->class != 0) fatal("bad function call");
             d->type = INT;
             d->etype = 0;
@@ -1031,22 +1033,15 @@ void gen(int *n)
    struct ident_s *label;
 
    switch (i) {
-   case Num: // get the value of integer
-      *++e = IMM; *++e = n[1];
-      break;
-   case NumF: // get the value of float
-      *++e = IMMF; *++e = n[1];
-      break;
+   case Num: *++e = IMM; *++e = n[1]; break;   // int value
+   case NumF: *++e = IMMF; *++e = n[1]; break; // float value
    case Load:
       gen(n + 2); // load the value
       if (n[1] > FLOAT && n[1] < PTR) fatal("struct copies not yet supported");
       *++e = (n[1] >= PTR) ? LI : LC + n[1];
       break;
-   case Loc: // get the value of variable
-      *++e = LEA; *++e = n[1];
-      break;
-   case '{': // parse expression or statment from AST
-      gen((int *) n[1]); gen(n + 2); break;
+   case Loc: *++e = LEA; *++e = n[1]; break;       // get address of variable
+   case '{': gen((int *) n[1]); gen(n + 2); break; // parse AST expr or stmt
    case Assign: // assign the value to variables
       gen((int *) n[2]); *++e = PSH; gen(n + 3);
       // Add SC/SI instruction to save value in register to variable address
@@ -1148,6 +1143,7 @@ void gen(int *n)
       if (n[3]) { *++e = ADJ; *++e = (i == Syscall) ? n[4] : n[3]; }
       if (peephole && i != ClearCache) *++e = PHR0;
       break;
+   case Sqrt: b = (int *) n[1]; gen(b + 1); *++e = n[2]; break;
    case While:
    case DoWhile:
       if (i == While) { *++e = JMP; a = ++e; }
@@ -1200,24 +1196,15 @@ void gen(int *n)
       gen((int *) n[2]); // expression
       if (a != 0) cas = a;
       break;
-   case Break:
-      // set jump locate
-      *++e = JMP; *++e = (int) brks; brks = e;
-      break;
-   case Continue:
-      // set jump locate
-      *++e = JMP; *++e = (int) cnts; cnts = e;
-      break;
+   case Break:    *++e = JMP; *++e = (int) brks; brks = e; break;
+   case Continue: *++e = JMP; *++e = (int) cnts; cnts = e; break;
    case Goto:
       label = (struct ident_s *) n[1];
       *++e = JMP; *++e = label->val;
       if (label->class == 0) label->val = (int) e; // Define label address later
       break;
-   case Default:
-      def = e + 1;
-      gen((int *) n[1]); break;
-   case Return:
-      if (n[1]) gen((int *) n[1]); *++e = LEV; break; // parse return AST
+   case Default: def = e + 1; gen((int *) n[1]); break;
+   case Return:  if (n[1]) gen((int *) n[1]); *++e = LEV; break;
    case Enter: *++e = ENT; *++e = n[1]; gen(n + 2);
             if (*e != LEV) *++e = LEV; break;
    case Label: // target of goto
@@ -1229,7 +1216,7 @@ void gen(int *n)
       break;
    default:
       if (i != ';') {
-         printf("%d: compiler error gen=%d\n", line, i); exit(-1);
+         printf("%d: compiler error gen=%08x\n", line, i); exit(-1);
       }
    }
 }
@@ -1816,12 +1803,9 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0xe3a02000; *je++ = 0xef000000; // mov r2, #0
                                                  // svc 0
          break;
-      case PHD:
-         *je++ = 0xe1a01001; // mov r1, r1
-         break;
-      case PHR0:
-         *je++ = 0xe1a0d00d; // mov sp, sp
-         break;
+      case SQRT: *je++ = 0xeeb10ac0; break;      // fsqrts s0, s0
+      case PHD:  *je++ = 0xe1a01001; break;      // mov r1, r1
+      case PHR0: *je++ = 0xe1a0d00d; break;      // mov sp, sp
       default:
          if (EQ <= i && i <= GE) {
             *je++ = 0xe49d1004; *je++ = 0xe1510000; // pop {r1}; cmp r1, r0
@@ -1884,24 +1868,15 @@ int *codegen(int *jitmem, int *jitmap)
       je = (int *) jitmap[((int) pc - (int) text) >> 2];
       i = *pc++; // Get current instruction
       // If the instruction is one of the jumps.
-      if (i == JSR || i == JMP || i == BZ || i == BNZ) {
+      if (i >= JMP && i <= BNZ) {
          switch (i) {
-         case JMP:
-            *je = 0xea000000;  // b #(tmp)
-            break;
-         case JSR:
-            *je = 0xeb000000;  // bl #(tmp)
-            break;
-         case BZ:
-            *++je = 0x0a000000; // beq #(tmp)
-            break;
-         case BNZ:
-            *++je = 0x1a000000; // bne #(tmp)
-            break;
+         case JMP: *je = 0xea000000;   break; // b #(tmp)
+         case JSR: *je = 0xeb000000;   break; // bl #(tmp)
+         case BZ:  *++je = 0x0a000000; break; // beq #(tmp)
+         case BNZ: *++je = 0x1a000000; break; // bne #(tmp)
          }
          tmp = *pc++;
-         *je = (*je |
-               reloc_imm(jitmap[(tmp - (int) text) >> 2] - (int) je));
+         *je = (*je | reloc_imm(jitmap[(tmp - (int) text) >> 2] - (int) je));
       }
       // If the instruction has operand, increment instruction pointer to
       // skip he operand.
@@ -2527,7 +2502,7 @@ int main(int argc, char **argv)
 
    // Register keywords in symbol stack. Must match the sequence of enum
    p = "enum char int float struct union sizeof return goto break continue "
-       "if do while for switch case default else __clear_cache void main";
+       "if do while for switch case default else __clear_cache sqrtf void main";
 
    // call "next" to create symbol table entry.
    // store the keyword's token type in the symbol table entry's "tk" field.
@@ -2537,6 +2512,7 @@ int main(int argc, char **argv)
 
    // add __clear_cache to symbol table
    next(); id->class = ClearCache; id->type = INT; id->val = CLCA;
+   next(); id->class = Sqrt; id->type = FLOAT; id->val = SQRT; id->etype = 273;
 
    next(); id->tk = Char; id->class = Keyword; // handle void type
    next();
