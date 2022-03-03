@@ -15,6 +15,10 @@ instructions in compiled code***.  The tests/sieve.c
 benchmark provides an optimization example, and runs roughly
 ***3.5x faster after peephole optimization***.
 
+Source code size:
+* mc -- 2500 SLOC
+* squint -- 1500 SLOC
+
 The original AMaCC compiler is based on the phenomenal work of the 
 team at https://github.com/jserv/amacc , and I strongly suggest
 you visit that site to see the history of AMaCC compiler development
@@ -29,8 +33,8 @@ The following command uses the mc compiler to JIT compile an optimized verison
 of the mc compiler, using an external optimizer linked as a shared object library,
 and then that optimized JIT complier is used to JIT compile an optimized version of
 Sieve of Eratosthenes (again using a shared object optimizer), and then the
-sieve benchmark is executed.  The time shown is the time it takes to do everything
-in this paragraph.
+sieve benchmark is JIT executed.  The time shown is the time it takes to do
+everything in this paragraph.
 ```
 $ make mc-so      # use gcc to build an enhanced version of the mc compiler
   CC+LD		mc-so
