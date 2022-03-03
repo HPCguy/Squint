@@ -1,4 +1,5 @@
-CFLAGS = -O0 -Wall -Wno-misleading-indentation
+CFLAGS = -O0 -Wall -Wno-misleading-indentation -Wno-incompatible-pointer-types
+OP = -Op
 CURR_DIR=$(abspath $(shell pwd))
 OBJ_DIR = elf
 TEST_DIR = tests
@@ -59,7 +60,7 @@ $(OBJ_DIR)/$(BIN): $(BIN)
 
 $(OBJ_DIR)/$(BIN)-opt: $(BIN) $(PEEP)
 	$(VECHO) "  SelfCC\t$@\n"
-	$(Q)$(ARM_EXEC) ./$< -Op -o $@ $(BIN).c
+	$(Q)$(ARM_EXEC) ./$< $(OP) -o $@ $(BIN).c
 	$(Q) scripts/peep $@
 
 SHELL_HACK := $(shell mkdir -p $(OBJ_DIR))
@@ -67,16 +68,16 @@ $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
 	$(VECHO) "[*** verify $< <JIT> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN) $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <JIT-opt> *******]\n"
-	$(Q)$(ARM_EXEC) ./$(BIN)-so -Op $< 2 $(REDIR)
+	$(Q)$(ARM_EXEC) ./$(BIN)-so $(OP) $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN) -o $(OBJ_DIR)/$(notdir $(basename $<)) $< $(REDIR)
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<)) 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF-opt> *******]\n"
-	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt -Op -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
+	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
 	$(Q) scripts/peep $(OBJ_DIR)/$(notdir $(basename $<))-opt
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF-so-opt> *******]\n"
-	$(Q)$(ARM_EXEC) ./$(BIN)-so -Op -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
+	$(Q)$(ARM_EXEC) ./$(BIN)-so $(OP) -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF-self> **]\n"
 	$(Q)$(ARM_EXEC) ./$(OBJ_DIR)/$(BIN) $< 2 $(REDIR)
