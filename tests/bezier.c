@@ -1,5 +1,7 @@
 /* generate points for quadrant of a circle */
 /* fixed point arithmetic with three bit fraction */
+#include <stdio.h>
+#include <stdlib.h>
 
 int *pool;
 int top;

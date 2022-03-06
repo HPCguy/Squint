@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 enum color { RED, GREEN, YELLO };
 enum { BLACK = 10, BLUE };
 

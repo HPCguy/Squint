@@ -725,10 +725,12 @@ resolve_fnproto:
       expr(Inc);
       if (*n == Num) n[1] = -n[1];
       else if (*n == NumF) { n[1] ^= 0x80000000; }
-      else if (ty != FLOAT) {
+      else if (ty == FLOAT) {
+         *--n = 0xbf800000; *--n = NumF; --n; *n = (int) (n + 3); *--n = MulF;
+      }
+      else {
          *--n = -1; *--n = Num; --n; *n = (int) (n + 3); *--n = Mul;
       }
-      else fatal("type trouble here");
       if (ty != FLOAT) ty = INT;
       break;
    case Div:
@@ -1719,7 +1721,8 @@ int *codegen(int *jitmem, int *jitmap)
          break;
       case IMMF:
          tmp = (int) *pc++;
-         if (!imm0) imm0 = je; *il++ = (int) (je++) + 2; *iv++ = tmp;
+         if (tmp == 0) *je++ = 0xee300a40 ; // sub s0, s0, s0
+         else { if (!imm0) imm0 = je; *il++ = (int) je++ + 2; *iv++ = tmp; }
          break;
       case JMP:
       case JSR:
@@ -1807,9 +1810,7 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0xe49d0004 | (0 << 12);        // pop r0
          if (peephole) *je++ = 0xe1a01001;      // mov r1, r1
          *je++ = 0xe28fe000;                    // add lr, pc, #0
-         if (!imm0) imm0 = je;
-         *il++ = (int) je++ + 1;
-         *iv++ = tmp;
+         if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = tmp;
          // ARM EABI modulo helper function produces quotient in r0
          // and the remainder in r1.
          if (i == MOD) {
@@ -1830,20 +1831,50 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0xecfd0a01; *je++ = 0xee800a80; // pop {s1}; div s0, s1, s0
          break;
       case SYSC:
-         tmp = ef_getaddr(*pc++);  // look up address from ef index
+         tmp = ef_getaddr(*pc);  // look up address from ef index
+         int *rMap, k, isPrtf = !strcmp(ef_cache[*pc++]->name, "printf");
          if (*pc++ != ADJ) die("codegen: no ADJ after native proc");
          c = *pc; ii = c & 0xf; c >>= 4; nf = c & 0xf; ni = ii - nf; c >>= 4;
          if (ii > 10) die("codegen: no support for 10+ arguments");
-         while (ii > 0) {
-            if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
-            if (c & 1) {
-               --nf;  // pop {nf}
-               *je++ = 0xecbd0a01 | ((nf & 1) << 22) | ((nf & 0xe) << 11);
-            }
-            else
-               *je++ = 0xe49d0004 | (--ni << 12); // pop {ni}
-            c = c / 2; --ii;
+         if (isPrtf) { // create a register assignment map
+            int j = 0; k = 0;
+            rMap = (int *) malloc(ii*sizeof(int));
+            do {
+               if (c & (1 << j)) { // float (adjust as though a double)
+                  if (k & 1) ++k; rMap[j++] = k; k += 2;
+               }
+               else
+                  rMap[j++] = k++;
+            } while (j < ii);
+            if (k > 10) die("codegen: too many printf arguments");
          }
+         while (ii > 0) {
+            --ii;
+            if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+            if (isPrtf) { // jury-rig printf to promote float to double
+               k = rMap[ii];
+               if (c & 1) { // vpop {sK}; fcvtds; vmov rK, r(K+1), d(K/2)
+                  // *je++ = 0xecbd0a01 | (k << 11);
+                  *je++ = 0xecfd0a01 | (k << 11);
+                  if (peephole) *je++ = 0xe1a01001;
+                  // *je++ = 0xeeb70ac0 | (k << 11) | (k >> 1);
+                  *je++ = 0xeeb70ae0 | (k << 11) | (k >> 1);
+                  *je++ = 0xec500b10 | (k << 12) | ((k + 1) << 16) | (k >> 1);
+               }
+               else  // int
+                  *je++ = 0xe49d0004 | (k << 12); // pop {ni}
+            }
+            else {
+               if (c & 1) { // vpop {nf}
+                  --nf;
+                  *je++ = 0xecbd0a01 | ((nf & 1) << 22) | ((nf & 0xe) << 11);
+               }
+               else // pop {ni}
+                  *je++ = 0xe49d0004 | (--ni << 12); // pop {ni}
+            }
+            c = c / 2;
+         }
+         if (isPrtf) free(rMap);
          ii = *pc++ & 0xf;
          if (ii > 4) { // jk fix this for float
             if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
@@ -1851,9 +1882,7 @@ int *codegen(int *jitmem, int *jitmap)
          }
          if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
          *je++ = 0xe28fe000;                   // add lr, pc, #0
-         if (!imm0) imm0 = je;
-         *il++ = (int) je++ + 1;
-         *iv++ = tmp;
+         if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = tmp;
          if (ii > 4) {
             if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
             *je++ = 0xe28dd018;       // add sp, sp, #24
@@ -1908,12 +1937,13 @@ int *codegen(int *jitmem, int *jitmap)
             --iv; if (iv[0] == iv[1]) --je;
             if (tmp & 1) {
                // ldr pc, [pc, #..]
-               *(int *) (tmp - 1) = 0xe59ff000 | ((int) je - tmp - 7);
+               --tmp; *((int *) tmp) = 0xe59ff000 | ((int) je - tmp - 8);
             } else if (tmp & 2) {
-               if ((int) je > ((tmp - 2) + 255*4 + 8))
+               tmp -= 2;
+               if ((int) je > (tmp + 255*4 + 8))
                   die("codegen: float constant too far");
                // vldr s0, [pc, #..]
-               *(int *) (tmp - 2) = 0xed9f0a00 | (((int) je - tmp - 6) >> 2);
+               *((int *) tmp) = 0xed9f0a00 | (((int) je - tmp - 8) >> 2);
             } else {
                // ldr r0, [pc, #..]
                *(int *) tmp = 0xe59f0000 | ((int) je - tmp - 8);
