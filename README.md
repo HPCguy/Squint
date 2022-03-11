@@ -16,8 +16,8 @@ benchmark provides an optimization example, and runs roughly
 ***3.5x faster after peephole optimization***.
 
 Source code size:
-* mc -- 2500 SLOC
-* squint -- 1500 SLOC
+* mc C compiler -- 2500 SLOC
+* squint optimizer -- 1500 SLOC
 
 The original AMaCC compiler is based on the phenomenal work of the 
 team at https://github.com/jserv/amacc , and I strongly suggest
