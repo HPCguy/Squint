@@ -31,20 +31,20 @@ int main()
    float a = 1.0;
    float b = 2.0;
    float c = ( a + 3.0) * b + 8.0;
-   float d = 0.0; // forces memory consistency for 'c' variable on A72 proc.
+   float d = 0.0;
 
    printf("%f\n", c);
    c = (a / b) * (-b + a);
    printf("%f\n", c);
-   c = sqrtf((7.0 + 3.0 * 2.0 - -3.0) / 4.0);
-   printf("%f\n", c);
+   // c = sqrtf((7.0 + 3.0 * 2.0 - -3.0) / 4.0);
+   // printf("%f\n", c);
+
+   // if (1.0 < b) {
+   //    printf("1.0 is less than %f\n", b);
+   // }
 
    c = atan2f(sqrtf(3.0), 1.0)*3.0;
    printf("%f\n", c);
-
-   if (1.0 < b) {
-      printf("1.0 is less than %f\n", b);
-   }
 
    for (i = 0.0, ii = 0; i < 10.0; i = i + 1.0, ++ii) {
       xx[ii] = i + 1.0; yy[ii] = 10.0 - i;
@@ -52,8 +52,13 @@ int main()
 
    c = dot(xx, yy, 10) / (length(xx, 10) * length(yy, 10));
    printf("%f\n", c);
-   d = acosf(c) ;
-   printf("%f\n", d);
+   // d = acosf(c) ;
+   // printf("%f\n", d);
+
+   ii = 2.0;
+   i = 3;
+   printf("%d %f\n", ii, i);
+   printf("%f %d\n", i, ii);
 
    return 0;
 }

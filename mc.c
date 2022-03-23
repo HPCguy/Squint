@@ -242,8 +242,8 @@ enum {
    SHL , /* 27 */  SHR , /* 28 */
    ADD , /* 29 */  SUB , /* 30 */  MUL , /* 31 */ DIV , /* 32 */ MOD, /* 33 */
    ADDF, /* 34 */  SUBF, /* 35 */  MULF, /* 36 */ DIVF, /* 37 */
-   EQF , /* 38 */  NEF , /* 39 */
-   GEF , /* 40 */  LTF , /* 41 */  GTF , /* 42 */ LEF , /* 43 */
+   FTOI, /* 38 */  ITOF, /* 39 */  EQF , /* 40 */ NEF , /* 41 */
+   GEF , /* 42 */  LTF , /* 43 */  GTF , /* 44 */ LEF , /* 45 */
    /* arithmetic instructions
     * Each operator has two arguments: the first one is stored on the top
     * of the stack while the second is stored in R0.
@@ -251,12 +251,12 @@ enum {
     * off and the result will be stored in R0.
     */
 
-   SQRT, /* 44 float sqrtf(float); */
-   SYSC, /* 45 system call */
-   CLCA, /* 46 clear cache, used by JIT compilation */
+   SQRT, /* 46 float sqrtf(float); */
+   SYSC, /* 47 system call */
+   CLCA, /* 48 clear cache, used by JIT compilation */
 
-   PHD ,  /* 47 PeepHole Disable next assembly instruction in optimizer */
-   PHR0 , /* 48 Inform PeepHole optimizer that R0 holds a return value */
+   PHD ,  /* 49 PeepHole Disable next assembly instruction in optimizer */
+   PHR0 , /* 50 Inform PeepHole optimizer that R0 holds a return value */
 
    INVALID
 };
@@ -383,8 +383,8 @@ void next()
                        "PSH  PSHF LC   LI   LF   SC   SI   SF   "
                        "OR   XOR  AND  EQ   NE   GE   LT   GT   LE   "
                        "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
-                       "ADDF SUBF MULF DIVF SQRT "
-                       "EQF  NEF  GEF  LTF  GTF  LEF  "
+                       "ADDF SUBF MULF DIVF FTOI ITOF "
+                       "EQF  NEF  GEF  LTF  GTF  LEF  SQRT "
                        "SYSC CLCA PHD  PHR0" [*++le * 5]);
                if (*le < ADJ) {
                   ++le;
@@ -759,7 +759,8 @@ resolve_fnproto:
          // and pushes the address
          if (*n != Load) fatal("bad lvalue in assignment");
          // get the value of the right part `expr` as the result of `a=expr`
-         expr(Assign); *--n = (int) (b + 2); *--n = ty = t; *--n = Assign;
+         expr(Assign); *--n = (int) (b + 2);
+                       *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
       case  OrAssign: // right associated
       case XorAssign:
@@ -793,7 +794,7 @@ resolve_fnproto:
          next(); expr(Assign); tc = ty;
          if (tk != ':') fatal("conditional missing colon");
          next(); c = n;
-         expr(Cond); --n; if (tc != ty) fatal("type mismatch");
+         expr(Cond); --n; if (tc != ty) fatal("both results need same type");
          *n = (int) (n + 1); *--n = (int) c; *--n = (int) b; *--n = Cond;
          break;
       case Lor: // short circuit, the logical or
@@ -1103,11 +1104,13 @@ void gen(int *n)
    case Loc: *++e = LEA; *++e = n[1]; break;       // get address of variable
    case '{': gen((int *) n[1]); gen(n + 2); break; // parse AST expr or stmt
    case Assign: // assign the value to variables
-      gen((int *) n[2]); *++e = PSH; gen(n + 3);
+      gen((int *) n[2]); *++e = PSH; gen(n + 3); l = n[1] & 0xffff;
       // Add SC/SI instruction to save value in register to variable address
       // held on stack.
-      if (n[1] > FLOAT && n[1] < PTR) fatal("struct assign not yet supported");
-      *++e = (n[1] >= PTR) ? SI : SC + n[1];
+      if (l > FLOAT && l < PTR) fatal("struct assign not yet supported");
+      if ((n[1] >> 16) == FLOAT && l == INT) *++e = FTOI;
+      else if ((n[1] >> 16) == INT && l == FLOAT) *++e = ITOF;
+      *++e = (l >= PTR) ? SI : SC + l;
       break;
    case Inc: // increment or decrement variables
    case Dec:
@@ -1449,7 +1452,7 @@ void stmt(int ctx)
             if (tk != '{') fatal("bad function definition");
             loc = ++ld;
             next();
-            // Not declare and must not be function, analyze inner block.
+            // Not declaration and must not be function, analyze inner block.
             // e represents the address which will store pc
             // (ld - loc) indicates memory size to allocate
             *--n = ';';
@@ -1504,8 +1507,8 @@ unwind_func: id = sym;
             if (ctx == Loc && tk == Assign) {
                int ptk = tk;
                *--n = loc - id->val; *--n = Loc;
-               next(); a = n; expr(ptk);
-               *--n = (int)a; *--n = ty; *--n = Assign;
+               next(); a = n; i = ty; expr(ptk);
+               *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign; ty = i;
             }
          }
          if (ctx != Par && tk == ',') next();
@@ -1685,9 +1688,10 @@ int reloc_bl(int offset) { return 0xeb000000 | reloc_imm(offset); }
 
 int *codegen(int *jitmem, int *jitmap)
 {
-   int i, ii, tmp, c, ni, nf;
+   int i, ii, jj, kk, tmp, c, ni, nf, sz, off, sp_odd = 0;
    int *je, *tje;    // current position in emitted native code
    int *immloc, *il;
+   int *rMap;
 
    immloc = il = malloc(1024 * 4);
    int *iv = malloc(1024 * 4);
@@ -1740,6 +1744,7 @@ int *codegen(int *jitmem, int *jitmap)
             printf("jit: ENT %d out of bounds\n", tmp << (2*ii)); exit(6);
          } // sub  sp, sp, #tmp (scaled)
          if (tmp) *je++ = 0xe24dd000 | (((16-ii) & 0xf) << 8) | tmp;
+         if (ii == 0 && (tmp & 4)) sp_odd = 1;
          if (peephole) { // reserve space for frame registers
             for (ii=0; ii<8; ++ii) *je++ = 0xe1a00000; // mov r0, r0
          }
@@ -1830,62 +1835,113 @@ int *codegen(int *jitmem, int *jitmap)
       case DIVF:
          *je++ = 0xecfd0a01; *je++ = 0xee800a80; // pop {s1}; div s0, s1, s0
          break;
+      case FTOI:
+         *je++ = 0xeefd0a40; *je++ = 0xee100a90; // ftosis s1, s0; fmrs r0, s1
+         break;
+      case ITOF:
+         *je++ = 0xee000a90; *je++ = 0xeeb80ae0; // frms s1, r0; fsitos s0, s1
+         break;
       case SYSC:
+         if (pc[1] != ADJ) die("codegen: no ADJ after native proc");
+         if ((pc[2] & 0xf) > 10) die("codegen: no support for 11+ arguments");
+         c = pc[2]; ii = c & 0xf; c >>= 4; nf = c & 0xf; ni = ii - nf; c >>= 4;
          tmp = ef_getaddr(*pc);  // look up address from ef index
-         int *rMap, k, isPrtf = !strcmp(ef_cache[*pc++]->name, "printf");
-         if (*pc++ != ADJ) die("codegen: no ADJ after native proc");
-         c = *pc; ii = c & 0xf; c >>= 4; nf = c & 0xf; ni = ii - nf; c >>= 4;
-         if (ii > 10) die("codegen: no support for 10+ arguments");
-         if (isPrtf) { // create a register assignment map
-            int j = 0; k = 0;
-            rMap = (int *) malloc(ii*sizeof(int));
+
+         // Handle ridiculous printf() ABI inline
+         int isPrtf = nf && !strcmp(ef_cache[*pc]->name, "printf");
+         if (isPrtf) {
+            if (ii == 0) die("printf() has no arguments");
+            jj = ii - 1; sz = 0; off = 0; rMap = (int *) malloc(ii*sizeof(int));
             do {
-               if (c & (1 << j)) { // float (adjust as though a double)
-                  if (k & 1) ++k; rMap[j++] = k; k += 2;
+               if (c & (1 << jj)) { // float (adjust as though a double)
+                  sz = sz + (sz & 1);
+                  rMap[jj] = sz;
+                  sz = sz + 2;
                }
-               else
-                  rMap[j++] = k++;
-            } while (j < ii);
-            if (k > 10) die("codegen: too many printf arguments");
-         }
-         while (ii > 0) {
-            --ii;
-            if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
-            if (isPrtf) { // jury-rig printf to promote float to double
-               k = rMap[ii];
-               if (c & 1) { // vpop {sK}; fcvtds; vmov rK, r(K+1), d(K/2)
-                  // *je++ = 0xecbd0a01 | (k << 11);
-                  *je++ = 0xecfd0a01 | (k << 11);
-                  if (peephole) *je++ = 0xe1a01001;
-                  // *je++ = 0xeeb70ac0 | (k << 11) | (k >> 1);
-                  *je++ = 0xeeb70ae0 | (k << 11) | (k >> 1);
-                  *je++ = 0xec500b10 | (k << 12) | ((k + 1) << 16) | (k >> 1);
+               else {
+                  rMap[jj] = sz;
+                  sz = sz + 1;
                }
-               else  // int
-                  *je++ = 0xe49d0004 | (k << 12); // pop {ni}
+               --jj;
+            } while (jj >= 0);
+            sz = sz + (sz & 1) + (sp_odd ^ (ii & 1)); // reserve even number of words
+            jj = 0; // in case arguments are all in regs
+            if (sz > 4) {
+               // set up stack arguments
+               off = 4*sz - 16; // first four words go into r0-r3
+               *je++ = 0xe24dd000 | off; // sub sp, sp, #sz;
+               jj = ii - 1;
+               do {
+                  if (rMap[jj] == 4)
+                     break;
+                  --jj;
+               } while (jj >= 0);
+               kk = jj + 1; // number of arguments to copy
+               for (jj = 0; jj < kk; ++jj) {
+                  if (c & (1 << jj)) { // float
+                     // vldr s1, [sp, #(sz + jj*4)]
+                     // fcvtds d0, s1
+                     // vstr d0,[sp, #rMap[jj]-4]
+                     *je++ = 0xeddd0a00 | (jj + off/4);
+                     *je++ = 0xeeb70ae0;
+                     *je++ = 0xed8d0b00 | (rMap[jj]-4);
+                  }
+                  else { // int
+                     // ldr r0, [sp, #(sz + jj*4)]
+                     // str r0, [sp, #rMap[jj]-4]
+                     *je++ = 0xe59d0000 | (off + jj*4);
+                     *je++ = 0xe58d0000 | (rMap[jj]*4-16);
+                  }
+               }
             }
-            else {
-               if (c & 1) { // vpop {nf}
+            for(; jj < ii; ++jj) {
+               // handle values in regs
+               if (c & (1 << jj)) { // float
+                  // vldr s"rMap[jj]+1", [sp, #(sz + jj*4)]
+                  // fcvtds d"rMap[jj]/2", s"rMap[jj]+1"
+                  // vmov r"rMap[jj]", r"rMap[jj]+1", d"rMap[jj]/2"
+                  *je++ = 0xeddd0a00 | (rMap[jj] << 11) | (jj + off/4);
+                  *je++ = 0xeeb70ae0 | (rMap[jj] << 11) | (rMap[jj] >> 1);
+                  *je++ = 0xec500b10 | (rMap[jj] << 12) |
+                          ((rMap[jj] + 1) << 16) | (rMap[jj] >> 1);
+               }
+               else { // int
+                  // ldr r"rMap[jj]", [sp, #(sz + jj*4)]
+                  *je++ = 0xe59d0000 | (rMap[jj] << 12) | (off + jj*4);
+               }
+            }
+            ++pc; // point at ADJ instruction
+         }
+         else {
+            pc = pc + 3; kk = ni;
+            for (jj = 0; jj < ii; ++jj) {
+               if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+               if (c & (1 << jj)) { // vpop {nf}
                   --nf;
                   *je++ = 0xecbd0a01 | ((nf & 1) << 22) | ((nf & 0xe) << 11);
                }
                else // pop {ni}
                   *je++ = 0xe49d0004 | (--ni << 12); // pop {ni}
             }
-            c = c / 2;
-         }
-         if (isPrtf) free(rMap);
-         ii = *pc++ & 0xf;
-         if (ii > 4) { // jk fix this for float
-            if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
-            *je++ = 0xe92d03f0;                // push {r4-r9}
+            if ((ni = kk) > 4) {
+               if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+               *je++ = 0xe92d03f0;
+            }
          }
          if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
          *je++ = 0xe28fe000;                   // add lr, pc, #0
          if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = tmp;
-         if (ii > 4) {
-            if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
-            *je++ = 0xe28dd018;       // add sp, sp, #24
+         if (isPrtf) {
+            if (sz > 4) {
+               *je++ = 0xe28dd000 | off; // add sp, sp, #sz;
+            }
+            free(rMap);
+         }
+         else {
+            if (ni > 4) {
+               if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
+               *je++ = 0xe28dd018;                   // add sp, sp, #24
+            }
          }
          break;
       case CLCA:
