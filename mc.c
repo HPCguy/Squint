@@ -1688,14 +1688,17 @@ int reloc_bl(int offset) { return 0xeb000000 | reloc_imm(offset); }
 
 int *codegen(int *jitmem, int *jitmap)
 {
-   int i, ii, jj, kk, tmp, c, ni, nf, sz, off, sp_odd = 0;
+   int i, ii, jj, kk, tmp, c, ni, nf, sz, off;
+   int align_stack, sp_odd = 0;
    int *je, *tje;    // current position in emitted native code
-   int *immloc, *il;
+   int *immloc, *immlocv, *il, *ill, *ivv;
    int *rMap;
 
    immloc = il = malloc(1024 * 4);
    int *iv = malloc(1024 * 4);
+   immlocv = iv;
    int *imm0 = 0;
+   int *immf0 = 0;
 
    // first pass: emit native code
    int *pc = text + 1; je = jitmem; line = 0;
@@ -1726,7 +1729,10 @@ int *codegen(int *jitmem, int *jitmap)
       case IMMF:
          tmp = (int) *pc++;
          if (tmp == 0) *je++ = 0xee300a40 ; // sub s0, s0, s0
-         else { if (!imm0) imm0 = je; *il++ = (int) je++ + 2; *iv++ = tmp; }
+         else {
+            if (!imm0) imm0 = je; if (!immf0) immf0 = je;
+            *il++ = (int) je++ + 2; *iv++ = tmp;
+         }
          break;
       case JMP:
       case JSR:
@@ -1864,12 +1870,15 @@ int *codegen(int *jitmem, int *jitmap)
                }
                --jj;
             } while (jj >= 0);
-            sz = sz + (sz & 1) + (sp_odd ^ (ii & 1)); // reserve even number of words
+            sz = sz + (sz & 1);
+            align_stack = (sp_odd ^ (ii & 1)); // sp must be 8-byte aligned
+            if (sz > 4 || align_stack) {
+               if (align_stack) off = 4;
+               if (sz > 4) off += 4*(sz-4);
+               *je++ = 0xe24dd000 | off; // sub sp, sp, #off;
+            }
             jj = 0; // in case arguments are all in regs
-            if (sz > 4) {
-               // set up stack arguments
-               off = 4*sz - 16; // first four words go into r0-r3
-               *je++ = 0xe24dd000 | off; // sub sp, sp, #sz;
+            if (sz > 4) { // set up stack arguments
                jj = ii - 1;
                do {
                   if (rMap[jj] == 4)
@@ -1894,8 +1903,7 @@ int *codegen(int *jitmem, int *jitmap)
                   }
                }
             }
-            for(; jj < ii; ++jj) {
-               // handle values in regs
+            for(; jj < ii; ++jj) { // handle values in regs
                if (c & (1 << jj)) { // float
                   // vldr s"rMap[jj]+1", [sp, #(sz + jj*4)]
                   // fcvtds d"rMap[jj]/2", s"rMap[jj]+1"
@@ -1932,8 +1940,8 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0xe28fe000;                   // add lr, pc, #0
          if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = tmp;
          if (isPrtf) {
-            if (sz > 4) {
-               *je++ = 0xe28dd000 | off; // add sp, sp, #sz;
+            if (sz > 4 || align_stack) {
+               *je++ = 0xe28dd000 | off; // add sp, sp, #off;
             }
             free(rMap);
          }
@@ -1981,16 +1989,18 @@ int *codegen(int *jitmem, int *jitmap)
       int genpool = 0;
       if (imm0) {
          if (i == LEV || i == JMP) genpool = 1;
-         else if ((int) je > (int) imm0 + 3072) {
+         else if ( ((int) je > (int) imm0 + 3072) || // pad for optimizer
+                   (immf0 && ((int) je > (int) immf0 + 512)) ) {
             tje = je++; genpool = 2;
          }
       }
       if (genpool) {
+         ill = immloc;
+         ivv = immlocv;
          *iv = 0;
-         while (il > immloc) {
-            tmp = *--il;
+         while (ill < il) {
+            tmp = *ill++;
             if ((int) je > tmp + 4096 + 8) die("codegen: can't reach the pool");
-            --iv; if (iv[0] == iv[1]) --je;
             if (tmp & 1) {
                // ldr pc, [pc, #..]
                --tmp; *((int *) tmp) = 0xe59ff000 | ((int) je - tmp - 8);
@@ -2004,14 +2014,15 @@ int *codegen(int *jitmem, int *jitmap)
                // ldr r0, [pc, #..]
                *(int *) tmp = 0xe59f0000 | ((int) je - tmp - 8);
             }
-            *je++ = *iv;
+            *je++ = *ivv;
+            if (ivv[0] == ivv[1]) --je; ++ivv;
          }
          if (genpool == 2) { // jump past the pool
             tmp = ((int) je - (int) tje - 8) >> 2;
             *tje = 0xea000000 | (tmp & 0x00ffffff); // b #(je)
          }
-         imm0 = 0;
-         genpool = 0;
+         imm0 = 0; immf0 = 0; genpool = 0;
+         iv = immlocv; il = immloc;
       }
    }
    if (il > immloc) die("codegen: not terminated by a LEV");

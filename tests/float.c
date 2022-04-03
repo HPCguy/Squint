@@ -36,12 +36,12 @@ int main()
    printf("%f\n", c);
    c = (a / b) * (-b + a);
    printf("%f\n", c);
-   // c = sqrtf((7.0 + 3.0 * 2.0 - -3.0) / 4.0);
-   // printf("%f\n", c);
+   c = sqrtf((7.0 + 3.0 * 2.0 - -3.0) / 4.0);
+   printf("%f\n", c);
 
-   // if (1.0 < b) {
-   //    printf("1.0 is less than %f\n", b);
-   // }
+   if (1.0 < b) {
+      printf("1.0 is less than %f\n", b);
+   }
 
    c = atan2f(sqrtf(3.0), 1.0)*3.0;
    printf("%f\n", c);
@@ -52,8 +52,8 @@ int main()
 
    c = dot(xx, yy, 10) / (length(xx, 10) * length(yy, 10));
    printf("%f\n", c);
-   // d = acosf(c) ;
-   // printf("%f\n", d);
+   d = acosf(c) ;
+   printf("%f\n", d);
 
    ii = 2.0;
    i = 3;
