@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <stdlib.h>
+
 struct s2 {
     int x, y;
 };
@@ -29,5 +32,6 @@ int main()
         printf("(%d, %d)\n", p[i].plane.x, p[i].plane.y);
     }
 
+    free(p);
     return 0;
 }

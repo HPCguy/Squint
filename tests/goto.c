@@ -1,4 +1,5 @@
 // Finite state machine
+#include <stdio.h>
 
 // $*      -> AB*
 // [^$]*   -> AC*
