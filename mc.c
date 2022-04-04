@@ -1914,6 +1914,7 @@ int *codegen(int *jitmem, int *jitmap)
                           ((rMap[jj] + 1) << 16) | (rMap[jj] >> 1);
                }
                else { // int
+                  if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
                   // ldr r"rMap[jj]", [sp, #(sz + jj*4)]
                   *je++ = 0xe59d0000 | (rMap[jj] << 12) | (off + jj*4);
                }
