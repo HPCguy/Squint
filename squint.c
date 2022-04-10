@@ -59,8 +59,8 @@
 #define RI_push    0x30000000 /* Rd is pushed onto stack */
 #define RI_pop     0x38000000 /* Rd is popped off of stack */
 
-#define RI_bb      0x04000000 /* a basic block begins */
-#define RI_be      0x02000000 /* a basic block ends */
+#define RI_bb      0x04000000 /* basic block boundary */
+#define RI_float   0x02000000 /* a basic block ends */
 #define RI_cond    0x01000000 /* indicates conditional execution */
 #define RI_branch  0x00800000 /* branch instruction */
 #define RI_func    0x00400000 /* function call */
@@ -448,7 +448,7 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
    int *scan;
    int *rInfo = instInfo;
    int Rn, Rd, Rs, Rm;
-   int inst, instMask, op;
+   int inst, instMask, op, cond;
 
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
       int info = 0;
@@ -468,6 +468,7 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
 
       /* determine info about current instruction */
       inst = *scan;
+      cond       = (inst >> 28) & 0x0f;
       instMask   = (inst >> 24) & 0x0e;
       Rn         = (inst >> 16) & 0x0f;
       Rd         = (inst >> 12) & 0x0f;
@@ -475,6 +476,9 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
       Rm         =  inst        & 0x0f;
 
       /* Make note of registers eligible for renaming */
+      if (cond < 0x0e) {  /* compiler can't produce cond == 0x0f inst */
+         info |= RI_cond; /* conditionally executed inst */
+      }
 
       if (instMask == 0x02) { /* ALU_immed */
          op = (inst >> 21) & 0x0f;
@@ -521,6 +525,10 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
             else {
                info |= RI_dataR;
             }
+
+            if (Rd == 0x0f) {
+               info |= RI_branch;
+            }
          }
          else if (MEM_mask == 0x50 || MEM_mask == 0x54) { /* str | strb */
             info |= RI_RdAct | RI_RnAct;
@@ -536,21 +544,11 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
          else if (MEM_mask == 0x52) /* push */
             info |= RI_RdAct | RI_RnAct | RI_push;
       }
-      else if (instMask == 0x0a) { /* BRANCH */
-         // info |= RI_branch; Enabling this causes a basic block bug
-         if ( (*(scan-1) & 0x0e000000) != 0x0a000000 ) {
-            *(rInfo-1) |= RI_be; /* basic block end */
-         }
-         if ( (*(scan+1) & 0x0e000000) != 0x0a000000 ) {
-            info |= RI_bb; /* next inst is basic block begin */
-         }
+      else if (instMask == 0x0a) { /* BRANCH (and link) */
+         info |= RI_branch;
       }
       else if (instMask == 0x0c) { /* float */
-         info |= RI_RnAct;
-      }
-
-      if ((inst & 0xf0000000) != 0xe0000000) {
-         info |= RI_cond; /* conditionally executed inst */
+         info |= RI_float | RI_RnAct;
       }
 
       /* Mask out any registers outside of rename range */
@@ -581,13 +579,28 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
 
    /* termination sentinel to simplify reg_info scans */
    *rInfo = 0xffffffff;
+}
 
-   /* fixup: bump basic block begin markers forward by one instruction */
-   for (scan = rInfo-1; scan >= instInfo; --scan) {
-      if (*(scan-1) & RI_bb) {
-         *scan     |= RI_bb;
-         *(scan-1) ^= RI_bb;
+/* Mark block boundaries (after jump inst, or branch target inst) */
+static void create_bb_info(int *instInfo, int *funcBegin, int *funcEnd)
+{
+   int *scan;
+   int *rInfo = instInfo;
+
+   for (scan = funcBegin; scan <= funcEnd; ++scan) {
+      if ((*rInfo & RI_branch) == RI_branch) {
+         if ((*rInfo & RI_cond) == RI_cond) {
+            rInfo[1] = rInfo[1] | RI_bb;
+         }
+         if (((*scan >> 24) & 0x0f) == 0x0a) { /* local branch */
+            int tmp = (*scan & 0x00ffffff) |
+                      ((*scan & 0x00800000) ? 0xff000000 : 0);
+            int *dst = scan + 2 + tmp;
+            int off = dst - funcBegin;
+            instInfo[off] = instInfo[off] | RI_bb;
+         }
       }
+      ++rInfo;
    }
 }
 
@@ -597,7 +610,7 @@ static int *find_def(int *instInfo, int *rInfo, int reg, enum search_dir dir)
    int *retVal = 0;
    int info;
 
-   while( (rInfo != instInfo) &&
+   while( (rInfo > instInfo) &&
           *rInfo != 0xffffffff ) { /* if in-bounds of func */
       info = *rInfo;
       if (info & RI_hasD) {
@@ -624,7 +637,7 @@ static int *find_use(int *instInfo, int *rInfo, int reg, enum search_dir dir)
    int *retVal = 0;
    int info;
 
-   while( (rInfo != instInfo) &&
+   while( (rInfo > instInfo) &&
           *rInfo != 0xffffffff ) { /* if in-bounds of func */
       info = *rInfo;
       if (info & RI_hasD) {
@@ -654,6 +667,24 @@ static int *find_use(int *instInfo, int *rInfo, int reg, enum search_dir dir)
 
    return retVal;
 }
+
+/* pass in valid use and def pointer */
+static int *find_use_precede_def(int *instInfo, int *use, int *def,
+                                 int reg, enum search_dir dir)
+{
+   int *finalUse = use;
+
+   if (def != 0) {
+      do {
+         finalUse = use;
+         use = find_use(instInfo, use + dir, reg, dir);
+      } while ( use != 0 && use < def);
+   }
+   if (use == def) finalUse = def;
+
+   return finalUse;
+}
+
 
 /**********************************************************/
 /********** peephole optimization funcs *******************/
@@ -925,7 +956,7 @@ static void simplify_branch1(int *funcBegin, int *funcEnd)
                   }
                }
             }
-            if ((*scan & 0xf0000000) == 0xe0000000) {
+            if (cond == 0x0e) { // unconditional
                break;
             }
          }
@@ -1421,13 +1452,13 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
 /****       convert frame vars to registers          ******/
 /**********************************************************/
 
-static void rename_register1(int *funcBegin, int *funcEnd)
+void rename_register1(int *instInfo, int *funcBegin, int *funcEnd, int crud)
 {
 #define BR 3  /* base register */
-#define MAX_REN_REG 8
+#define MAX_REN_REG 7
    int *scan;
    int offset[MAX_REN_REG];
-   int i, numReg = 0;
+   int i, j, numReg = 0;
 
    /* Abort trivial reg renaming if function calls exist */
    for (scan = funcBegin; scan <= funcEnd; ++scan)
@@ -1473,21 +1504,94 @@ static void rename_register1(int *funcBegin, int *funcEnd)
 
    if (numReg == 0) return;
 
+   create_inst_info(instInfo, funcBegin, funcEnd); // dependency info
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
    /* create registers for frame vars */
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
       if ((*scan & 0x0f2f0000) == 0x050b0000) { // (ldr|str)[b], [fp, #X]
+         int rd;
+         int *rdu, *rdd, *rdt, *rfinal;
+         int regSet, mask;
          int off = (*scan & 0xfff);
          if  ((*scan & (1<<23)) == 0) off = -off;
+
          for (i = 0; i < numReg; ++i) {
             if (offset[i] == off) break;
          }
          if (i == numReg) continue; // this frame var not mapped
+
+         rd = (*scan >> 12) & 0xf;
+
          if ((*scan & 0x0f3f0000) == 0x051b0000) { // ldr[b] rX, [fp, #X]
-            *scan = 0xe1a00000 | (*scan & 0x0000f000) | (BR+i);
+            rdd = find_def(instInfo, &instInfo[(scan-funcBegin)+1], rd, 1);
+            rdu = find_use(instInfo, &instInfo[(scan-funcBegin)+1], rd, 1);
+            if (rdu != 0) {
+               if (rdd == 0) rdd = &instInfo[funcEnd-funcBegin];
+               rfinal = find_use_precede_def(instInfo, rdu, rdd, rd, 1);
+               for (rdt = &instInfo[(scan-funcBegin)+1];
+                    rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
+            }
+            if (rdu == 0 || rdt <= rfinal || // rdu == 0 means func ret value
+                funcBegin[rdu-instInfo] == 0xe3500000) { // switch stmt
+               *scan = 0xe1a00000 | (*scan & 0x0000f000) | (BR+i);
+            }
+            else {
+               *scan = NOP;
+
+               do {
+                  int *rscan = &funcBegin[rdu-instInfo];
+                  // if ((*rscan & 0x0f2f0000) == 0x050b0000) {
+                  if ((*rscan & 0x0f3f0000) == 0x050b0000) { // frame var store
+                     int off2 = (*rscan & 0xfff);
+                     if ((*rscan & (1<<23)) == 0) off2 = -off2;
+                     for (j = 0; j < numReg; ++j) {
+                        if (offset[j] == off2) break;
+                     }
+                     if (j != numReg) {
+                        if (i == j)
+                           *rscan = NOP;
+                        else
+                           *rscan = 0xe1a00000 | ((BR+j) << 12) | (BR+i);
+                        goto nextUse;
+                     }
+                  }
+                  regSet = 0;
+                  mask = (*rdu & RI_Active);
+                  if (*rdu & RI_hasD) // don't overwite dest reg
+                     mask &= ~((*rdu & RI_RdDest) ? RI_RdAct : RI_RnAct);
+
+                  if ((mask & RI_RmAct) && (*rscan & RI_Rm) == rd)
+                     regSet |= (BR+i);
+                  else
+                     mask &= ~RI_RmAct;
+
+                  if ((mask & RI_RsAct) && ((*rscan & RI_Rs) >> 8) == rd)
+                     regSet |= ((BR+i) << 8);
+                  else
+                     mask &= ~RI_RsAct;
+
+                  if ((mask & RI_RdAct) && ((*rscan & RI_Rd) >> 12) == rd)
+                     regSet |= ((BR+i) << 12);
+                  else
+                     mask &= ~RI_RdAct;
+
+                  if ((mask & RI_RnAct) && ((*rscan & RI_Rn) >> 16) == rd)
+                     regSet |= ((BR+i) << 16);
+                  else
+                     mask &= ~RI_RnAct;
+
+                  if (mask & RI_Active) // rename registers
+                     *rscan = (*rscan & ~activeRegMask[mask >> 4]) | regSet;
+nextUse:
+                  if (rdu == rfinal) break;
+                  rdu = find_use(instInfo, &instInfo[(rscan-funcBegin)+1], rd, 1);
+               } while (1);
+            }
          }
-         else { // str[b] rd, [fp, #X] -> mov rX, rd
+         else { // str[b] rX, [fp, #X]
             *scan = 0xe1a00000 | ((BR+i) << 12) | ((*scan >> 12) & 0xf);
          }
       }
@@ -1500,6 +1604,7 @@ static void rename_register1(int *funcBegin, int *funcEnd)
                 ((offset[i] < 0) ? -offset[i] : (offset[i] | (1<<23)));
    }
 }
+
 
 /**********************************************************/
 /********* Peephole optimization driver function **********/
@@ -1551,7 +1656,7 @@ int squint_opt(int *begin, int *end)
          /***  convert frame VM to register VM   ***/
          /******************************************/
 
-         rename_register1(funcBegin, retAddr);
+         rename_register1(tmpbuf, funcBegin, retAddr, funcBegin - begin);
 
          rename_nop(funcBegin, retAddr);
          funcEnd = relocate_nop(funcBegin, funcEnd, 0);
