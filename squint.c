@@ -682,8 +682,14 @@ static void apply_peepholes1(int *funcBegin, int *funcEnd)
                 ((*scanp1 >> 16) & 0xf) == rI) { // ldr[b] rX, [rI]
 
                *scanp1 = (*scanp1 & 0xff70ff00) | (*scan & 0xff) |
-                         (((*scan & 0xfff00000) == 0xe2800000) ? (1<<23) : 0)
-                         | (rS << 16); // ldr[b] rX, [rS, #X]
+                         (((*scan & 0xfff00000) == 0xe2800000) ? (1<<23) : 0) |
+                         (rS << 16); // ldr[b] rX, [rS, #X]
+               *scan = NOP;
+            }
+            else if (*scanp1 == 0xed900a00) { // vldr s0, [r0]
+               *scanp1 = (*scanp1 & 0xff7fffff) | ((*scan & 0xff) / 4) |
+                         (((*scan & 0xfff00000) == 0xe2800000) ? (1<<23) : 0) |
+                         (rS << 16); // vldr s0, [rS, #X]
                *scan = NOP;
             }
          }
@@ -1295,23 +1301,25 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
    for (i = 0; i < np; ++i) {
       scanm1 = active_inst(pair[i].push, -1);
       scanp1 = active_inst(pair[i].pop,   1);
-      if (*scanp1 == 0xe5810000 || *scanp1 == 0xe5c10000) { // str[b] r0, [r1]
+      if (*scanp1 == 0xe5810000 || *scanp1 == 0xe5c10000 || // str[b] r0, [r1]
+          *scanp1 == 0xed810a00) { // vstr s0, [r1]
          int *pushp1 = &instInfo[(pair[i].push-funcBegin)+1];
          int *r0d = find_def(instInfo, pushp1, 0, 1);
          int *r0u = find_use(instInfo, pushp1, 0, 1);
          if (r0d <= r0u &&
              ((*scanm1 & 0xffffff00) == 0xe28b0000 ||  // add r0, fp, #X
               (*scanm1 & 0xffffff00) == 0xe24b0000 )) { // sub r0, fp, #X
-            int offset = *scanm1 & 0xff;
+            int off = *scanm1 & 0xff;
             int addOffsetBit = 1<<23;
             if ((*scanm1 & 0xffffff00) == 0xe24b0000) { // sub r0, fp, #X
                addOffsetBit = 0;
             }
             if (r0u == r0d) {
-               if (funcBegin[r0d-instInfo] == 0xe5900000) { // ldr r0, [r0]
+               if (funcBegin[r0d-instInfo] == 0xe5900000 || //  ldr r0, [r0]
+                   funcBegin[r0d-instInfo] == 0xed900a00) { // vldr s0, [r0]
                   funcBegin[r0d-instInfo] =
                      (funcBegin[r0d-instInfo] & 0xff70ff00) | addOffsetBit |
-                      0x000b0000 | offset;
+                      0x000b0000 | ((*scanp1 == 0xed810a00) ? (off / 4) : off);
                }
                else {
                   continue;
@@ -1321,7 +1329,7 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
             *pair[i].push = NOP;
             *pair[i].pop  = NOP;
             *scanp1 = (*scanp1 & 0xff70ff00) | addOffsetBit |
-                         0x000b0000 | offset;
+                      0x000b0000 | ((*scanp1 == 0xed810a00) ? (off / 4) : off);
          }
          else if (r0d < r0u &&
                   (*scanm1 & 0xffff0000) == 0xe59f0000 && // ldr r0, [pc, #X]
