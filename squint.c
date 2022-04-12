@@ -1,4 +1,4 @@
-/* Squint -- a peephole optimizer for amacc.*/
+/* Squint -- a peephole optimizer for mc.*/
 
 /* mc.c uses a 2-register stack based VM. */
 /* Squint converts this to a 2-register frame based VM. */
@@ -151,7 +151,7 @@ static int is_const(int *inst)
    return (cnst_pool[find_const(addr)].data_addr == addr);
 }
 
-/* Amacc pc-relative constants always appear in the instruction */
+/* pc-relative constants always appear in the instruction */
 /* stream after the instructions that reference them.  Because */
 /* of this we can safely scan an instruction stream forward, */
 /* skipping any constants we encounter. */
@@ -407,7 +407,7 @@ static void rename_nop(int *begin, int *end)
 }
 
 /**********************************************************/
-/****************** amacc use-def analysis ****************/
+/****************** use-def analysis ****************/
 /**********************************************************/
 
 /* The following bit masks are used to transfer 'active' register
@@ -548,7 +548,16 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
          info |= RI_branch;
       }
       else if (instMask == 0x0c) { /* float */
-         info |= RI_float | RI_RnAct;
+         info |= RI_float;
+         if ((inst & 0xffe00f00) == 0xed800a00)
+            info |= RI_RnAct;
+         if ((inst & 0xfff00f00) == 0xec500b00)
+            info |= RI_RnAct | RI_RdAct | RI_RnDest | RI_RdDest;
+      }
+      else if (instMask == 0x0e) { /* float */
+         info |= RI_float;
+         if (((inst>>21) & 7) == 0)
+            info |= RI_RdAct | ((inst & (1<<20)) ? (RI_RdDest) : 0);
       }
 
       /* Mask out any registers outside of rename range */
@@ -685,6 +694,37 @@ static int *find_use_precede_def(int *instInfo, int *use, int *def,
    return finalUse;
 }
 
+static void reg_rename(int newreg, int oldreg, int *use, int *inst)
+{
+   int regSet = 0;
+   int mask = (*use & RI_Active);
+
+   if (*use & RI_hasD) // don't overwite dest reg
+      mask &= ~((*use & RI_RdDest) ? RI_RdAct : RI_RnAct);
+
+   if ((mask & RI_RmAct) && (*inst & RI_Rm) == oldreg)
+      regSet |= newreg;
+   else
+      mask &= ~RI_RmAct;
+
+   if ((mask & RI_RsAct) && ((*inst & RI_Rs) >> 8) == oldreg)
+      regSet |= (newreg << 8);
+   else
+      mask &= ~RI_RsAct;
+
+   if ((mask & RI_RdAct) && ((*inst & RI_Rd) >> 12) == oldreg)
+      regSet |= (newreg << 12);
+   else
+      mask &= ~RI_RdAct;
+
+   if ((mask & RI_RnAct) && ((*inst & RI_Rn) >> 16) == oldreg)
+      regSet |= (newreg << 16);
+   else
+      mask &= ~RI_RnAct;
+
+   if (mask & RI_Active) // rename registers
+      *inst = (*inst & ~activeRegMask[mask >> 4]) | regSet;
+}
 
 /**********************************************************/
 /********** peephole optimization funcs *******************/
@@ -755,6 +795,12 @@ static void apply_peepholes1(int *funcBegin, int *funcEnd)
             scan = scanp3;
          }
       }
+      else if ((*scan & 0xffffff00) == 0xe3a00000 && (*scan & 0xff) &&
+               *scanp1 == 0xe3500000 && ((*scanp2 >> 24) & 0xff) == 0x1a) {
+         *scan = NOP; *scanp1 = NOP;
+         *scanp2 = 0xea000000 | (*scanp2 & 0x00ffffff);
+         scan = scanp2;
+      }
    }
    funcEnd += 2;
 }
@@ -770,7 +816,7 @@ static void apply_peepholes2(int *instInfo, int *funcBegin, int *funcEnd)
    funcEnd -= 6;
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
-      /* Convert amacc array addressing to more compact form */
+      /* Convert array addressing to more compact form */
       if ((*scan & 0xffffff00) == 0xe3a00000) { /* mov r0, #X */
          int imm = *scan & 0xff;
          scanm1 = active_inst(scan, -1);
@@ -784,7 +830,7 @@ static void apply_peepholes2(int *instInfo, int *funcBegin, int *funcEnd)
             scanp3 = active_inst(scanp2,  1);
             scanp4 = active_inst(scanp3,  1);
             loc = &instInfo[scanm2-funcBegin];
-            if (find_def(instInfo, loc, 0, 1) == loc &&
+            if (find_def(instInfo, loc, 0, S_FWD) == loc &&
                                *scanp2 == 0xe0000091 && // mul r0, r1, r0
                                *scanp3 == 0xe49d1004 && // pop {r1}
                                *scanp4 == 0xe0810000) { // add r0, r1, r0
@@ -856,12 +902,12 @@ static void apply_peepholes3(int *instInfo, int *funcBegin, int *funcEnd)
          if (destR < 8) {
             next = active_inst(scan, 1);
             // if not a branch and not conditional execution...
-            if (*next != 0xe28bd000 && // add   sp, fp, #0 -- amacc LEV inst
+            if (*next != 0xe28bd000 && // add   sp, fp, #0 -- LEV inst
                 ((*next>>24) & 0x0e) != 0x0a && ((*next>>28) & 0x0f) == 0x0e &&
-                *next != 0xe3a0780f && next[1] != 0xe3a0780f) { // amacc CLCA
+                *next != 0xe3a0780f && next[1] != 0xe3a0780f) { // CLCA
                int *loc = &instInfo[next-funcBegin];
-               nextDef = find_def(instInfo, loc, destR, 1);
-               nextUse = find_use(instInfo, loc, destR, 1);
+               nextDef = find_def(instInfo, loc, destR, S_FWD);
+               nextUse = find_use(instInfo, loc, destR, S_FWD);
                if (nextUse != 0 && nextDef != 0 && nextUse > nextDef) {
                   *scan = NOP;
                }
@@ -900,6 +946,180 @@ static void apply_peepholes4(int *funcBegin, int *funcEnd)
       }
    }
    funcEnd += 1;
+}
+
+static void apply_peepholes5(int *instInfo, int *funcBegin, int *funcEnd)
+{
+   int *scan, *scanm1, *scanp1;
+   int *info, *rxd, *rxu, *rdd, *rdu, *rdt, *rfinal;
+   int rx, rd, rxS, xform;
+
+   create_inst_info(instInfo, funcBegin, funcEnd);
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
+   // op rx, ...
+   // mov rd, rx
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+
+      if ((*scan & 0xffff0ff0) == 0xe1a00000) {
+         rx = *scan & 0x0f;
+         rd = (*scan >> 12) & 0x0f;
+         if (rx == rd || rd < 3) continue; // extra precaution
+         scanm1 = active_inst(scan, -1);
+         rxS = (instInfo[scanm1-funcBegin] & RI_RdDest) ? 12 : 16;
+         // need dep info to check dest reg for mul...
+         if (((*scanm1 >> rxS) & 0x0f) == rx && ((*scanm1 >> 25) & 7) <= 2) {
+            rxu = find_use(instInfo, &instInfo[(scan-funcBegin)+1], rx, S_FWD);
+            rxd = find_def(instInfo, &instInfo[(scan-funcBegin)+1], rx, S_FWD);
+            if (rxd == 0) rxd = &instInfo[funcEnd-funcBegin];
+            if (rxu != 0 && rxu <= rxd) {
+               rfinal = find_use_precede_def(instInfo, rxu, rxd, rd, S_FWD);
+               for (rdt = &instInfo[(scan-funcBegin)];
+                    rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
+               if (rdt > rfinal) {
+                  do {
+                     int *rscan = &funcBegin[rxu-instInfo];
+                     reg_rename(rd, rx, rxu, rscan);
+                     if (rxu == rfinal) break;
+                     rxu = find_use(instInfo, &instInfo[(rscan-funcBegin)+1],
+                                    rx, S_FWD);
+                  } while (1);
+               }
+            }
+            if (rxu == 0 || rxu > rxd || rdt > rfinal) {
+               *scan = (*scanm1 & ~(0x0f << rxS)) | (rd << rxS);
+               *scanm1 = NOP;
+            }
+         }
+      }
+   }
+
+   create_inst_info(instInfo, funcBegin, funcEnd);
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
+   // mov rd, rx
+   // op ..., rd
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+
+      if ((*scan & 0xffff0ff0) == 0xe1a00000) {
+         xform = 1;
+         rx = *scan & 0x0f;
+         rd = (*scan >> 12) & 0x0f;
+         scanp1 = active_inst(scan, 1);
+         if ((*scanp1 == 0xe3500000) || // switch stmt -- cmp r0, #0
+             rd > 2 ||                  // frame var assignment
+             rx == rd || rx < 3)        // extra precaution
+             continue;
+         info = &instInfo[scan-funcBegin];
+         rxd = find_def(instInfo, info+1, rx, S_FWD);
+         if (rxd == 0) rxd = &instInfo[funcEnd-funcBegin];
+         rxu = find_use_precede_def(instInfo, info, rxd, rx, S_FWD);
+         rdd = find_def(instInfo, info+1, rd, S_FWD);
+         if (rdd == 0) rdd = &instInfo[funcEnd-funcBegin];
+         rdu = find_use(instInfo, info+1, rd, S_FWD);
+         rfinal = find_use_precede_def(instInfo, rdu, rdd, rd, S_FWD);
+         if (rxu > rfinal) {
+            xform = 0;
+         }
+         else {
+            for (rdt = info; rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
+            if (rdt <= rfinal) {
+               xform = 0;
+            }
+         }
+         if (xform) {
+            do {
+               int *rscan = &funcBegin[rdu-instInfo];
+               reg_rename(rx, rd, rdu, rscan);
+               if (rdu == rfinal) break;
+               rdu = find_use(instInfo, &instInfo[(rscan-funcBegin)+1],
+                              rd, S_FWD);
+            } while (1);
+            *scan = NOP;
+         }
+      }
+   }
+}
+
+static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd)
+{
+   int *scan, *iscan, *info;
+   int *rdd, *rdu;
+   int rn, inst;
+
+   create_inst_info(instInfo, funcBegin, funcEnd);
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+
+      if ((*scan & 0xff200fff) == 0xe5000000) { // (ldr|str)[b] rd, [rn]
+         rn = (*scan >> 16) & 0x0f;
+         info = &instInfo[scan-funcBegin];
+         rdu = find_use(instInfo, info+1, rn, S_FWD);
+         rdd = find_def(instInfo, info+1, rn, S_FWD);
+         if (rdd == 0) rdd = &instInfo[funcEnd-funcBegin];
+         if (rn < 10 && (rdu == 0 || rdu > rdd)) {
+            rdd = find_def(instInfo, info-1, rn, S_BACK);
+            rdu = find_use(instInfo, info-1, rn, S_BACK);
+            if (rdu == 0 || rdu <= rdd) {
+               iscan = rdd+1;
+               while ( iscan <= info && (*iscan & RI_bb) == 0) ++iscan;
+               if (iscan > info) {
+                  inst = funcBegin[rdd-instInfo]; // sub rn, rx, #X
+                  iscan = find_def(instInfo, rdd+1, (inst >> 16) & 0x0f, S_FWD);
+                  if ((inst & 0xfff0ff00) == (0xe2400000 | (rn << 12)) &&
+                      (iscan == 0 || iscan > info)) {
+                     *scan = (*scan & 0xff70ffff) | (inst & 0x000f00ff);
+                     funcBegin[rdd-instInfo] = NOP;
+                  }
+               }
+            }
+         }
+      }
+   }
+
+   create_inst_info(instInfo, funcBegin, funcEnd);
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+
+      if ((*scan & 0xff200f00) == 0xe5000000) { // (ldr|str)[b] rd, [rn]
+         rn = (*scan >> 16) & 0x0f;
+         if (rn >= 10) continue;
+         info = &instInfo[scan-funcBegin];
+         rdd = find_def(instInfo, info-1, rn, S_BACK);
+         rdu = find_use(instInfo, info-1, rn, S_BACK);
+         if (rdu == rdd) {
+            iscan = rdd+1;
+            while ( iscan <= info && (*iscan & RI_bb) == 0) ++iscan;
+            inst = funcBegin[rdd-instInfo];
+            // TODO: allow add or subtract #x inst
+            if (iscan > info && (inst & 0xfff00000) == 0xe2800000) { // add
+               int off = inst & 0xff;
+               if ((*scan & 0xff) == off &&
+                   ((*scan & (1<<22)) ? (off == 1) : (off == 4)) ) {
+                  // TODO: immediate value should be #X rather than 1 or 4
+                  // add r5, r5, #1
+                  // str rd, [r5, #-1] -> str rd, [r5], #1
+                  if ((*scan & (1<<23)) == 0) {
+                     funcBegin[rdd-instInfo] = NOP;
+                     *scan = (*scan & 0xfedfffff) | (1<<23);
+                  }
+               }
+               else if ((*scan & 0xff) == 0) {
+                  // add r5, r5, #1
+                  // str rd, [r5]   -> str rd, [r5, #1]!
+                  funcBegin[rdd-instInfo] = NOP;
+                  *scan = *scan | (5<<21) | (inst & 0xff);
+               }
+            }
+         }
+      }
+   }
 }
 
 /**********************************************************/
@@ -980,7 +1200,7 @@ static void simplify_branch1(int *funcBegin, int *funcEnd)
             --scan;
             if ((*scan & 0x0fffffff) == 0x0a000001 &&
                 ((*scan >> 28) & 0xf) != 0xf && !is_const(scan)) {
-               *scan ^= 1; // allows other optimizations, 2 inst amacc
+               *scan ^= 1; // allows other optimizations in mc
             }
             ++scan;
             ++scan;
@@ -1025,7 +1245,7 @@ static void simplify_branch2(int *funcBegin, int *funcEnd) {
    }
 }
 
-/* amacc has condtional branches that jump to a compare instruction */
+/* mc has condtional branches that jump to a compare instruction */
 /* follow chains of these instructions to go directly to final address */
 static void simplify_branch3(int *funcBegin, int *funcEnd) {
    int *scan;
@@ -1310,7 +1530,7 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
       if (*scan == 0xe52d0004 && // push {r0}
           *(scan-1) != NOP1 &&
           *(scan+3) != 0xe3a0780f && // mov r7, #983040
-          *(scan+6) != 0xe3a0780f) { // amacc specific hack
+          *(scan+6) != 0xe3a0780f) { // mc specific hack
          stack[lev] = scan;
          ++lev;
       }
@@ -1335,8 +1555,8 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
       if (*scanp1 == 0xe5810000 || *scanp1 == 0xe5c10000 || // str[b] r0, [r1]
           *scanp1 == 0xed810a00) { // vstr s0, [r1]
          int *pushp1 = &instInfo[(pair[i].push-funcBegin)+1];
-         int *r0d = find_def(instInfo, pushp1, 0, 1);
-         int *r0u = find_use(instInfo, pushp1, 0, 1);
+         int *r0d = find_def(instInfo, pushp1, 0, S_FWD);
+         int *r0u = find_use(instInfo, pushp1, 0, S_FWD);
          if (r0d <= r0u &&
              ((*scanm1 & 0xffffff00) == 0xe28b0000 ||  // add r0, fp, #X
               (*scanm1 & 0xffffff00) == 0xe24b0000 )) { // sub r0, fp, #X
@@ -1411,8 +1631,8 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
          if (pair[i].lev == lev) {
             int *pop  = &instInfo[pair[i].pop-funcBegin];
             int *pushp1 = &instInfo[(pair[i].push-funcBegin)+1];
-            int *r1push1u = find_use(instInfo, pushp1, 1, 1);
-            int *r1push1d = find_def(instInfo, pushp1, 1, 1);
+            int *r1push1u = find_use(instInfo, pushp1, 1, S_FWD);
+            int *r1push1d = find_def(instInfo, pushp1, 1, S_FWD);
             for (scan = pair[i].push + 1; scan < pair[i].pop; ++scan) {
                if (*scan == NOP13 && !is_const(scan)) break; // func call
             }
@@ -1422,9 +1642,9 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
             if (r1push1d == pop && r1push1u > pop) {
                scanm1 = active_inst(pair[i].push, -1);
                int *m1 = &instInfo[scanm1-funcBegin];
-               int *r0md = find_def(instInfo, m1, 0, 1);
-               int *r0push1u = find_use(instInfo, pushp1, 0, 1);
-               int *r0push1d = find_def(instInfo, pushp1, 0, 1);
+               int *r0md = find_def(instInfo, m1, 0, S_FWD);
+               int *r0push1u = find_use(instInfo, pushp1, 0, S_FWD);
+               int *r0push1d = find_def(instInfo, pushp1, 0, S_FWD);
                int m1modifiable =
                   (*(pair[i].push - 1) != NOP13) && (r0md == m1);
 
@@ -1452,7 +1672,7 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
 /****       convert frame vars to registers          ******/
 /**********************************************************/
 
-void rename_register1(int *instInfo, int *funcBegin, int *funcEnd, int crud)
+void rename_register1(int *instInfo, int *funcBegin, int *funcEnd)
 {
 #define BR 3  /* base register */
 #define MAX_REN_REG 7
@@ -1514,7 +1734,6 @@ void rename_register1(int *instInfo, int *funcBegin, int *funcEnd, int crud)
       if ((*scan & 0x0f2f0000) == 0x050b0000) { // (ldr|str)[b], [fp, #X]
          int rd;
          int *rdu, *rdd, *rdt, *rfinal;
-         int regSet, mask;
          int off = (*scan & 0xfff);
          if  ((*scan & (1<<23)) == 0) off = -off;
 
@@ -1526,11 +1745,11 @@ void rename_register1(int *instInfo, int *funcBegin, int *funcEnd, int crud)
          rd = (*scan >> 12) & 0xf;
 
          if ((*scan & 0x0f3f0000) == 0x051b0000) { // ldr[b] rX, [fp, #X]
-            rdd = find_def(instInfo, &instInfo[(scan-funcBegin)+1], rd, 1);
-            rdu = find_use(instInfo, &instInfo[(scan-funcBegin)+1], rd, 1);
+            rdd = find_def(instInfo, &instInfo[(scan-funcBegin)+1], rd, S_FWD);
+            rdu = find_use(instInfo, &instInfo[(scan-funcBegin)+1], rd, S_FWD);
             if (rdu != 0) {
                if (rdd == 0) rdd = &instInfo[funcEnd-funcBegin];
-               rfinal = find_use_precede_def(instInfo, rdu, rdd, rd, 1);
+               rfinal = find_use_precede_def(instInfo, rdu, rdd, rd, S_FWD);
                for (rdt = &instInfo[(scan-funcBegin)+1];
                     rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
             }
@@ -1543,7 +1762,6 @@ void rename_register1(int *instInfo, int *funcBegin, int *funcEnd, int crud)
 
                do {
                   int *rscan = &funcBegin[rdu-instInfo];
-                  // if ((*rscan & 0x0f2f0000) == 0x050b0000) {
                   if ((*rscan & 0x0f3f0000) == 0x050b0000) { // frame var store
                      int off2 = (*rscan & 0xfff);
                      if ((*rscan & (1<<23)) == 0) off2 = -off2;
@@ -1558,36 +1776,10 @@ void rename_register1(int *instInfo, int *funcBegin, int *funcEnd, int crud)
                         goto nextUse;
                      }
                   }
-                  regSet = 0;
-                  mask = (*rdu & RI_Active);
-                  if (*rdu & RI_hasD) // don't overwite dest reg
-                     mask &= ~((*rdu & RI_RdDest) ? RI_RdAct : RI_RnAct);
-
-                  if ((mask & RI_RmAct) && (*rscan & RI_Rm) == rd)
-                     regSet |= (BR+i);
-                  else
-                     mask &= ~RI_RmAct;
-
-                  if ((mask & RI_RsAct) && ((*rscan & RI_Rs) >> 8) == rd)
-                     regSet |= ((BR+i) << 8);
-                  else
-                     mask &= ~RI_RsAct;
-
-                  if ((mask & RI_RdAct) && ((*rscan & RI_Rd) >> 12) == rd)
-                     regSet |= ((BR+i) << 12);
-                  else
-                     mask &= ~RI_RdAct;
-
-                  if ((mask & RI_RnAct) && ((*rscan & RI_Rn) >> 16) == rd)
-                     regSet |= ((BR+i) << 16);
-                  else
-                     mask &= ~RI_RnAct;
-
-                  if (mask & RI_Active) // rename registers
-                     *rscan = (*rscan & ~activeRegMask[mask >> 4]) | regSet;
+                  reg_rename(BR+i, rd, rdu, rscan);
 nextUse:
                   if (rdu == rfinal) break;
-                  rdu = find_use(instInfo, &instInfo[(rscan-funcBegin)+1], rd, 1);
+                  rdu = find_use(instInfo, &instInfo[(rscan-funcBegin)+1], rd, S_FWD);
                } while (1);
             }
          }
@@ -1656,7 +1848,9 @@ int squint_opt(int *begin, int *end)
          /***  convert frame VM to register VM   ***/
          /******************************************/
 
-         rename_register1(tmpbuf, funcBegin, retAddr, funcBegin - begin);
+         rename_register1(tmpbuf, funcBegin, retAddr);
+         apply_peepholes5(tmpbuf, funcBegin, retAddr);
+         apply_peepholes6(tmpbuf, funcBegin, retAddr);
 
          rename_nop(funcBegin, retAddr);
          funcEnd = relocate_nop(funcBegin, funcEnd, 0);
@@ -1684,7 +1878,7 @@ int main(int argc, char *argv[])
    int *mem;
 
    if (argc != 4) {
-      printf("Use: %s <amacc executable> <text start> <length>\n", argv[0]);
+      printf("Use: %s <mc executable> <text start> <length>\n", argv[0]);
       exit(-1);
    }
 
@@ -1714,7 +1908,7 @@ int main(int argc, char *argv[])
    }
 
    if (!squint_opt(mem, mem + length/4)) {
-      printf("Compile with amacc -Op flag to enable peephole optimizer\n");
+      printf("Compile with mc -Op flag to enable peephole optimizer\n");
       close(fd);
       exit(0);
    }

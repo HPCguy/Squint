@@ -1910,6 +1910,7 @@ int *codegen(int *jitmem, int *jitmap)
                   // vmov r"rMap[jj]", r"rMap[jj]+1", d"rMap[jj]/2"
                   *je++ = 0xeddd0a00 | (rMap[jj] << 11) | (jj + off/4);
                   *je++ = 0xeeb70ae0 | (rMap[jj] << 11) | (rMap[jj] >> 1);
+                  if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
                   *je++ = 0xec500b10 | (rMap[jj] << 12) |
                           ((rMap[jj] + 1) << 16) | (rMap[jj] >> 1);
                }
