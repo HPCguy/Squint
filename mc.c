@@ -1973,6 +1973,7 @@ int *codegen(int *jitmem, int *jitmap)
             else {
                *je++ = 0xecfd0a01; *je++ = 0xeef40ac0; // pop {s1}; vcmpe s1, s0
                *je++ = 0xeef1fa10; i -= (EQF - EQ);    // vmrs APSR_nzcv, fpscr
+               if (*pc == FTOI) *pc = PHR0;
             }
             if (i <= NE) { je[0] = 0x03a00000; je[1] = 0x13a00000; }   // moveq r0, #0; movne r0, #0
             else if (i <= LT) { je[0] = 0xb3a00000; je[1] = 0xa3a00000; } // movlt r0, #0; movge   r0, #0
