@@ -45,7 +45,22 @@ real  0m1.300s
 user  0m1.270s
 sys   0m0.031s
 ```
+```
+$ gcc tests/sieve.c
+$ time ./a.out
 
+real	0m1.693s
+user	0m1.671s
+sys	0m0.022s
+
+$ ./mc-so -DSQUINT_SO -Op -o sieve tests/sieve.c
+$ time ./sieve
+
+real	0m1.190s
+user	0m1.168s
+sys	0m0.022s
+
+```
 ## Prerequisites
 * This compiler project depends on several GNU/Linux behaviors, and it
   is necessary to have Arm/Linux installed in your build environment.
