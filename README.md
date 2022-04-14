@@ -34,15 +34,16 @@ of the mc compiler, using an external optimizer linked as a shared object librar
 and then that optimized JIT complier is used to JIT compile an optimized version of
 Sieve of Eratosthenes (again using a shared object optimizer), and then the
 sieve benchmark is JIT executed.  The time shown is the time it takes to do
-everything in this paragraph.
+everything in this paragraph, sieving 8388608 values using three different
+algorithms applied to bit arrays.
 ```
 $ make mc-so      # use gcc to build an enhanced version of the mc compiler
   CC+LD		mc-so
 $ time ./mc-so -DSQUINT_SO -Op mc.c -Op tests/sieve.c
 
-real	0m2.614s
-user	0m2.582s
-sys	0m0.031s
+real  0m1.300s
+user  0m1.270s
+sys   0m0.031s
 ```
 
 ## Prerequisites
