@@ -45,6 +45,7 @@ real  0m1.300s
 user  0m1.270s
 sys   0m0.031s
 ```
+Comparing gcc vs mc+squint ELF executable runtimes:
 ```
 $ gcc tests/sieve.c
 $ time ./a.out
