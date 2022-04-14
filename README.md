@@ -61,6 +61,22 @@ real	0m1.190s
 user	0m1.168s
 sys	0m0.022s
 
+------------------
+$ gcc tests/fib.c
+$ time ./a.out 42
+433494437
+
+real  0m6.261s
+user  0m6.245s
+sys   0m0.001s
+
+$ ./mc-so -DSQUINT_SO -Op -o fib tests/fib.c
+$ time ./fib 42
+433494437
+
+real  0m4.595s
+user  0m4.595s
+sys   0m0.000s
 ```
 ## Prerequisites
 * This compiler project depends on several GNU/Linux behaviors, and it

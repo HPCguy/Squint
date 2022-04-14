@@ -1668,6 +1668,55 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
    }
 }
 
+/* simple functions with no locals do not need a frame */
+void simplify_frame(int *funcBegin, int *funcEnd)
+{
+   int *scan, *scanp1;
+   if (funcBegin[1] == 0xe28db000 && // add  fp, sp, #0
+       (funcBegin[2] & 0xfffff000) != 0xe24dd000) { // sub sp, sp, #X
+      int fo = -4 ; // frame offset
+      for (scan = funcBegin; scan <= funcEnd; ++scan) {
+         scan = skip_nop(scan, S_FWD);
+
+         if (*scan == 0xe92d4800) { // push  {fp, lr}
+            *scan = 0xe92d4000; // push {lr}
+         }
+         else if (*scan == 0xe8bd8800) { // pop  {fp, pc}
+            *scan = 0xe8bd8000; // pop {pc}
+         }
+         else if (*scan == 0xe28db000) { // add  fp, sp, #0
+            *scan = NOP;
+         }
+         else if (*scan == 0xe28bd000) { // add   sp, fp, #0
+            *scan = NOP;
+         }
+         else if (*scan == 0xe28dd004) { // add sp, sp, #4
+            scanp1 = active_inst(scan, 1);
+            if (*scanp1 == 0xe52d0004) { // push {r0}
+              *scan = NOP;
+              *scanp1 = 0xe58d0000; // str r0, [sp]
+            }
+         }
+         else if ((*scan & 0xfffff000) == 0xe28dd000) { // add sp, sp, #X
+            fo -= *scan & 0xfff;
+         }
+         else if ((*scan & 0xffff0004) == 0xe52d0004) { // push {rX}
+            fo += 4;
+         }
+         else if ((*scan & 0xffff0004) == 0xe49d0004) { // pop {rX}
+            fo -= 4;
+         }
+         else if ((*scan & 0xffbf0000) == 0xe59b0000) { // ldr[b] rX, [fp, #Y]
+            *scan += 0x20000 + fo; // ldr[b] rX, [sp, #Y]
+         }
+         else if ((*scan & 0xffbf0000) == 0xe58b0000) { // str[b] rX, [fp, #Y]
+            *scan += 0x20000 + fo; // str[b] rX, [sp, #Y]
+         }
+      }
+   }
+}
+
+
 /**********************************************************/
 /****       convert frame vars to registers          ******/
 /**********************************************************/
@@ -1853,6 +1902,9 @@ int squint_opt(int *begin, int *end)
          apply_peepholes6(tmpbuf, funcBegin, retAddr);
 
          rename_nop(funcBegin, retAddr);
+
+         simplify_frame(funcBegin, retAddr);
+
          funcEnd = relocate_nop(funcBegin, funcEnd, 0);
          optApplied = 1;
       }
