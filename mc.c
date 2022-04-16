@@ -113,7 +113,7 @@ enum {
    Shl, Shr, Add, Sub, Mul, Div, Mod, // operator: <<, >>, +, -, *, /, %
    AddF, SubF, MulF, DivF,       // float type operators (hidden)
    EqF, NeF, GeF, LtF, GtF, LeF,
-   Inc, Dec, Dot, Arrow, Bracket // operator: ++, --, ., ->, [
+   CastF, Inc, Dec, Dot, Arrow, Bracket // operator: ++, --, ., ->, [
 };
 
 // opcodes
@@ -678,8 +678,17 @@ resolve_fnproto:
          if (tk != ')') fatal("bad cast");
          next();
          expr(Inc); // cast has precedence as Inc(++)
-         if (((t ^ ty) & FLOAT) && (t == FLOAT || ty == FLOAT))
-            fatal("type mismatch");
+         if (((t ^ ty) & FLOAT) && (t == FLOAT || ty == FLOAT)) {
+            if (t == FLOAT && ty == INT) {
+               if (*n == Num) { *n = NumF; c1 = &n[1]; c1->f = c1->i; }
+               else { b = n; *--n = ITOF; *--n = (int) b; *--n = CastF; }
+            }
+            else if (t == INT && ty == FLOAT) {
+               if (*n == NumF) { *n = Num; c1 = &n[1]; c1->i = c1->f; }
+               else { b = n; *--n = FTOI; *--n = (int) b; *--n = CastF; }
+            }
+            else fatal("cast type mismatch");
+         }
          ty = t;
       } else {
          expr(Assign);
@@ -1190,6 +1199,7 @@ void gen(int *n)
    case LtF:  gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = LTF; break;
    case GtF:  gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = GTF; break;
    case LeF:  gen((int *) n[1]); *++e = PSHF; gen(n + 2); *++e = LEF; break;
+   case CastF: gen((int *) n[1]); *++e = n[2]; break;
    case Func:
    case Syscall:
    case ClearCache:

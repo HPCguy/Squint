@@ -25,13 +25,15 @@ float length(float *xx, int n)
 int main()
 {
    float i;
-   int ii;
+   int ii = (int) 3.0 + 7;
    float *xx = (float *) malloc(10*sizeof(float));
    float *yy = (float *) malloc(10*sizeof(float));
    float a = 1.0;
    float b = 2.0;
    float c = ( a + 3.0) * b + 8.0;
-   float d = 0.0;
+   float d = 3.0 + (float) 5;
+
+   printf("%f %d\n", d, ii);
 
    printf("%f\n", c);
    c = (a / b) * (-b + a);
