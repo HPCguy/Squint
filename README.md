@@ -46,7 +46,7 @@ user  0m1.270s
 sys   0m0.031s
 ```
 Comparing gcc vs mc+squint ELF executable runtimes:
-```
+```markdown
 $ gcc tests/sieve.c
 $ time ./a.out
 
@@ -61,6 +61,12 @@ real	0m1.190s
 user	0m1.168s
 sys	0m0.022s
 
+$ gcc **-O3** sieve.c
+$ time ./a.out
+
+real	0m0.990s
+user	0m0.988s
+sys	0m0.002s
 ------------------
 $ gcc tests/fib.c
 $ time ./a.out 42
@@ -77,6 +83,14 @@ $ time ./fib 42
 real  0m4.595s
 user  0m4.595s
 sys   0m0.000s
+
+$ gcc **-O1** fib.c
+$ time ./a.out 42
+433494437
+
+real  0m4.501s
+user  0m4.491s
+sys 0m0.011s
 ```
 ## Prerequisites
 * This compiler project depends on several GNU/Linux behaviors, and it
