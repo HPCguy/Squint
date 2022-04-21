@@ -687,7 +687,7 @@ resolve_fnproto:
                if (*n == NumF) { *n = Num; c1 = &n[1]; c1->i = c1->f; }
                else { b = n; *--n = FTOI; *--n = (int) b; *--n = CastF; }
             }
-            else fatal("cast type mismatch");
+            else fatal("explicit cast required");
          }
          ty = t;
       } else {
@@ -1454,7 +1454,8 @@ void stmt(int ctx)
             next(); nf = 0; ld = 0; // "ld" is parameter's index.
             while (tk != ')') {
                stmt(Par);
-               dd->etype = dd->etype * 2; if (ty == FLOAT) { ++nf; ++(dd->etype); }
+               dd->etype = dd->etype * 2;
+               if (ty == FLOAT) { ++nf; ++(dd->etype); }
                if (tk == ',') next();
             }
             next(); dd->etype = (dd->etype << 8) + (nf << 4) + ld; // param info
