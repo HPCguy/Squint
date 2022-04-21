@@ -950,28 +950,28 @@ static void apply_peepholes4(int *funcBegin, int *funcEnd)
 
 static void apply_peepholes5(int *instInfo, int *funcBegin, int *funcEnd)
 {
-   int *scan, *scanm1, *scanp1;
+   int *scan, *scanm1, *scanp1, *scanp2;
    int *info, *rxd, *rxu, *rdd, *rdu, *rdt, *rfinal;
-   int rx, rd, rxS, xform;
+   int rx, rd, rxS;
 
    create_inst_info(instInfo, funcBegin, funcEnd);
    create_bb_info(instInfo, funcBegin, funcEnd);
 
    // op rx, ...
-   // mov rd, rx
+   // mov rd, rx   --->  op rd, ...
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
       if ((*scan & 0xffff0ff0) == 0xe1a00000) {
          rx = *scan & 0x0f;
          rd = (*scan >> 12) & 0x0f;
-         if (rx == rd || rd < 3) continue; // extra precaution
+         if (rd < 3) continue; // extra precaution
          scanm1 = active_inst(scan, -1);
          rxS = (instInfo[scanm1-funcBegin] & RI_RdDest) ? 12 : 16;
          // need dep info to check dest reg for mul...
          if (((*scanm1 >> rxS) & 0x0f) == rx && ((*scanm1 >> 25) & 7) <= 2) {
-            rxu = find_use(instInfo, &instInfo[(scan-funcBegin)+1], rx, S_FWD);
-            rxd = find_def(instInfo, &instInfo[(scan-funcBegin)+1], rx, S_FWD);
+            rxu = find_use(instInfo, &instInfo[scan-funcBegin]+1, rx, S_FWD);
+            rxd = find_def(instInfo, &instInfo[scan-funcBegin]+1, rx, S_FWD);
             if (rxd == 0) rxd = &instInfo[funcEnd-funcBegin];
             if (rxu != 0 && rxu <= rxd) {
                rfinal = find_use_precede_def(instInfo, rxu, rxd, rd, S_FWD);
@@ -982,7 +982,7 @@ static void apply_peepholes5(int *instInfo, int *funcBegin, int *funcEnd)
                      int *rscan = &funcBegin[rxu-instInfo];
                      reg_rename(rd, rx, rxu, rscan);
                      if (rxu == rfinal) break;
-                     rxu = find_use(instInfo, &instInfo[(rscan-funcBegin)+1],
+                     rxu = find_use(instInfo, &instInfo[rscan-funcBegin]+1,
                                     rx, S_FWD);
                   } while (1);
                }
@@ -995,54 +995,53 @@ static void apply_peepholes5(int *instInfo, int *funcBegin, int *funcEnd)
       }
    }
 
-   create_inst_info(instInfo, funcBegin, funcEnd);
-   create_bb_info(instInfo, funcBegin, funcEnd);
-
    // mov rd, rx
-   // op ..., rd
+   // op ..., rd   --->  op ..., rx
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
       if ((*scan & 0xffff0ff0) == 0xe1a00000) {
-         xform = 1;
          rx = *scan & 0x0f;
          rd = (*scan >> 12) & 0x0f;
          scanp1 = active_inst(scan, 1);
-         if ((*scanp1 == 0xe3500000) || // switch stmt -- cmp r0, #0
-             rd > 2 ||                  // frame var assignment
-             rx == rd || rx < 3)        // extra precaution
+         scanp2 = active_inst(scanp1, 1);
+         if ((*scanp1 == 0xe3500000 && // switch stmt -- cmp r0, #0; bne x
+             (((*scanp2 >> 24) & 255) == 0x1a)) ||
+             rd > 2) {                 // frame var assignment
              continue;
-         info = &instInfo[scan-funcBegin];
-         rxd = find_def(instInfo, info+1, rx, S_FWD);
-         if (rxd == 0) rxd = &instInfo[funcEnd-funcBegin];
-         rxu = find_use_precede_def(instInfo, info, rxd, rx, S_FWD);
-         rdd = find_def(instInfo, info+1, rd, S_FWD);
+         }
+         info = &instInfo[scan-funcBegin] + 1;
+         rdu = find_use(instInfo, info, rd, S_FWD);
+         if (rd == 0 && rdu == 0) continue; // func return value
+         rdd = find_def(instInfo, info, rd, S_FWD);
          if (rdd == 0) rdd = &instInfo[funcEnd-funcBegin];
-         rdu = find_use(instInfo, info+1, rd, S_FWD);
          rfinal = find_use_precede_def(instInfo, rdu, rdd, rd, S_FWD);
-         if (rxu > rfinal) {
-            xform = 0;
-         }
-         else {
+
+         rxd = find_def(instInfo, info, rx, S_FWD);
+         if (rxd == 0) rxd = &instInfo[funcEnd-funcBegin];
+         rxu = find_use(instInfo, info, rx, S_FWD);
+         if (rxu > rfinal) rxu = 0;
+         else if (rxu != 0)
+            rxu = find_use_precede_def(instInfo, rxu, rfinal, rx, S_FWD);
+
+         if (rfinal <= rxd && rxd >= rfinal) {
             for (rdt = info; rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
-            if (rdt <= rfinal) {
-               xform = 0;
+            if (rdt > rfinal) {
+               do {
+                  int *rscan = &funcBegin[rdu-instInfo];
+                  reg_rename(rx, rd, rdu, rscan);
+                  if (rdu == rfinal) break;
+                  rdu = find_use(instInfo, &instInfo[rscan-funcBegin]+1,
+                                 rd, S_FWD);
+               } while (1);
+               *scan = NOP;
             }
-         }
-         if (xform) {
-            do {
-               int *rscan = &funcBegin[rdu-instInfo];
-               reg_rename(rx, rd, rdu, rscan);
-               if (rdu == rfinal) break;
-               rdu = find_use(instInfo, &instInfo[(rscan-funcBegin)+1],
-                              rd, S_FWD);
-            } while (1);
-            *scan = NOP;
          }
       }
    }
 }
 
+// autoincrement pointer for load/str operations
 static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd)
 {
    int *scan, *iscan, *info;
@@ -1120,6 +1119,98 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd)
          }
       }
    }
+}
+
+static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
+{
+   int *scan, *scanp1;
+   int *rdt, *info, *rfinal;
+
+   create_inst_info(instInfo, funcBegin, funcEnd);
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+
+      if (*scan == 0xe52d0004) { // push {r0}
+         scanp1 = active_inst(scan,1);
+         if ((*scanp1 & 0xffff0fff) == 0xe49d0004 && // pop {rn}
+             (instInfo[scanp1-funcBegin] & RI_bb) == 0) {
+            int rd = (*scanp1 >> 12) & 0x0f;
+            if (rd > 9) continue;
+            if (rd == 0) {
+               *scan   = NOP;
+               *scanp1 = NOP;
+               scan = scanp1;
+               continue;
+            }
+            else if ((instInfo[scan-funcBegin] & RI_bb) == 0) {
+               int *scanm1 = active_inst(scan,-1);
+               int iinfo = instInfo[scanm1-funcBegin];
+               if (iinfo & RI_hasD) {
+                  int off = (iinfo & RI_RdDest) ? 12 : 16;
+                  if (((*scanm1 >> off) & 0x0f) == 0) {
+                     *scanm1 = *scanm1 | (rd << off);
+                     *scan   = NOP;
+                     *scanp1 = NOP;
+                     scan = scanp1;
+                     continue;
+                  }
+               }
+            }
+
+            // default action
+            *scan   = NOP;
+            *scanp1 = 0xe1a00000 | (rd << 12);
+            scan = scanp1;
+         }
+      }
+   }
+
+   --funcEnd;
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+
+      if ((*scan & 0xffffff00) == 0xe50b0000) { // str r0, [fp, #X]
+         scanp1 = active_inst(scan,1);
+         if ((*scanp1 & 0xffffff00) == 0xe51b0000 && // ldr r0, [fp, #X]
+             (*scan & 0xff) == (*scanp1 & 0xff)) {
+            info = &instInfo[scan-funcBegin]+1;
+            rfinal = &instInfo[scanp1-funcBegin];
+            for (rdt = info; rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
+            if (rdt > rfinal) {
+               *scanp1 = NOP;
+               scan = scanp1;
+            }
+         }
+         else if ((*scanp1 & 0xffffff00) == 0xe51b1000 && // ldr r1, [fp, #X]
+             (*scan & 0xff) == (*scanp1 & 0xff)) {
+            info = &instInfo[scan-funcBegin]+1;
+            rfinal = &instInfo[scanp1-funcBegin];
+            for (rdt = info; rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
+            if (rdt > rfinal) {
+               int *scanp2 = active_inst(scanp1, 1);
+               rfinal = &instInfo[scanp2-funcBegin];
+               for (; rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
+               if (rdt > rfinal) {
+                  if ((*scanp2 & 0xffffff00) == 0xe3510000) { // cmp r1, #x
+                     *scanp1 = NOP;
+                     *scanp2 -= 0x10000;
+                     scan = scanp2;
+                  }
+                  else
+                     goto fallback;
+               }
+               else {
+fallback:
+                  *scanp1 = 0xe1a01000; // mov r1, r0
+                  scan = scanp1;
+               }
+            }
+         }
+      }
+   }
+   ++funcEnd;
 }
 
 /**********************************************************/
@@ -1903,6 +1994,7 @@ int squint_opt(int *begin, int *end)
 
          rename_nop(funcBegin, retAddr);
 
+         apply_peepholes7(tmpbuf, funcBegin, retAddr);
          simplify_frame(funcBegin, retAddr);
 
          funcEnd = relocate_nop(funcBegin, funcEnd, 0);
