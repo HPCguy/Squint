@@ -57,9 +57,9 @@ sys	0m0.022s
 $ ./mc-so -DSQUINT_SO -Op -o sieve tests/sieve.c
 $ time ./sieve
 
-real	0m1.190s
-user	0m1.168s
-sys	0m0.022s
+real  0m0.998s
+user  0m0.978s
+sys   0m0.020s
 
 $ gcc **-O3** sieve.c
 $ time ./a.out

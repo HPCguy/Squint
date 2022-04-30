@@ -2005,7 +2005,10 @@ int *codegen(int *jitmem, int *jitmap)
          if (i == LEV || i == JMP) genpool = 1;
          else if ( ((int) je > (int) imm0 + 3072) || // pad for optimizer
                    (immf0 && ((int) je > (int) immf0 + 512)) ) {
-            tje = je++; genpool = 2;
+            tje = je; --tje; // workaround for "*(ptr - literal)" bug
+            if (*tje != 0xe1a01001) { // NOP : mov r1, r1
+               tje = je++; genpool = 2;
+            }
          }
       }
       if (genpool) {
@@ -2422,7 +2425,8 @@ int elf32(int poolsz, int *main, int elf_fd)
    // .interp (embedded in PT_LOAD of data)
    char *interp_str = "/lib/ld-linux-armhf.so.3";
    int interp_str_size = 25; // strlen(interp_str) + 1
-   char *interp = data; memcpy(interp, interp_str, interp_str_size);
+   char *interp = data;
+   memcpy(interp, interp_str, interp_str_size);
    int interp_off = pt_dyn_off + pt_dyn_size; data += interp_str_size;
    o += interp_str_size;
 
