@@ -1158,6 +1158,15 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
             scan = scanp1;
          }
       }
+      else if ((*scan & 0xfff00ff0) == 0xe0000090) { // mul rz, rx, ry
+         scanp1 = active_inst(scan,1);
+         if ((*scanp1 & 0xfff00ff0) == 0xe0800000) { // add rd, ra, rz
+            *scanp1 = 0xe0200090 | ((*scanp1 & RI_Rd) << 4) |  // mla
+            ((*scanp1 & RI_Rn) >> 4) | ((*scan & RI_Rd) >> 4) | (*scan & RI_Rm);
+            *scan = NOP;
+            scan = scanp1;
+         }
+      }
       else if ((*scan & 0xfff0ffff) == 0xe3500000) { // cmp rx, #0
          int rn = (*scan >> 16) & 0x0f;
          scanm1 = active_inst(scan,-1);

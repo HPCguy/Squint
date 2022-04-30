@@ -14,8 +14,6 @@ int mcmp(char *a, char *b, int n)
 
 void mcpy(char *a, char *b, int n)
 {
-    char *dst;
-    dst = a;
     while (n--)
         *a++ = *b++;
 }
