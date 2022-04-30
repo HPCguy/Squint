@@ -45,7 +45,7 @@ real  0m1.300s
 user  0m1.270s
 sys   0m0.031s
 ```
-Comparing gcc vs mc+squint ELF executable runtimes:
+Comparing gcc vs mc+squint ELF executable runtimes (min time of 20 runs):
 ```markdown
 $ gcc tests/sieve.c
 $ time ./a.out
@@ -57,16 +57,16 @@ sys	0m0.022s
 $ ./mc-so -DSQUINT_SO -Op -o sieve tests/sieve.c
 $ time ./sieve
 
-real  0m0.998s
-user  0m0.978s
-sys   0m0.020s
+real  0m0.949s
+user  0m0.927s
+sys   0m0.021s
 
 $ gcc **-O3** sieve.c
 $ time ./a.out
 
-real	0m0.990s
-user	0m0.988s
-sys	0m0.002s
+real	0m0.962s
+user	0m0.941s
+sys	0m0.022s
 ------------------
 $ gcc tests/fib.c
 $ time ./a.out 42

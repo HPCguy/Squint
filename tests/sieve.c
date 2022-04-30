@@ -6,25 +6,23 @@
 
 void sieve1(char *buf, int max)
 {
-    char *bits = buf;
     int i;
     int p = 2;
 
     do {
         i = 2 * p;
         while (i < max) {
-            bits[i / 8] &= ~(1 << (i % 8));
+            buf[i / 8] &= ~(1 << (i % 8));
             i += p;
         }
         ++p;
-        while (p < max && !(bits[p / 8] & (1 << (p % 8))))
+        while (p < max && !(buf[p / 8] & (1 << (p % 8))))
             ++p;
     } while (p < max);
 }
 
 void sieve2(char *buf, int max)
 {
-    char *bits = buf;
     int i;
     int p = 2;
 
@@ -32,19 +30,19 @@ void sieve2(char *buf, int max)
         i = 2 * p;
         while (i < max) {
             switch (i % 8) {
-            case 0: bits[i / 8] &= 0xfe; break;
-            case 1: bits[i / 8] &= 0xfd; break;
-            case 2: bits[i / 8] &= 0xfb; break;
-            case 3: bits[i / 8] &= 0xf7; break;
-            case 4: bits[i / 8] &= 0xef; break;
-            case 5: bits[i / 8] &= 0xdf; break;
-            case 6: bits[i / 8] &= 0xbf; break;
-            case 7: bits[i / 8] &= 0x7f; break;
+            case 0: buf[i / 8] &= 0xfe; break;
+            case 1: buf[i / 8] &= 0xfd; break;
+            case 2: buf[i / 8] &= 0xfb; break;
+            case 3: buf[i / 8] &= 0xf7; break;
+            case 4: buf[i / 8] &= 0xef; break;
+            case 5: buf[i / 8] &= 0xdf; break;
+            case 6: buf[i / 8] &= 0xbf; break;
+            case 7: buf[i / 8] &= 0x7f; break;
             }
             i += p;
         }
         ++p;
-        while (p < max && !(bits[p / 8] & (1 << (p % 8))))
+        while (p < max && !(buf[p / 8] & (1 << (p % 8))))
             ++p;
     } while (p < max);
 }
