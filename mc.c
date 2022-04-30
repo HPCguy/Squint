@@ -782,7 +782,7 @@ resolve_fnproto:
       case DivAssign:
       case ModAssign:
          otk = tk;
-         *--n=';'; *--n = ty = id->type; *--n = Load;
+         *--n=';'; *--n = t; *--n = Load;
          sz = (ty = t) >= PTR2 ? sizeof(int) :
                               ty >= PTR ? tsize[ty - PTR] : 1;
          next(); c = n; expr(otk);
