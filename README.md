@@ -13,11 +13,11 @@ This compiler supports the following features beyond AMaCC:
 * The Squint peephole optimizer that ***roughly halves the number of executable
 instructions in compiled code***.  The tests/sieve.c
 benchmark provides an optimization example, and runs roughly
-***3.5x faster after peephole optimization***.
+***4x faster after peephole optimization***.
 
 Source code size:
-* mc C compiler -- 2500 SLOC
-* squint optimizer -- 1500 SLOC
+* mc C compiler -- 2650 SLOC
+* squint optimizer -- 2050 SLOC
 
 The original AMaCC compiler is based on the phenomenal work of the 
 team at https://github.com/jserv/amacc , and I strongly suggest
@@ -29,7 +29,7 @@ is where you will learn the most about the AMaCC compiler that was
 used as a starting point for this work.
 
 ## Example
-The following command uses the mc compiler to JIT compile an optimized verison
+The following time command uses the mc compiler to JIT compile an optimized verison
 of the mc compiler, using an external optimizer linked as a shared object library,
 and then that optimized JIT complier is used to JIT compile an optimized version of
 Sieve of Eratosthenes (again using a shared object optimizer), and then the
@@ -41,9 +41,9 @@ $ make mc-so      # use gcc to build an enhanced version of the mc compiler
   CC+LD		mc-so
 $ time ./mc-so -DSQUINT_SO -Op mc.c -Op tests/sieve.c
 
-real  0m1.300s
-user  0m1.270s
-sys   0m0.031s
+real	0m1.031s
+user	0m0.999s
+sys	0m0.031s
 ```
 Comparing gcc vs mc+squint ELF executable runtimes (min time of 20 runs):
 ```markdown
