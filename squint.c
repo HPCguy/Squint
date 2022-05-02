@@ -1825,6 +1825,8 @@ static void create_pushpop_map2(int *instInfo, int *funcBegin, int *funcEnd,
    int np = 0;
 
    create_inst_info(instInfo, funcBegin, funcEnd);
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
