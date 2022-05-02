@@ -68,26 +68,28 @@ $(OBJ_DIR)/$(BIN)-opt: $(BIN) $(PEEP)
 	$(Q)$(ARM_EXEC) ./$< $(OP) -o $@ $(BIN).c
 	$(Q) scripts/peep $@
 
+.ONESHELL:
 SHELL_HACK := $(shell mkdir -p $(IR_DIR) $(OBJ_DIR) $(ASM_DIR))
 $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
-	$(VECHO) "[*** verify $< <JIT> *******]\n"
-	$(Q)$(ARM_EXEC) ./$(BIN) $< 2 $(REDIR)
-	$(VECHO) "[*** verify $< <JIT-opt> *******]\n"
-	$(Q)$(ARM_EXEC) ./$(BIN)-so $(OP) $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <IR> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN) -s $< > $(IR_DIR)/$(notdir $(basename $<))
+	$(VECHO) "[*** verify $< <JIT> *******]\n"
+	$(Q)$(ARM_EXEC) ./$(BIN) $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN) -o $(OBJ_DIR)/$(notdir $(basename $<)) $< $(REDIR)
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<)) 2 $(REDIR)
+	$(VECHO) "[*** verify $< <ELF-self> **]\n"
+	$(Q)$(ARM_EXEC) ./$(OBJ_DIR)/$(BIN) $< 2 $(REDIR)
+	@if [ $(notdir $<) == shock.c ]; then $(call pass,$<); exit 0; fi
+	$(VECHO) "[*** verify $< <JIT-opt> *******]\n"
+	$(Q)$(ARM_EXEC) ./$(BIN)-so $(OP) $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF-opt> *******]\n"
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
 	$(Q) scripts/peep $(OBJ_DIR)/$(notdir $(basename $<))-opt
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
-	$(VECHO) "[*** verify $< <ELF-so-opt> *******]\n"
+	$(VECHO) "[*** verify $< <ELF-so-opt> *******]\n" 
 	$(Q)$(ARM_EXEC) ./$(BIN)-so $(OP) -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
-	$(VECHO) "[*** verify $< <ELF-self> **]\n"
-	$(Q)$(ARM_EXEC) ./$(OBJ_DIR)/$(BIN) $< 2 $(REDIR)
 	$(Q)$(call pass,$<)
 
 show_asm:

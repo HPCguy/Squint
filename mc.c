@@ -2757,7 +2757,7 @@ int main(int argc, char **argv)
       }
    }
    if (argc < 1)
-      die("usage: amacc [-s] [-Op] [-fsigned-char] [-o object] file");
+      die("usage: mc [-s] [-Op] [-fsigned-char] [-o object] file");
 
    if ((fd = open(*argv, 0)) < 0) {
       printf("could not open(%s)\n", *argv); return -1;
