@@ -12,7 +12,7 @@
  *     gamma = --     m = mass/volume   v = velocity
  *             Cv
  *
- *     All quantiites are non-dimensionalized.
+ *     All quantities are non-dimensionalized.
  *
  *     @Q   @F    @Q   @F @Q
  *     -- + -- =  -- + -- -- = 0
@@ -26,6 +26,7 @@
 
 float gammaa;
 float gammaInverse;
+
 
 /**************************************************************************
  * Subroutine:  CreateShockTubeMesh
@@ -202,17 +203,16 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
 
 int main(void)
 {
-   int i, ii;
-   float val;
+   int i;
 
    /* initialize gloabals */
    gammaa        = 1.4142135;
    gammaInverse = 0.70710678;
 
-   int numElems = 512;
+   int numElems = 512;          // 2048
    int numFaces = numElems - 1;
-   int numTotalCycles = 100;
-   // int dumpInterval = problem->paramInt("numCyclesPerDump") ;
+   int numTotalCycles = 100;    // 1024
+   // int dumpInterval = 256;
 
    float *mass     = (float *) malloc((numElems+1)*sizeof(float));
    float *momentum = (float *) malloc((numElems+1)*sizeof(float));
@@ -233,28 +233,29 @@ int main(void)
    for (currCycle=0; currCycle<numTotalCycles; ++currCycle)
    {
       // if (currCycle % dumpInterval == 0)
-      //    DumpUltra(problem) ;
+      //    DumpPlot(numElems, mass, momentum, energy, pressure);
 
       ComputeFaceInfo(numFaces, mass, momentum, energy, f0, f1, f2);
-      UpdateElemInfo (numElems, mass, momentum, energy, pressure,
+      UpdateElemInfo (numElems-1, mass, momentum, energy, pressure,
                       f0, f1, f2, dt/dx);
-      time += dt;
+      time = time + dt;
    }
 
-   // DumpUltra(problem) ; /* One last dump */
-   printf("\n# mass\n");
+   // DumpPlot(numElems, mass, momentum, energy, pressure);
+
+   printf("# mass\n");
    for (i=0; i<numElems; ++i) {
       printf("%d.0 %f\n", i, mass[i]);
    }
-   printf("\n# momentum\n");
+   printf("\n\n# momentum\n");
    for (i=0; i<numElems; ++i) {
       printf("%d.0 %f\n", i, momentum[i]);
    }
-   printf("\n# energy\n");
+   printf("\n\n# energy\n");
    for (i=0; i<numElems; ++i) {
       printf("%d.0 %f\n", i, energy[i]);
    }
-   printf("\n# pressure\n");
+   printf("\n\n# pressure\n");
    for (i=0; i<numElems; ++i) {
       printf("%d.0 %f\n", i, pressure[i]);
    }

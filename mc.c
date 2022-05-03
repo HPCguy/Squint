@@ -1882,6 +1882,7 @@ int *codegen(int *jitmem, int *jitmap)
                --jj;
             } while (jj >= 0);
             sz = sz + (sz & 1);
+            // instead?:  test sp, #4; subeq sp, sp, 4; eoreq lr, 0x80000000
             align_stack = (sp_odd ^ (ii & 1)); // sp must be 8-byte aligned
             if (sz > 4 || align_stack) {
                if (align_stack) off = 4;
@@ -1953,6 +1954,7 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0xe28fe000;                   // add lr, pc, #0
          if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = tmp;
          if (isPrtf) {
+            // instead?  tests lr, 0; addpl sp, sp, #4
             if (sz > 4 || align_stack) {
                *je++ = 0xe28dd000 | off; // add sp, sp, #off;
             }

@@ -937,6 +937,12 @@ static void apply_peepholes4(int *funcBegin, int *funcEnd)
          *scanp1 |= (1<<25) | (*scan & 0xff);
          *scan = NOP;
       }
+      else if ((  *scan & 0xff700f00) == 0xed100a00 && // vldr s0, [rx, #X]
+               (*scanp1 & 0xff700f00) == 0xed000a00) { // vstr s0, [ry, #Y]
+         // ldr r2, [rx, #X]; str r2, [ry, #Y];
+         *scan = 0xe5902000 | (*scan & 0x8f0000) | ((*scan & 0xff) << 2);
+         *scanp1 = 0xe5002000 | (*scanp1 & 0x8f0000) | ((*scanp1 & 0xff) << 2);
+      }
    }
    funcEnd += 1;
 }
@@ -1637,16 +1643,14 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
-      if (((*scan & 0xffff0fff) == 0xe52d0004 && // push {r[012]}
-           (*scan & 0xf000) < 0x3000) &&
+      if ( *scan == 0xe52d0004 && // push {r0}
           *(scan-1) != NOP1 &&
           *(scan+3) != 0xe3a0780f && // mov r7, #983040
           *(scan+6) != 0xe3a0780f) { // mc specific hack
          stack[lev] = scan;
          ++lev;
       }
-      else if (((*scan & 0xffff0fff) == 0xe49d0004 && // pop {r[012]}
-                (*scan & 0xf000) < 0x3000) &&
+      else if (*scan == 0xe49d1004 && // pop {r1}
                *(scan-1) != NOP1) {
          --lev;
          pair[np].push = stack[lev];

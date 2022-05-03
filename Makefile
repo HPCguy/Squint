@@ -1,5 +1,6 @@
 SHELL := bash
-CFLAGS = -O0 -Wall -Wno-misleading-indentation -Wno-incompatible-pointer-types
+CFLAGS = -O3 -Wall -Wno-misleading-indentation -Wno-incompatible-pointer-types \
+         -Wno-maybe-uninitialized
 OP = -Op
 CURR_DIR=$(abspath $(shell pwd))
 OBJ_DIR = ELF
