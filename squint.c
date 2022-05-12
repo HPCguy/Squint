@@ -132,7 +132,7 @@ static int find_const(int addr)
       else
          high = mid;
    }
-   return low;
+   return low; // this is the inseertion point, which can be cnst_pool_size
 }
 
 static int is_const(int *inst)
@@ -273,32 +273,6 @@ static void rel_pc_ldr(int *dst, int *src)
             break;
          }
       }
-   }
-}
-
-/* relocate a constant referenced by pc-relative instructions */
-static void rel_pc_const(int *dst, int *src)
-{
-   /* assume no constants are added or removed */
-   /* just migrated to a lower address, in order */
-   if (dst < src) {
-      struct ia_s **inst;
-      int addr = (src - cbegin)*4;
-      int low = find_const(addr);
-      if (cnst_pool[low].data_addr == addr) { // verify 'low' is index of const
-         int offset = (src - dst);
-         cnst_pool[low].data_addr = (dst - cbegin)*4;
-         for (inst = &cnst_pool[low].inst; *inst != 0; inst = &(*inst)->next) {
-            int *scan = cbegin + (*inst)->inst_addr/4;
-            int is_vldr = ((*scan & 0xffff0f00) == 0xed9f0a00); // vldr
-            *scan -= (is_vldr ? offset : offset *4);
-         }
-         *dst = *src;
-      }
-   }
-   else if (dst > src) {
-      printf("addresses can be moved to a lower addr, not arbitrarily moved\n");
-      exit(-1);
    }
 }
 
@@ -937,12 +911,13 @@ static void apply_peepholes4(int *funcBegin, int *funcEnd)
          *scanp1 |= (1<<25) | (*scan & 0xff);
          *scan = NOP;
       }
-      else if ((  *scan & 0xff700f00) == 0xed100a00 && // vldr s0, [rx, #X]
-               (*scanp1 & 0xff700f00) == 0xed000a00) { // vstr s0, [ry, #Y]
+      // revisit this floating point optimization after vpush/vpop optimization
+      // else if ((  *scan & 0xff700f00) == 0xed100a00 && // vldr s0, [rx, #X]
+      //          (*scanp1 & 0xff700f00) == 0xed000a00) { // vstr s0, [ry, #Y]
          // ldr r2, [rx, #X]; str r2, [ry, #Y];
-         *scan = 0xe5902000 | (*scan & 0x8f0000) | ((*scan & 0xff) << 2);
-         *scanp1 = 0xe5002000 | (*scanp1 & 0x8f0000) | ((*scanp1 & 0xff) << 2);
-      }
+      //    *scan = 0xe5902000 | (*scan & 0x8f0000) | ((*scan & 0xff) << 2);
+      //   *scanp1 = 0xe5002000 | (*scanp1 & 0x8f0000) | ((*scanp1 & 0xff)<<2);
+      // }
    }
    funcEnd += 1;
 }
@@ -1478,8 +1453,26 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
    int offset;
    int align;
 
-   int *scan;
-   int *packed;
+   int *scan, *packed;
+
+   struct pd_s *cremap;
+   struct ia_s **inst;
+   int lowc, highc;
+   int cremap_size = 0;
+
+   // Relocate instruction stream consts
+
+   lowc  = find_const((funcBegin-cbegin)*4);
+   highc = find_const((funcEnd+1-cbegin)*4); // past end of func
+
+   if (highc != lowc) {
+      if (highc == cnst_pool_size ||
+          cnst_pool[highc].data_addr > (funcEnd-cbegin)*4) {
+         --highc;
+      }
+      cremap_size = highc - lowc + 1;
+      cremap = calloc(cremap_size, sizeof(struct pd_s));
+   }
 
    /* count number of branches to relocate */
    int nopCount = 0;
@@ -1581,14 +1574,27 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
             }
          }
          if (is_const(scan)) {
-            rel_pc_const(packed, scan);
-            ++packed;
+            if (scan != packed) {
+               tmp = find_const((scan-cbegin)*4);
+               cremap[tmp-lowc].data_addr = (packed-cbegin)*4;
+               *packed++ = *scan;
+            }
          }
          else if (*scan != NOP) {
             if ((*scan & 0xffff0000) == 0xe59f0000 || // ldr  rN, [pc, #X]
                 (*scan & 0xffff0f00) == 0xed9f0a00) { // vldr sN, [pc, #X]
-               rel_pc_ldr(packed, scan);
-               ++packed;
+               if (scan != packed) {
+                  int is_vldr = ((*scan & 0xffff0f00) == 0xed9f0a00); // vldr
+                  int offset = is_vldr ? (*scan & 0xff) : ((*scan & 0xfff) / 4);
+                  tmp = find_const(((scan + 2 + offset) - cbegin)*4);
+
+                  for (inst = &cremap[tmp-lowc].inst;
+                       *inst != 0; inst = &(*inst)->next);
+                  *inst = malloc(sizeof(struct ia_s));
+                  (*inst)->inst_addr = (packed-cbegin)*4;
+                  (*inst)->next = 0;
+                  *packed++ = *scan;
+               }
             }
             else if ((*scan & 0x0e000000) == 0x0a000000) {
                if (*scan & (1<<24)) {
@@ -1614,6 +1620,24 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
 
       while (packed<=funcEnd) {
          *packed++ = NOP;
+      }
+
+      // update const_pool load operations
+      if (cremap_size) {
+         for (ii=0; ii < cremap_size; ++ii) {
+            tmp = cremap[ii].data_addr / 4;
+            for (inst = &cremap[ii].inst; *inst != 0; inst = &(*inst)->next) {
+               scan = &cbegin[(*inst)->inst_addr/4];
+               if ((*scan & 0xffff0f00) == 0xed9f0a00) { // vldr
+                  *scan = (*scan & 0xffffff00) |  (&cbegin[tmp] - scan - 2);
+               }
+               else {
+                  *scan = (*scan & 0xfffff000) | ((&cbegin[tmp] - scan - 2)*4);
+               }
+            }
+            // need to free inst ptrs (struct ia_s memory)
+         }
+         free(cremap);
       }
    }
 
@@ -1961,6 +1985,15 @@ static void create_pushpop_map2(int *instInfo, int *funcBegin, int *funcEnd,
 void simplify_frame(int *funcBegin, int *funcEnd)
 {
    int *scan, *scanp1;
+
+   for (scan = funcBegin; scan <= funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+
+      // skip functions containing floating point until
+      // all floating point optimizations have been implemented
+      if ((*scan & 0xffff0f00) == 0xed9f0a00) return; // vldr
+   }
+
    if (funcBegin[1] == 0xe28db000 && // add  fp, sp, #0
        (funcBegin[2] & 0xfffff000) != 0xe24dd000) { // sub sp, sp, #X
       int fo = -4 ; // frame offset
