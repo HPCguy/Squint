@@ -81,7 +81,6 @@ $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<)) 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF-self> **]\n"
 	$(Q)$(ARM_EXEC) ./$(OBJ_DIR)/$(BIN) $< 2 $(REDIR)
-	@if [ $(notdir $<) == shock.c ]; then $(call pass,$<); exit 0; fi
 	$(VECHO) "[*** verify $< <JIT-opt> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN)-so $(OP) $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF-opt> *******]\n"
