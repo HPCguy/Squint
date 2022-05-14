@@ -45,74 +45,27 @@ real	0m1.031s
 user	0m0.999s
 sys	0m0.031s
 ```
-Comparing gcc vs mc+squint ELF executable runtimes (min time of 20 runs):
-```markdown
-$ gcc tests/sieve.c
-$ time ./a.out
 
-real	0m1.693s
-user	0m1.671s
-sys	0m0.022s
+| Benchmark |  AMaCC .text size | Mc+Squint .text | Gcc -O3 .text | Notes |
+| --- | --- | --- | --- | --- |
+| bezier.c | 4468 | 1668 | 992 | recursive |
+| duff.c | 3068 | 564 | 412 | unusual |
+| maze.c | 6640 | 2632 | 1752 | misc |
+| shock.c | 8732 | 3304 | 3388 | floating point |
+| mc.c | 123264 | 61240 | 34932 | full compiler |
 
-$ ./mc-so -DSQUINT_SO -Op -o sieve tests/sieve.c
-$ time ./sieve
+| Benchmark | AMaCC compile time | Mc+Squint time | Gcc -O3 time |
+| --- | --- | --- | --- |
+| mc.c | 0.140s | 0.352s | 3.462s |
 
-real  0m0.949s
-user  0m0.927s
-sys   0m0.021s
+| Benchmark | AMaCC runtime | Mc+Squint | Gcc | Gcc -O1 | Gcc -03 |
+| --- | --- | --- | --- | --- | --- |
+| sieve | 3.676s |  0.936s | 1.642s | 0.942s | 0.962s |
+| shock | 2.448s | 0.441s | 0.610s | 0.291s | 0.239s |
+| fib 42 | 10.546s | 4.595s | 6.209s | 4.504s | 3.553s |
 
-$ gcc **-O3** sieve.c
-$ time ./a.out
+Note: shock output sent to /dev/null
 
-real	0m0.962s
-user	0m0.941s
-sys	0m0.022s
-------------------
-$ gcc tests/fib.c
-$ time ./a.out 42
-433494437
-
-real  0m6.261s
-user  0m6.245s
-sys   0m0.001s
-
-$ ./mc-so -DSQUINT_SO -Op -o fib tests/fib.c
-$ time ./fib 42
-433494437
-
-real  0m4.595s
-user  0m4.595s
-sys   0m0.000s
-
-$ gcc **-O1** fib.c
-$ time ./a.out 42
-433494437
-
-real  0m4.501s
-user  0m4.491s
-sys 0m0.011s
-------------------
-$ gcc tests/shock.c -lm  (2048 elements, 1024 timesteps)
-$ time ./a.out
-
-real  0m0.756s
-user  0m0.647s
-sys   0m0.100s
-
-$ ./mc-so -DSQUINT_SO -Op -o shock tests/shock.c (2048 elements, 1024 timesteps)
-$ time ./shock
-
-real  0m0.702s
-user  0m0.428s
-sys   0m0.164s
-
-$ gcc **-O3** tests/shock.c -lm  (2048 elements, 1024 timesteps)
-$ time ./a.out
-
-real  0m0.386s
-user  0m0.296s
-sys   0m0.091s
-```
 ## Prerequisites
 * This compiler project depends on several GNU/Linux behaviors, and it
   is necessary to have Arm/Linux installed in your build environment.
