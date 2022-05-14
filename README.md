@@ -28,23 +28,7 @@ educational compiler. The README there expands upon this README and
 is where you will learn the most about the AMaCC compiler that was
 used as a starting point for this work.
 
-## Example
-The following time command uses the mc compiler to JIT compile an optimized verison
-of the mc compiler, using an external optimizer linked as a shared object library,
-and then that optimized JIT complier is used to JIT compile an optimized version of
-Sieve of Eratosthenes (again using a shared object optimizer), and then the
-sieve benchmark is JIT executed.  The time shown is the time it takes to do
-everything in this paragraph, sieving 8388608 values using three different
-algorithms applied to bit arrays.
-```
-$ make mc-so      # use gcc to build an enhanced version of the mc compiler
-  CC+LD		mc-so
-$ time ./mc-so -DSQUINT_SO -Op mc.c -Op tests/sieve.c
-
-real	0m1.031s
-user	0m0.999s
-sys	0m0.031s
-```
+## Performance
 
 | Benchmark |  AMaCC .text size | Mc+Squint .text | Gcc -O3 .text | Notes |
 | --- | --- | --- | --- | --- |
@@ -65,6 +49,25 @@ sys	0m0.031s
 | fib 42 | 10.546s | 4.595s | 6.209s | 4.504s | 3.553s |
 
 Note: shock output sent to /dev/null
+
+
+## Example
+The following time command uses the mc compiler to JIT compile an optimized verison
+of the mc compiler, using an external optimizer linked as a shared object library,
+and then that optimized JIT complier is used to JIT compile an optimized version of
+Sieve of Eratosthenes (again using a shared object optimizer), and then the
+sieve benchmark is JIT executed.  The time shown is the time it takes to do
+everything in this paragraph, sieving 8388608 values using three different
+algorithms applied to bit arrays.
+```
+$ make mc-so      # use gcc to build an enhanced version of the mc compiler
+  CC+LD		mc-so
+$ time ./mc-so -DSQUINT_SO -Op mc.c -Op tests/sieve.c
+
+real	0m1.031s
+user	0m0.999s
+sys	0m0.031s
+```
 
 ## Prerequisites
 * This compiler project depends on several GNU/Linux behaviors, and it
