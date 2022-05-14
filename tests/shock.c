@@ -101,6 +101,9 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
                                   float *f0, float *f1, float *f2)
 {
    int i;
+   int contributor;
+   float ev;
+   float cLocal;
 
    for (i=0; i<numFace; ++i)
    {
@@ -110,15 +113,13 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
 
       /* calculate face centered quantities */
       float massf =     0.5 * (mass[upWind]     + mass[downWind]);
+
       float momentumf = 0.5 * (momentum[upWind] + momentum[downWind]);
       float energyf =   0.5 * (energy[upWind]   + energy[downWind]);
       float pressuref = (gammaa - 1.0) *
                          (energyf - 0.5*momentumf*momentumf/massf);
       float c = sqrtf(gammaa*pressuref/massf);
       float v = momentumf/massf;
-      float ev;
-      float cLocal;
-      int contributor;
 
       /* Now that we have the wave speeds, we might want to */
       /* look for the max wave speed here, and update dt */
@@ -127,8 +128,6 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
 
       /* OK, calculate face quantities */
 
-      f0[i] = f1[i] = f2[i] = 0.0;
-
       contributor = ((v >= 0.0) ? upWind : downWind);
       massf = mass[contributor];
       momentumf = momentum[contributor];
@@ -136,9 +135,9 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
       pressuref = energyf - 0.5*momentumf*momentumf/massf;
       ev = v*(gammaa - 1.0);
 
-      f0[i] = f0[i] + ev*massf;
-      f1[i] = f1[i] + ev*momentumf;
-      f2[i] = f2[i] + ev*(energyf - pressuref);
+      f0[i] = ev*massf;
+      f1[i] = ev*momentumf;
+      f2[i] = ev*(energyf - pressuref);
 
       contributor = ((v + c >= 0.0) ? upWind : downWind);
       massf = mass[contributor];
