@@ -17,7 +17,7 @@ benchmark provides an optimization example, and runs roughly
 
 Source code size:
 * mc C compiler -- 2650 SLOC
-* squint optimizer -- 2050 SLOC
+* squint optimizer -- 2270 SLOC
 
 The original AMaCC compiler is based on the phenomenal work of the 
 team at https://github.com/jserv/amacc , and I strongly suggest
@@ -91,6 +91,20 @@ $ time ./a.out 42
 real  0m4.501s
 user  0m4.491s
 sys 0m0.011s
+------------------
+$ gcc **-O3** tests/shock.c -lm  (2048 elements, 1024 timesteps)
+$ time ./a.out
+
+real  0m0.386s
+user  0m0.296s
+sys   0m0.091s
+
+$ ./mc-so -DSQUINT_SO -Op -o shock tests/shock.c (2048 elements, 1024 timesteps)
+$ time ./shock
+
+real  0m0.702s
+user  0m0.428s
+sys   0m0.164s
 ```
 ## Prerequisites
 * This compiler project depends on several GNU/Linux behaviors, and it
