@@ -8,7 +8,7 @@ compiler.  See the AMaCC documentation referenced below for more information.
 
 This compiler supports the following features beyond AMaCC:
 
-* Float data types (AMaCC is an integer based compiler).
+* ***Float*** data types (AMaCC is an integer based compiler).
 
 * The Squint peephole optimizer that ***roughly halves the number of executable
 instructions in compiled code***.  The tests/sieve.c
@@ -92,12 +92,12 @@ real  0m4.501s
 user  0m4.491s
 sys 0m0.011s
 ------------------
-$ gcc **-O3** tests/shock.c -lm  (2048 elements, 1024 timesteps)
+$ gcc tests/shock.c -lm  (2048 elements, 1024 timesteps)
 $ time ./a.out
 
-real  0m0.386s
-user  0m0.296s
-sys   0m0.091s
+real  0m0.756s
+user  0m0.647s
+sys   0m0.100s
 
 $ ./mc-so -DSQUINT_SO -Op -o shock tests/shock.c (2048 elements, 1024 timesteps)
 $ time ./shock
@@ -105,6 +105,13 @@ $ time ./shock
 real  0m0.702s
 user  0m0.428s
 sys   0m0.164s
+
+$ gcc **-O3** tests/shock.c -lm  (2048 elements, 1024 timesteps)
+$ time ./a.out
+
+real  0m0.386s
+user  0m0.296s
+sys   0m0.091s
 ```
 ## Prerequisites
 * This compiler project depends on several GNU/Linux behaviors, and it
