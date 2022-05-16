@@ -12,7 +12,7 @@ float dot(float *xx, float *yy, int n)
    float retVal = 0.0;
    int i;
    for (i = 0; i < n; ++i) {
-      retVal = retVal + xx[i] * yy[i];
+      retVal += xx[i] * yy[i];
    }
    return retVal;
 }

@@ -147,9 +147,9 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
       ev = 0.5*(v + c);
       cLocal = sqrtf(gammaa*pressuref/massf);
 
-      f0[i] = f0[i] + ev*massf;
-      f1[i] = f1[i] + ev*(momentumf + massf*cLocal);
-      f2[i] = f2[i] + ev*(energyf + pressuref + momentumf*cLocal);
+      f0[i] += ev*massf;
+      f1[i] += ev*(momentumf + massf*cLocal);
+      f2[i] += ev*(energyf + pressuref + momentumf*cLocal);
 
       contributor = ((v - c >= 0.0) ? upWind : downWind);
       massf = mass[contributor];
@@ -159,9 +159,9 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
       ev = 0.5*(v - c);
       cLocal = sqrtf(gammaa*pressuref/massf);
 
-      f0[i] = f0[i] + ev*massf;
-      f1[i] = f1[i] + ev*(momentumf - massf*cLocal);
-      f2[i] = f2[i] + ev*(energyf + pressuref - momentumf*cLocal);
+      f0[i] += ev*massf;
+      f1[i] += ev*(momentumf - massf*cLocal);
+      f2[i] += ev*(energyf + pressuref - momentumf*cLocal);
    }
 }
 
@@ -186,9 +186,9 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
       int upWind = i-1;     /* upwind face */
       int downWind = i;   /* downwind face */
 
-      mass[i]     = mass[i] - gammaInverse*(f0[downWind] - f0[upWind])*dtdx;
-      momentum[i] = momentum[i] - gammaInverse*(f1[downWind] - f1[upWind])*dtdx;
-      energy[i]   = energy[i] - gammaInverse*(f2[downWind] - f2[upWind])*dtdx;
+      mass[i]     -= gammaInverse*(f0[downWind] - f0[upWind])*dtdx;
+      momentum[i] -= gammaInverse*(f1[downWind] - f1[upWind])*dtdx;
+      energy[i]   -= gammaInverse*(f2[downWind] - f2[upWind])*dtdx;
       pressure[i]  = (gammaa - 1.0) *
                           (energy[i] - 0.5*momentum[i]*momentum[i]/mass[i]);
    }

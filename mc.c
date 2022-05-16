@@ -796,8 +796,9 @@ resolve_fnproto:
             if (otk == DivAssign) ef_getidx("__aeabi_idiv");
             if (otk == ModAssign) ef_getidx("__aeabi_idivmod");
          }
-         *--n = (int) (b + 2); *--n = ty = t; *--n = Assign;
-         ty = INT;
+         if (t == FLOAT && (otk >= AddAssign && otk <= DivAssign))
+            *n += 5;
+         *--n = (int) (b + 2); *--n = (ty <<16) | t; *--n = Assign; ty = t;
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
          next(); expr(Assign); tc = ty;
@@ -2008,7 +2009,8 @@ int *codegen(int *jitmem, int *jitmap)
          else if ( ((int) je > (int) imm0 + 3072) || // pad for optimizer
                    (immf0 && ((int) je > (int) immf0 + 512)) ) {
             tje = je; --tje; // workaround for "*(ptr - literal)" bug
-            if (*tje != 0xe1a01001) { // NOP : mov r1, r1
+            if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
+                (*tje & 0xfff00ff0) != 0xe0000090) { // mul 
                tje = je++; genpool = 2;
             }
          }
