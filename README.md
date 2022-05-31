@@ -35,7 +35,7 @@ used as a starting point for this work.
 | bezier.c | 4468 | 1668 | 992 | recursive |
 | duff.c | 3068 | 564 | 412 | unusual |
 | maze.c | 6640 | 2632 | 1752 | misc |
-| shock.c | 8732 | 3304 | 3388 | floating point |
+| shock.c | 8732 | 2032 | 3388 | floating point |
 | mc.c | 123264 | 61240 | 34932 | full compiler |
 
 | Benchmark | AMaCC compile time | Mc+Squint time | Gcc -O3 time |
@@ -45,10 +45,10 @@ used as a starting point for this work.
 | Benchmark | AMaCC runtime | Mc+Squint | Gcc | Gcc -O1 | Gcc -03 |
 | --- | --- | --- | --- | --- | --- |
 | sieve | 3.676s |  0.936s | 1.642s | 0.942s | 0.962s |
-| shock | 2.448s | 0.441s | 0.610s | 0.291s | 0.239s |
+| shock | 39.192s | 3.628s | 9.666s | 4.383s | 3.702s |
 | fib 42 | 10.546s | 4.595s | 6.209s | 4.504s | 3.553s |
 
-Note: shock output sent to /dev/null
+Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
 
 
 ## Example

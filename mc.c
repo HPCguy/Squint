@@ -1719,7 +1719,12 @@ int *codegen(int *jitmem, int *jitmap)
       // Store mapping from IR index to native instruction buffer location
       // "pc - text" gets the index of IR.
       // "je" points to native instruction buffer's current location.
-      if (peephole && i == ENT) while((int)je & 0x0f) *je++ = 0xe1a00000; // mov r0, r0
+      if (peephole && i == ENT) {
+         // align on 16 byte boundary
+         while((int)je & 0x0f) *je++ = 0xe1a00000; // mov r0, r0
+         // add space for 16 frame register constants
+         for (ii=0; ii<16; ++ii) *je++ = 0xe1a00000; // mov r0, r0
+      }
       jitmap[((int) pc++ - (int) text) >> 2] = (int) je;
       switch (i) {
       case LEA:
@@ -1764,7 +1769,7 @@ int *codegen(int *jitmem, int *jitmap)
          if (tmp) *je++ = 0xe24dd000 | (((16-ii) & 0xf) << 8) | tmp;
          if (ii == 0 && (tmp & 4)) sp_odd = 1;
          if (peephole) { // reserve space for frame registers
-            for (ii=0; ii<8; ++ii) *je++ = 0xe1a00000; // mov r0, r0
+            for (ii=0; ii<16; ++ii) *je++ = 0xe1a00000; // mov r0, r0
          }
          break;
       case ADJ:
@@ -2010,7 +2015,7 @@ int *codegen(int *jitmem, int *jitmap)
                    (immf0 && ((int) je > (int) immf0 + 512)) ) {
             tje = je; --tje; // workaround for "*(ptr - literal)" bug
             if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
-                (*tje & 0xfff00ff0) != 0xe0000090) { // mul 
+                (*tje & 0xfff00ff0) != 0xe0000090) { // mul
                tje = je++; genpool = 2;
             }
          }
