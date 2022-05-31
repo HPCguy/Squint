@@ -615,14 +615,21 @@ static void create_inst_info_f(int *instInfo, int *funcBegin, int *funcEnd)
          *rInfo = RI_RdAct | RI_RdDest | ((*scan & RI_Rd) * 2) |
                   ((*scan & 0x400000) ? 0x1000 : 0);
       else if ((*scan & 0xff300f00) == 0xed000a00) // vstr s0
-         *rInfo = RI_RdAct;
-      else if ((*scan & 0xffb00050) == 0xeeb00040) // vmov Fd, Fm
+         *rInfo = RI_RdAct | ((*scan & RI_Rd) * 2) |
+                  ((*scan & 0x400000) ? 0x1000 : 0);
+      else if ((*scan & 0xffbf0fd0) == 0xeeb00a40) // vmov Fd, Fm
          *rInfo = RI_RdAct | RI_RdDest | RI_RmAct |
                   ((*scan & 0x400000) ? 0x1000 : 0) | ((*scan & RI_Rd) * 2) |
-                  ((*scan & 0x20) ? 0x01 : 0) | ((*scan & RI_Rm) * 2);
+                  ((*scan & 0x20) ? 1 : 0) | ((*scan & RI_Rm) * 2);
       else if (*scan == 0xee300a40) // vsub s0, s0, s0
-         *rInfo = RI_RdAct | RI_RdDest | RI_RnAct | RI_RmAct;
-      else if ((*scan & 0xff000010) == 0xee000000) // Fop Fd, Fn, Fm
+         *rInfo = RI_RdAct | RI_RdDest; // def of s0, but not a use
+      else if (*scan == 0xeef40ac0) // vcmpe Fd1, Fm0
+         *rInfo = RI_RdAct | RI_RmAct | 0x1000;
+      else if ((*scan & 0xffbf0fc0) == 0xeeb10ac0) // vsqrt Fd, Fm
+         *rInfo = RI_RdAct | RI_RdDest | RI_RmAct |
+                    ((*scan & 0x400000) ? 0x1000 : 0) | ((*scan & RI_Rd) * 2) |
+                    ((*scan & 0x20) ? 1 : 0) | ((*scan & RI_Rm) * 2);
+      else if ((*scan & 0xff000f10) == 0xee000a00) // Fop Fd, Fn, Fm
          *rInfo = RI_RdAct | RI_RdDest | RI_RnAct | RI_RmAct |
                     ((*scan & 0x400000) ? 0x1000 : 0) | ((*scan & RI_Rd) * 2) |
                     ((*scan & 0x80) ? 0x10000 : 0) | ((*scan & RI_Rn) * 2) |
@@ -1027,8 +1034,7 @@ static void apply_peepholes4(int *funcBegin, int *funcEnd)
 {
    int *scan, *scanp1;
 
-   funcEnd -= 1;
-   for (scan = funcBegin; scan <= funcEnd; ++scan) {
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
       scanp1 = active_inst(scan, 1);
 
@@ -1049,7 +1055,6 @@ static void apply_peepholes4(int *funcBegin, int *funcEnd)
          *scan = NOP;
       }
    }
-   funcEnd += 1;
 }
 
 static void apply_peepholes4_5(int *instInfo, int *funcBegin, int *funcEnd)
@@ -1062,9 +1067,9 @@ static void apply_peepholes4_5(int *instInfo, int *funcBegin, int *funcEnd)
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
-      if ((*scan & 0xfff0f050) == 0xeeb00040) { // vmov s0, Fm
+      if ((*scan & 0xfffff0d0) == 0xeeb00040) { // vmov s0, Fm
          scanp1 = active_inst(scan, 1);
-         if ((*scanp1 & 0xffb0007f) == 0xeeb00040 && // vmov Fn, s0
+         if ((*scanp1 & 0xffbf00ff) == 0xeeb00040 && // vmov Fn, s0
              (instInfo[scanp1-funcBegin] & RI_bb) == 0) {
             *scanp1 = *scanp1 | (*scan & 0x2f);
             *scan = NOP;
@@ -1078,8 +1083,7 @@ static void apply_peepholes5(int *funcBegin, int *funcEnd)
 {
    int *scan, *scanp1;
 
-   funcEnd -= 1;
-   for (scan = funcBegin; scan <= funcEnd; ++scan) {
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
       scanp1 = active_inst(scan, 1);
 
@@ -1092,16 +1096,71 @@ static void apply_peepholes5(int *funcBegin, int *funcEnd)
         *scanp1 = 0xe5002000 | (*scanp1 & 0x8f0000) | ((*scanp1 & 0xff) << 2);
       }
    }
-   funcEnd += 1;
 }
 
-static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd)
+static void apply_peepholes5_5(int *funcBegin, int *funcEnd)
+{
+   int *scan, *scanp1;
+
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+      scanp1 = active_inst(scan, 1);
+
+      if ((*scan & 0xff000000) == 0xea000000) { // chk branch to next stmt
+         int tmp = (*scan & 0xffffff) | ((*scan & 0x800000) ? 0xff000000 : 0);
+         scanp1 = active_inst(scan,1);
+         if ((scan + 2 + tmp) <= scanp1) {
+            // verify all NOPs between scan and scanp1
+            while (--scanp1 != scan) {
+               if (*scanp1 != NOP) break;
+            }
+            if (scan == scanp1) *scan = NOP;
+         }
+      }
+      else if (*scan == 0xeef1fa10) {      // vmrs  APSR_nzcv, fpscr
+         int *scanp3 = active_inst(scan, 3);
+         if (*scanp3 == 0xe3500000) {      //  cmp   r0, #0
+            int *scanp4 = active_inst(scanp3, 1);
+            int *scanp6 = active_inst(scanp4, 2);
+            if ((*scanp4 & 0xfffffff8) == 0x0a000000 && // beq
+                (*scanp6 & 0xfffffff8) == 0xea000000) { // b
+               int *scanp5 = active_inst(scanp4, 1);
+               int *scanp7 = active_inst(scanp6, 1);
+               if ((*scanp5 & RI_Rd) == (*scanp7 & RI_Rd) &&
+                   (*scanp5 & RI_Rd) == 0) {
+                  int *scanp1 = active_inst(scan, 1);
+                  if ((*scanp1 & 0xff) == 0)
+                     *scanp6 = (*scanp6 & 0x0fffffff) |
+                               ((*scanp1 ^ 0x10000000) & 0xf0000000);
+                  *scanp1 = NOP;
+                  scanp1 = active_inst(scan, 1); // scanp2
+                  if ((*scanp1 & 0xff) == 0) // scanp2
+                     *scanp6 = (*scanp6 & 0x0fffffff) |
+                               ((*scanp1 ^ 0x10000000) & 0xf0000000);
+                  *scanp1 = NOP; //scanp2
+                  *scanp3 = NOP;
+                  *scanp4 = NOP;
+               }
+            }
+         }
+      }
+   }
+}
+
+static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd,
+                             int dofloat)
 {
    int *scan, *scanm1, *scanp1, *scanp2;
    int *info, *rxd, *rxu, *rdd, *rdu, *rdt, *rfinal;
-   int rx, rd, rxS;
+   int rx, rd, rxS, rdm1, cond;
+   int movMask = (dofloat) ? 0xffbf00d0 : 0xffff0ff0;
+   int movInst = (dofloat) ? 0xeeb00040 : 0xe1a00000;
 
-   create_inst_info(instInfo, funcBegin, funcEnd);
+   if (dofloat)
+      create_inst_info_f(instInfo, funcBegin, funcEnd);
+   else
+      create_inst_info(instInfo, funcBegin, funcEnd);
+
    create_bb_info(instInfo, funcBegin, funcEnd);
 
    // op rx, ...
@@ -1109,18 +1168,31 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd)
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
-      if ((*scan & 0xffff0ff0) == 0xe1a00000) {
-         rx = *scan & 0x0f;
-         rd = (*scan >> 12) & 0x0f;
-         if (rd < 3) continue; // extra precaution
+      if ((*scan & movMask) == movInst) {
+         rx = dofloat ?
+              ((*scan & 0x0f)*2 + ((*scan & 0x20) ? 1 : 0)) : (*scan & 0x0f);
+         rd = dofloat ?
+              (((*scan & RI_Rd) >>11) + ((*scan & 0x400000) ? 1 : 0)) :
+              ((*scan >> 12) & 0x0f);
+         if (rd < (dofloat ? 2 : 3)) continue; // extra precaution
          scanm1 = active_inst(scan, -1);
-         if ((*scanm1 & 0xffff0ff0) == 0xe1a00000 && // mov rx, ry
+         if ((*scanm1 & movMask) == movInst && // mov rx, ry
              (instInfo[scanm1-funcBegin] & RI_bb)) {
             continue;
          }
-         rxS = (instInfo[scanm1-funcBegin] & RI_RdDest) ? 12 : 16;
          // need dep info to check dest reg for mul...
-         if (((*scanm1 >> rxS) & 0x0f) == rx && ((*scanm1 >> 25) & 7) <= 2) {
+
+         if (dofloat) {
+            rdm1 = ((*scanm1 & RI_Rd) >> 11) + ((*scanm1 & 0x400000) ? 1 : 0 );
+            cond = (rdm1 == rx);
+         }
+         else {
+            rxS = (instInfo[scanm1-funcBegin] & RI_RdDest) ? 12 : 16;
+            cond = (((*scanm1 >> rxS) & 0x0f) == rx &&
+                    ((*scanm1 >> 25) & 7) <= 2);
+         }
+
+         if (cond) {
             rxu = find_use(instInfo, &instInfo[scan-funcBegin]+1, rx, S_FWD);
             rxd = find_def(instInfo, &instInfo[scan-funcBegin]+1, rx, S_FWD);
             if (rxd == 0) rxd = &instInfo[funcEnd-funcBegin];
@@ -1131,7 +1203,10 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd)
                if (rdt > rfinal) {
                   do {
                      int *rscan = &funcBegin[rxu-instInfo];
-                     reg_rename(rd, rx, rxu, rscan);
+                     if (dofloat)
+                        reg_rename_f(rd, rx, rxu, rscan);
+                     else
+                        reg_rename(rd, rx, rxu, rscan);
                      if (rxu == rfinal) break;
                      rxu = find_use(instInfo, &instInfo[rscan-funcBegin]+1,
                                     rx, S_FWD);
@@ -1139,29 +1214,42 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd)
                }
             }
             if (rxu == 0 || rxu > rxd || rdt > rfinal) {
-               *scan = (*scanm1 & ~(0x0f << rxS)) | (rd << rxS);
-               *scanm1 = NOP;
+               if (dofloat)
+                  *scanm1 = (*scanm1 & ~0x0040f000) | (*scan & 0x0040f000);
+               else
+                  *scanm1 = (*scanm1 & ~(0x0f << rxS)) | (rd << rxS);
+               *scan = NOP;
             }
          }
       }
    }
+
+   if (dofloat)
+      create_inst_info_f(instInfo, funcBegin, funcEnd);
+   else
+      create_inst_info(instInfo, funcBegin, funcEnd);
+
+   create_bb_info(instInfo, funcBegin, funcEnd);
 
    // mov rd, rx
    // op ..., rd   --->  op ..., rx
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
-      if ((*scan & 0xffff0ff0) == 0xe1a00000) {
-         rx = *scan & 0x0f;
-         rd = (*scan >> 12) & 0x0f;
+      if ((*scan & movMask) == movInst) {
+         rx = dofloat ?
+              ((*scan & 0x0f)*2 + ((*scan & 0x20) ? 1 : 0)) : (*scan & 0x0f);
+         rd = dofloat ?
+              (((*scan & RI_Rd) >>11) + ((*scan & 0x400000) ? 1 : 0)) :
+              ((*scan >> 12) & 0x0f);
          scanp1 = active_inst(scan, 1);
          scanp2 = active_inst(scanp1, 1);
          info = &instInfo[scan-funcBegin];
          if ((*scanp1 == 0xe3500000 && // switch stmt -- cmp r0, #0; bne x
              (((*scanp2 >> 24) & 255) == 0x1a)) ||
-             ((*scanp1 & 0xffff0ff0) == 0xe1a00000 && // mov rx, ry
+             ((*scanp1 & movMask) == movInst && // mov rx, ry
               (*info & RI_bb)) ||
-             rd > 2) {                 // frame var assignment
+              rd > (dofloat ? 1 : 2)) {         // frame var assignment
              continue;
          }
          ++info;
@@ -1183,7 +1271,10 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd)
             if (rdt > rfinal) {
                do {
                   int *rscan = &funcBegin[rdu-instInfo];
-                  reg_rename(rx, rd, rdu, rscan);
+                  if (dofloat)
+                     reg_rename_f(rx, rd, rdu, rscan);
+                  else
+                     reg_rename(rx, rd, rdu, rscan);
                   if (rdu == rfinal) break;
                   rdu = find_use(instInfo, &instInfo[rscan-funcBegin]+1,
                                  rd, S_FWD);
@@ -1387,17 +1478,6 @@ fallback:
                   scan = scanp1;
                }
             }
-         }
-      }
-      else if ((*scan & 0xff000000) == 0xea000000) { // chk branch to next stmt
-         int tmp = (*scan & 0xffffff) | ((*scan & 0x800000) ? 0xff000000 : 0);
-         scanp1 = active_inst(scan,1);
-         if ((scan + 2 + tmp) <= scanp1) {
-            // verify all NOPs between scan and scanp1
-            while (--scanp1 != scan) {
-               if (*scanp1 != NOP) break;
-            }
-            if (scan == scanp1) *scan = NOP;
          }
       }
    }
@@ -2400,7 +2480,6 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
             fpcnst[numReg++] = tmp;
             if (numReg == REN_BUF) break;
          }
-         // printf("%8x\n", tmp);
          ++count[i];
       }
       else if ((*scan & 0xfffff000) == 0xe59f0000) { // ldr r0, [pc, #X]
@@ -2633,11 +2712,9 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
-      // needs to be checked for dofloat behavior...
-
       if ((*scan & 0xffffff00) == 0xe28b0000 || // add r0, fp, #X
           (*scan & 0xffffff00) == 0xe24b0000) { // sub r0, fp, #X
-         int off = (*scan & 0xff);
+         int off = dofloat ? ((*scan & 0xff) / 4) : (*scan & 0xff);
          if ((*scan & 0xffffff00) == 0xe24b0000) {
             off = -off;
          }
@@ -2685,8 +2762,6 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
    } while(!done);
 
    if (base + numReg > maxReg) numReg = maxReg - base;
-
-   if (dofloat) printf("num float frame var = %d\n", numReg);
 
    if (dofloat) // dependency info
       create_inst_info_f(instInfo, funcBegin, funcEnd);
@@ -2894,7 +2969,12 @@ int squint_opt(int *begin, int *end)
             fbase = rename_register2(tmpbuf, funcBegin, retAddr, fbase, 1);
 
          apply_peepholes5(funcBegin, retAddr);
-         apply_peepholes6(tmpbuf, funcBegin, retAddr);
+         apply_peepholes6(tmpbuf, funcBegin, retAddr, 0);
+         apply_peepholes5_5(funcBegin, retAddr);
+
+         if (!noFloatConst)
+            apply_peepholes6(tmpbuf, funcBegin, retAddr, 1);
+
          apply_peepholes7(tmpbuf, funcBegin, retAddr);
          ibase = create_pushpop_map3(tmpbuf, funcBegin, retAddr, ibase, 0);
 
