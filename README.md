@@ -32,21 +32,21 @@ used as a starting point for this work.
 
 | Benchmark |  AMaCC .text size | Mc+Squint .text | Gcc -O3 .text | Notes |
 | --- | --- | --- | --- | --- |
-| bezier.c | 4468 | 1668 | 992 | recursive |
-| duff.c | 3068 | 564 | 412 | unusual |
-| maze.c | 6640 | 2632 | 1752 | misc |
-| shock.c | 8732 | 2032 | 3388 | floating point |
-| mc.c | 123264 | 61240 | 34932 | full compiler |
+| bezier.c | 4468 | 1668 | ***992*** | recursive |
+| duff.c | 3068 | 564 | ***412*** | unusual |
+| maze.c | 6640 | 2632 | ***1752*** | misc |
+| shock.c | 8732 | ***2032*** | 3388 | floating point |
+| mc.c | 123264 | 61240 | ***34932*** | full compiler |
 
 | Benchmark | AMaCC compile time | Mc+Squint time | Gcc -O3 time |
 | --- | --- | --- | --- |
-| mc.c | 0.140s | 0.352s | 3.462s |
+| mc.c | ***0.140s*** | 0.352s | 3.462s |
 
 | Benchmark | AMaCC runtime | Mc+Squint | Gcc | Gcc -O1 | Gcc -03 |
 | --- | --- | --- | --- | --- | --- |
-| sieve | 3.676s |  0.936s | 1.642s | 0.942s | 0.962s |
-| shock | 39.192s | 3.628s | 9.666s | 4.383s | 3.702s |
-| fib 42 | 10.546s | 4.595s | 6.209s | 4.504s | 3.553s |
+| sieve | 3.676s |  ***0.936s*** | 1.642s | 0.942s | 0.962s |
+| shock | 39.192s | ***3.628s*** | 9.666s | 4.383s | 3.702s |
+| fib 42 | 10.546s | 4.595s | 6.209s | 4.504s | ***3.553s*** |
 
 Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
 
