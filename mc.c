@@ -255,8 +255,11 @@ enum {
    SYSC, /* 47 system call */
    CLCA, /* 48 clear cache, used by JIT compilation */
 
-   PHD ,  /* 49 PeepHole Disable next assembly instruction in optimizer */
-   PHR0 , /* 50 Inform PeepHole optimizer that R0 holds a return value */
+   VENT, /* 49 Needed fo Varargs ABI, which requires 8-byte stack align */
+   VLEV, /* 50 */
+
+   PHD,  /* 51 PeepHole Disable next assembly instruction in optimizer */
+   PHR0, /* 52 Inform PeepHole optimizer that R0 holds a return value */
 
    INVALID
 };
@@ -385,7 +388,7 @@ void next()
                        "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
                        "ADDF SUBF MULF DIVF FTOI ITOF "
                        "EQF  NEF  GEF  LTF  GTF  LEF  SQRT "
-                       "SYSC CLCA PHD  PHR0" [*++le * 5]);
+                       "SYSC CLCA VENT VLEV PHD  PHR0" [*++le * 5]);
                if (*le < ADJ) {
                   ++le;
                   if (*le > (int) base && *le <= (int) e)
@@ -1099,7 +1102,7 @@ resolve_fnproto:
 // native Arm machine code.
 void gen(int *n)
 {
-   int i = *n, j, k, l;
+   int i = *n, j, k, l, isPrtf;
    int *a, *b, *c, *d, *t;
    struct ident_s *label;
 
@@ -1206,6 +1209,12 @@ void gen(int *n)
    case ClearCache:
       b = (int *) n[1]; k = b ? n[3] : 0;
       if (k) {
+         if (i == Syscall) {
+            isPrtf = (n[4] & 240) && !strcmp(ef_cache[n[2]]->name,"printf");
+            if (isPrtf) {
+               *++e = PHD; *++e = IMM; *++e = (k & 1)*4; *++e = VENT;
+            }
+         }
          l = (i != ClearCache) ? (n[4] >> 8) : 0;
          a = malloc(sizeof(int *) * k);
          for (j = 0; *b ; b = (int *) *b) a[j++] = (int) b;
@@ -1221,6 +1230,7 @@ void gen(int *n)
       if (i == Func) *++e = JSR;
       *++e = n[2];
       if (n[3]) { *++e = ADJ; *++e = (i == Syscall) ? n[4] : n[3]; }
+      if (k && i == Syscall && isPrtf) *++e = VLEV;
       if (peephole && i != ClearCache) *++e = PHR0;
       break;
    case Sqrt: b = (int *) n[1]; gen(b + 1); *++e = n[2]; break;
@@ -1700,8 +1710,7 @@ int reloc_bl(int offset) { return 0xeb000000 | reloc_imm(offset); }
 
 int *codegen(int *jitmem, int *jitmap)
 {
-   int i, ii, jj, kk, tmp, c, ni, nf, sz, off;
-   int align_stack, sp_odd = 0;
+   int i, ii, jj, kk, tmp, c, ni, nf, sz;
    int *je, *tje;    // current position in emitted native code
    int *immloc, *immlocv, *il, *ill, *ivv;
    int *rMap;
@@ -1767,7 +1776,6 @@ int *codegen(int *jitmem, int *jitmap)
             printf("jit: ENT %d out of bounds\n", tmp << (2*ii)); exit(6);
          } // sub  sp, sp, #tmp (scaled)
          if (tmp) *je++ = 0xe24dd000 | (((16-ii) & 0xf) << 8) | tmp;
-         if (ii == 0 && (tmp & 4)) sp_odd = 1;
          if (peephole) { // reserve space for frame registers
             for (ii=0; ii<16; ++ii) *je++ = 0xe1a00000; // mov r0, r0
          }
@@ -1870,11 +1878,11 @@ int *codegen(int *jitmem, int *jitmap)
          c = pc[2]; ii = c & 0xf; c >>= 4; nf = c & 0xf; ni = ii - nf; c >>= 4;
          tmp = ef_getaddr(*pc);  // look up address from ef index
 
-         // Handle ridiculous printf() ABI inline
+         // Handle ridiculous printf() varargs ABI inline
          int isPrtf = nf && !strcmp(ef_cache[*pc]->name, "printf");
          if (isPrtf) {
             if (ii == 0) die("printf() has no arguments");
-            jj = ii - 1; sz = 0; off = 0; rMap = (int *) malloc(ii*sizeof(int));
+            jj = ii - 1; sz = 0; rMap = (int *) malloc(ii*sizeof(int));
             do {
                if (c & (1 << jj)) { // float (adjust as though a double)
                   sz = sz + (sz & 1);
@@ -1888,13 +1896,7 @@ int *codegen(int *jitmem, int *jitmap)
                --jj;
             } while (jj >= 0);
             sz = sz + (sz & 1);
-            // instead?:  test sp, #4; subeq sp, sp, 4; eoreq lr, 0x80000000
-            align_stack = (sp_odd ^ (ii & 1)); // sp must be 8-byte aligned
-            if (sz > 4 || align_stack) {
-               if (align_stack) off = 4;
-               if (sz > 4) off += 4*(sz-4);
-               *je++ = 0xe24dd000 | off; // sub sp, sp, #off;
-            }
+            if (sz > 4) *je++ = 0xe24dd000 | (sz - 4)*4; // sub sp, sp, #off
             jj = 0; // in case arguments are all in regs
             if (sz > 4) { // set up stack arguments
                jj = ii - 1;
@@ -1909,14 +1911,14 @@ int *codegen(int *jitmem, int *jitmap)
                      // vldr s1, [sp, #(sz + jj*4)]
                      // fcvtds d0, s1
                      // vstr d0,[sp, #rMap[jj]-4]
-                     *je++ = 0xeddd0a00 | (jj + off/4);
+                     *je++ = 0xeddd0a00 | (jj + (sz - 4));
                      *je++ = 0xeeb70ae0;
                      *je++ = 0xed8d0b00 | (rMap[jj]-4);
                   }
                   else { // int
                      // ldr r0, [sp, #(sz + jj*4)]
                      // str r0, [sp, #rMap[jj]-4]
-                     *je++ = 0xe59d0000 | (off + jj*4);
+                     *je++ = 0xe59d0000 | ((sz - 4) + jj)*4;
                      *je++ = 0xe58d0000 | (rMap[jj]*4-16);
                   }
                }
@@ -1926,7 +1928,7 @@ int *codegen(int *jitmem, int *jitmap)
                   // vldr s"rMap[jj]+1", [sp, #(sz + jj*4)]
                   // fcvtds d"rMap[jj]/2", s"rMap[jj]+1"
                   // vmov r"rMap[jj]", r"rMap[jj]+1", d"rMap[jj]/2"
-                  *je++ = 0xeddd0a00 | (rMap[jj] << 11) | (jj + off/4);
+                  *je++ = 0xeddd0a00 | (rMap[jj] << 11) | (jj + (sz - 4));
                   *je++ = 0xeeb70ae0 | (rMap[jj] << 11) | (rMap[jj] >> 1);
                   if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
                   *je++ = 0xec500b10 | (rMap[jj] << 12) |
@@ -1935,13 +1937,13 @@ int *codegen(int *jitmem, int *jitmap)
                else { // int
                   if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
                   // ldr r"rMap[jj]", [sp, #(sz + jj*4)]
-                  *je++ = 0xe59d0000 | (rMap[jj] << 12) | (off + jj*4);
+                  *je++ = 0xe59d0000 | (rMap[jj] << 12) | ((sz - 4) + jj)*4;
                }
             }
             ++pc; // point at ADJ instruction
          }
          else {
-            pc = pc + 3; kk = ni;
+            pc = pc + 3; kk = ni; // skip ADJ instruction
             for (jj = 0; jj < ii; ++jj) {
                if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
                if (c & (1 << jj)) { // vpop {nf}
@@ -1953,23 +1955,20 @@ int *codegen(int *jitmem, int *jitmap)
             }
             if ((ni = kk) > 4) {
                if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
-               *je++ = 0xe92d03f0;
+               *je++ = 0xe92d03f0; // push [r4-r9]
             }
          }
          if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
          *je++ = 0xe28fe000;                   // add lr, pc, #0
          if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = tmp;
          if (isPrtf) {
-            // instead?  tests lr, 0; addpl sp, sp, #4
-            if (sz > 4 || align_stack) {
-               *je++ = 0xe28dd000 | off; // add sp, sp, #off;
-            }
+            if (sz > 4) *je++ = 0xe28dd000 | (sz - 4)*4; // add sp, sp, #off
             free(rMap);
          }
          else {
             if (ni > 4) {
-               if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
-               *je++ = 0xe28dd018;                   // add sp, sp, #24
+               if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+               *je++ = 0xe28dd018;                // add sp, sp, #24
             }
          }
          break;
@@ -1982,6 +1981,24 @@ int *codegen(int *jitmem, int *jitmap)
                                                  // svc 0
          break;
       case SQRT: *je++ = 0xeeb10ac0; break;      // fsqrts s0, s0
+      case VENT:
+         if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+         *je++ = 0xe08d0000; // add r0, sp, r0
+         if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+         *je++ = 0xe3100004; // tst r0, #4   -- lower 2 bits always 0
+         if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+         *je++ = 0x152dd004; // pushne {sp}
+         break;
+      case VLEV: // Note: r0 contains return value
+         if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+         *je++ = 0xe59d1000; // ldr r1, [sp]
+         if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+         *je++ = 0xe2411004; // sub r1, r1, #4
+         if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+         *je++ = 0xe151000d; // cmp r1, sp
+         if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
+         *je++ = 0x049d1004; // popeq {r1}
+         break;
       case PHD:  *je++ = 0xe1a01001; break;      // mov r1, r1
       case PHR0: *je++ = 0xe1a0d00d; break;      // mov sp, sp
       default:

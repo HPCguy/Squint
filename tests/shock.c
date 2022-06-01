@@ -196,14 +196,43 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
 
 
 /**************************************************************************
+ * Subroutine:  DumpField
+ * Purpose   :  Create a plot for a single field
+ *************************************************************************/
+
+void DumpField(char *tag, int numElems, float *field)
+{
+   int i;
+
+   printf(tag);
+   for (i=0; i<numElems; ++i) {
+      printf("%d.0 %f\n", i, field[i]);
+   }
+}
+
+
+/**************************************************************************
+ * Subroutine:  DumpPlot
+ * Purpose   :  create output that can be viewed with gnuplot: plot "file"
+ *************************************************************************/
+
+void DumpPlot(int numElems, float *mass, float *momentum,
+                            float *energy, float *pressure)
+{
+   DumpField("# mass\n", numElems, mass);
+   DumpField("\n\n# momentum\n", numElems, momentum);
+   DumpField("\n\n# energy\n", numElems, energy);
+   DumpField("\n\n# pressure\n", numElems, pressure);
+}
+
+
+/**************************************************************************
  * Subroutine:  main
  * Purpose   :  Simulate a 1D Shock Tube using split flux Euler formulation
  *************************************************************************/
 
 int main(void)
 {
-   int i;
-
    /* initialize gloabals */
    gammaa        = 1.4142135;
    gammaInverse = 0.70710678;
@@ -211,7 +240,7 @@ int main(void)
    int numElems = 512;          // 2048
    int numFaces = numElems - 1;
    int numTotalCycles = 100;    // 1024
-   // int dumpInterval = 256;
+   // int dumpInterval = 20;
 
    float *mass     = (float *) malloc((numElems+1)*sizeof(float));
    float *momentum = (float *) malloc((numElems+1)*sizeof(float));
@@ -240,24 +269,7 @@ int main(void)
       time = time + dt;
    }
 
-   // DumpPlot(numElems, mass, momentum, energy, pressure);
-
-   printf("# mass\n");
-   for (i=0; i<numElems; ++i) {
-      printf("%d.0 %f\n", i, mass[i]);
-   }
-   printf("\n\n# momentum\n");
-   for (i=0; i<numElems; ++i) {
-      printf("%d.0 %f\n", i, momentum[i]);
-   }
-   printf("\n\n# energy\n");
-   for (i=0; i<numElems; ++i) {
-      printf("%d.0 %f\n", i, energy[i]);
-   }
-   printf("\n\n# pressure\n");
-   for (i=0; i<numElems; ++i) {
-      printf("%d.0 %f\n", i, pressure[i]);
-   }
+   DumpPlot(numElems, mass, momentum, energy, pressure);
 
    free(f2); free(f1); free(f0);
    free(pressure); free(energy); free(momentum); free(mass);
