@@ -26,8 +26,7 @@ int main()
 {
    float i;
    int ii = (int) 3.0 + 7;
-   float *xx = (float *) malloc(10*sizeof(float));
-   float *yy = (float *) malloc(10*sizeof(float));
+   float xx[10], yy[10];
    float a = 1.0;
    float b = 2.0;
    float c = ( a + 3.0) * b + 8.0;

@@ -3,17 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int *pool;
-int top;
-char **frac;
-
-// stack for local array vars
-int *adj(int n)
-{
-    int *retVal = &pool[top];
-    top += n;
-    return retVal;
-}
+char *frac[8];
 
 int hull_area(int *x, int *y)
 {
@@ -38,10 +28,7 @@ void cubic_bezier(int *px, int *py, int threshold)
     }
 
     int tx, ty;
-    int *x, *y;
-
-    x = adj(7);
-    y = adj(7);
+    int x[7], y[7];
 
     tx = (px[1] + px[2]) / 2;
     ty = (py[1] + py[2]) / 2;
@@ -66,15 +53,12 @@ void cubic_bezier(int *px, int *py, int threshold)
 
     cubic_bezier(x, y, threshold);
     cubic_bezier(&x[3], &y[3], threshold);
-
-    adj(-14);
 }
 
 int main()
 {
-    int *px, *py;
+    int px[4], py[4];
 
-    frac = malloc(8 * sizeof(char *));
     frac[0] = "000";
     frac[1] = "125";
     frac[2] = "250";
@@ -83,12 +67,6 @@ int main()
     frac[5] = "625";
     frac[6] = "750";
     frac[7] = "875";
-
-    pool = malloc(10000 * sizeof(int));
-    top = 0;
-
-    px = adj(4);
-    py = adj(4);
 
     px[0] = 0 * 8;
     py[0] = 100 * 8;
@@ -100,11 +78,6 @@ int main()
     py[3] = 0 * 8;
 
     cubic_bezier(px, py, 1 * 128);
-
-    adj(-8);
-
-    free(pool);
-    free(frac);
 
     return 0;
 }
