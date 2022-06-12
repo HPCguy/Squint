@@ -860,10 +860,10 @@ static void apply_peepholes1(int *funcBegin, int *funcEnd)
              (*scan & 0xfff00f00) == 0xe2400000) { // sub rI, rS, #X
             int rS = (*scan >> 16) & 0xf; // Source, RI_Rn
             int rI = (*scan >> 12) & 0xf; // Index,  RI_Rd
-            if ((*scanp1 & 0xff3000ff) == 0xe5100000 &&
+            if ((*scanp1 & 0xff300fff) == 0xe5100000 &&
                 ((*scanp1 >> 16) & 0xf) == rI) { // ldr[b] rX, [rI]
 
-               *scanp1 = (*scanp1 & 0xff70ff00) | (*scan & 0xff) |
+               *scanp1 = (*scanp1 & 0xff70f000) | (*scan & 0xff) |
                          (((*scan & 0xfff00000) == 0xe2800000) ? (1<<23) : 0) |
                          (rS << 16); // ldr[b] rX, [rS, #X]
                *scan = NOP;
@@ -962,7 +962,9 @@ static void apply_peepholes2(int *instInfo, int *funcBegin, int *funcEnd)
                }
                else { // move onto "load" instruction
                   int *fscan = active_inst(pscan, -1);
-                  if ((*fscan & 0xff700000) == 0xe5100000) { // ldr r0, [xxx]
+                  if ((*fscan  & 0xff70f000) == 0xe5100000 || // ldr r0, [xxx]
+                      (*fscan  & 0xfffff000) == 0xe24b0000 || // sub r0, fp, #x
+                      (*fscan == 0xe08b0000)) {               // add r0, fp, r0
                      imm = popcount32b(imm-1);
                      *pscan  = NOP;
                      *scanm1 = NOP;
@@ -1342,7 +1344,7 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
             while ( iscan <= info && (*iscan & RI_bb) == 0) ++iscan;
             inst = funcBegin[rdd-instInfo];
             // TODO: allow add or subtract #x inst
-            if (iscan > info && (inst & 0xfff00000) == 0xe2800000) { // add
+            if (iscan > info && (inst & 0xfff00f00) == 0xe2800000) { // add
                int off = inst & 0xff;
                if ((*scan & 0xff) == off &&
                    ((*scan & (1<<22)) ? (off == 1) : (off == 4)) ) {
@@ -1365,6 +1367,96 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
       }
    }
 }
+
+
+// struct member access
+static void apply_peepholes7_5(int *instInfo, int *funcBegin, int *funcEnd)
+{
+   int *scan, *scanm, *scanmm, *scanmp, *info;
+   int *rxd, *rxu, *rxuu, *rxdd, *rad, *rau, rx, opt;
+   // int *rdt;
+
+   create_inst_info(instInfo,funcBegin,funcEnd);
+   create_bb_info(instInfo,funcBegin,funcEnd);
+
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+
+      if ((*scan & 0xffb0ffff) == 0xe5800000 ||  // str[b] r0, [rx]
+          (*scan & 0xffb0ffff) == 0xed800a00) {  // vstr   s0, [rx]
+         rx = (*scan & RI_Rn) >> 16;
+         if (rx > 9) continue;
+         info = &instInfo[scan-funcBegin];
+         rxd = find_def(instInfo, info-1, rx, S_BACK);
+         if (rxd == 0 || (*rxd & RI_func)) continue;
+         scanm = &funcBegin[rxd-instInfo];
+         if ((*scanm & 0xfff00f00) == 0xe2800000) { // add rx, ry, #N
+            rxdd = find_def(instInfo, rxd-1, (*scanm & RI_Rn) >> 16, S_BACK);
+            if (rxdd == 0 || (*rxdd & RI_func)) continue;
+            rxu = find_use(instInfo, rxd-1, (*scanm & RI_Rn) >> 16, S_BACK);
+            if (rxu == 0 || rxu <= rxdd) {
+               rad = find_def(instInfo,rxd+1,(*scanm & RI_Rn) >> 16,S_FWD);
+               if (rad < info) {
+                  if (rad == 0 || (*rad & RI_func)) continue;
+                  rau = find_use(instInfo,rad,(*scanm & RI_Rn) >> 16,S_BACK);
+                  if (rau != rxd) continue;
+               }
+               scanmm = &funcBegin[rxdd-instInfo];
+               opt = 0;
+               if ((*scanmm & 0xffff0000) == 0xe24b0000) { // sub rN, fp, #X
+                  opt = 2;
+               }
+               rxu = find_use(instInfo, rxd+1, rx, S_FWD);
+               if (rxu != info) {
+                  scanmp = &funcBegin[rxu-instInfo];
+                  rxuu = find_use(instInfo, rxu+1, rx, S_FWD);
+                  if (rxuu == info &&
+                      ((*scanmp & 0xff300fff) == 0xe5100000 &&
+                        ((*scanmp >> 16) & 0xf) == rx)) { // ldr[b] xx, [rX]
+                     if (opt == 2) opt = 1;
+                     else opt = 3;
+                  }
+               }
+               else if (opt == 0) opt = 4;
+
+               // for (rdt = rxdd+1; rdt <= info; ++rdt)
+               //    if (*rdt & RI_bb) break;
+               // if (rdt > info) {
+                  switch(opt) { // disable case 1 and 2 to see structs in asm
+                  case 1: // best performance
+                     // move fp in ldr
+                     *scanmp = ((*scanmp & 0xff70ff00) | (0xb << 16) |
+                                (*scanmm & 0xff)) - (*scanm & 0xff);
+                     if (((*scan >> 20) & 0xff) == 0xd8)
+                        *scanmp = (*scanmp & 0xffffff00) |
+                                  ((*scanmp & 0xff) >> 2);
+                  case 2:
+                     *scan = ((*scan & 0xff70ff00) | (0xb << 16) |
+                              (*scanmm & 0xff)) - (*scanm & 0xff);
+                     if (((*scan >> 20) & 0xff) == 0xd8)
+                        *scan = (*scan & 0xffffff00) | ((*scan & 0xff) >> 2);
+                     *scanmm = NOP;
+                     *scanm  = NOP;
+                     break;
+                  case 3:
+                     *scanmp = *scanmp | ((((*scan >> 20) & 0xff) != 0xd8) ?
+                                (*scanm & 0xff) : ((*scanm & 0xff) >> 2));
+                  case 4:
+                     if (*rxdd & RI_RdDest)
+                        *scanmm = (*scanmm & ~RI_Rd) | (rx << 12);
+                     else // RI_RnDest
+                        *scanmm = (*scanmm & ~RI_Rn) | (rx << 16);
+                     *scan = *scan | ((((*scan >> 20) & 0xff) != 0xd8) ?
+                             (*scanm & 0xff) : ((*scanm & 0xff) >> 2));
+                     *scanm = NOP;
+                  }
+            // }
+            }
+         }
+      }
+   }
+}
+
 
 static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd)
 {
@@ -1442,10 +1534,10 @@ static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd)
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
-      if ((*scan & 0xffffff00) == 0xe50b0000) { // str r0, [fp, #X]
+      if ((*scan & 0xfffff000) == 0xe50b0000) { // str r0, [fp, #X]
          scanp1 = active_inst(scan,1);
-         if ((*scanp1 & 0xffffff00) == 0xe51b0000 && // ldr r0, [fp, #X]
-             (*scan & 0xff) == (*scanp1 & 0xff)) {
+         if ((*scanp1 & 0xfffff000) == 0xe51b0000 && // ldr r0, [fp, #X]
+             (*scan & 0xfff) == (*scanp1 & 0xfff)) {
             info = &instInfo[scan-funcBegin]+1;
             rfinal = &instInfo[scanp1-funcBegin];
             for (rdt = info; rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
@@ -1454,8 +1546,8 @@ static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd)
                scan = scanp1;
             }
          }
-         else if ((*scanp1 & 0xffffff00) == 0xe51b1000 && // ldr r1, [fp, #X]
-             (*scan & 0xff) == (*scanp1 & 0xff)) {
+         else if ((*scanp1 & 0xfffff000) == 0xe51b1000 && // ldr r1, [fp, #X]
+             (*scan & 0xfff) == (*scanp1 & 0xfff)) {
             info = &instInfo[scan-funcBegin]+1;
             rfinal = &instInfo[scanp1-funcBegin];
             for (rdt = info; rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
@@ -2266,7 +2358,7 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
       if (*scanp1 == 0xe5810000 || *scanp1 == 0xe5c10000 || // str[b] r0, [r1]
           *scanp1 == 0xed810a00) { // vstr s0, [r1]
          if (r0d < r0u && (instInfo[pair[i].push-funcBegin] & RI_bb) == 0 &&
-            (*scanm1 & 0xff7fff00) == 0xe51b0000) { // ldr r0, [fp, #X]
+            (*scanm1 & 0xff7ff000) == 0xe51b0000) { // ldr r0, [fp, #X]
             *pair[i].pop = *scanm1 | (1<<12);
             *scanm1 = NOP;
             *pair[i].push = NOP;
@@ -2307,8 +2399,6 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
 
       if ((instInfo[pair[i].push-funcBegin] & RI_bb) ||
           (instInfo[scanp1-funcBegin] & RI_bb)) {
-         // strictly speaking this is not sufficient because
-         // a NOP between pop and scanp1 could be a branch target
          continue;
       }
 
@@ -2427,7 +2517,9 @@ void simplify_frame(int *funcBegin, int *funcEnd)
             }
          }
          else if ((*scan & 0xfffff000) == 0xe28dd000) { // add sp, sp, #X
-            fo -= *scan & 0xfff;
+            // rotate field will be >= 4 if present
+            fo -= (((*scan & 0xf00) == 0) ? (*scan & 0xff) :
+                   ((*scan & 0xff) << (32 - ((*scan & 0xf00) >> 8)*2)));
          }
          else if ((*scan & 0xffff0004) == 0xe52d0004) { // push {rX}
             fo += 4;
@@ -2977,6 +3069,7 @@ int squint_opt(int *begin, int *end)
 
          apply_peepholes7(tmpbuf, funcBegin, retAddr);
          ibase = create_pushpop_map3(tmpbuf, funcBegin, retAddr, ibase, 0);
+         apply_peepholes7_5(tmpbuf, funcBegin, retAddr);
 
          rename_nop(funcBegin, retAddr);
 

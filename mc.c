@@ -276,8 +276,8 @@ enum {
    INVALID
 };
 
-// types
-enum { CHAR = 0, INT = 4, FLOAT = 8, PTR = 1024, PTR2 = 2048 };
+// types + atomic type boundary
+enum { CHAR = 0, INT = 4, FLOAT = 8, ATOM_TYPE = 11, PTR = 1024, PTR2 = 2048 };
 
 // ELF generation
 char **plt_func_addr;
@@ -618,6 +618,7 @@ resolve_fnproto:
                if (tk == ')') fatal("unexpected comma in function call");
             } else if (tk != ')') fatal("missing comma in function call");
          }
+         if (t > 15) fatal("maximum of 15 function parameters");
          tt = (tt << 8) + (nf << 4) + t; // func etype not like other etype
          if (d->etype && (d->etype != tt) ) fatal("argument type mismatch");
          next();
@@ -1091,9 +1092,9 @@ resolve_fnproto:
          break;
       case Dot:
          ty += PTR;
-         if (n[0] == Load && n[1] > FLOAT && n[1] < PTR) n += 2; // struct
+         if (n[0] == Load && n[1] > ATOM_TYPE && n[1] < PTR) n += 2; // struct
       case Arrow:
-         if (ty <= PTR+FLOAT || ty >= PTR2) fatal("structure expected");
+         if (ty <= PTR+ATOM_TYPE || ty >= PTR2) fatal("structure expected");
          next();
          if (tk != Id) fatal("structure member expected");
          m = members[(ty - PTR) >> 2]; while (m && m->id != id) m = m->next;
@@ -1142,7 +1143,8 @@ void gen(int *n)
    case NumF: *++e = IMMF; *++e = n[1]; break; // float value
    case Load:
       gen(n + 2); // load the value
-      if (n[1] > FLOAT && n[1] < PTR) fatal("struct copies not yet supported");
+      if (n[1] > ATOM_TYPE && n[1] < PTR)
+         fatal("struct copies not yet supported");
       *++e = (n[1] >= PTR) ? LI : LC + (n[1] >> 2);
       break;
    case Loc: *++e = LEA; *++e = n[1]; break;       // get address of variable
@@ -1151,7 +1153,7 @@ void gen(int *n)
       gen((int *) n[2]); *++e = PSH; gen(n + 3); l = n[1] & 0xffff;
       // Add SC/SI instruction to save value in register to variable address
       // held on stack.
-      if (l > FLOAT && l < PTR) fatal("struct assign not yet supported");
+      if (l > ATOM_TYPE && l < PTR) fatal("struct assign not yet supported");
       if ((n[1] >> 16) == FLOAT && l == INT) *++e = FTOI;
       else if ((n[1] >> 16) == INT && l == FLOAT) *++e = ITOF;
       *++e = (l >= PTR) ? SI : SC + (l >> 2);
@@ -1490,7 +1492,8 @@ void stmt(int ctx)
          if (tk == '(') { // function
             if (b != 0) fatal("func decl can't be mixed with var decl(s)");
             if (ctx != Glo) fatal("nested function");
-            if (ty > FLOAT && ty < PTR) fatal("return type can't be struct");
+            if (ty > ATOM_TYPE && ty < PTR)
+               fatal("return type can't be struct");
             if (id->class == Syscall && id->val)
                fatal("forward decl location failed one pass compilation");
             if (id->class == Func &&
@@ -1505,6 +1508,7 @@ void stmt(int ctx)
                if (ty == FLOAT) { ++nf; ++(dd->etype); }
                if (tk == ',') next();
             }
+            if (ld > 15) fatal("maximum of 15 function parameters");
             // function etype is not like other etypes
             next(); dd->etype = (dd->etype << 8) + (nf << 4) + ld; // prm info
             if (tk == ';') { dd->val = 0; goto unwind_func; } // fn proto
@@ -1554,7 +1558,7 @@ unwind_func: id = sym;
             if (tk == Bracket) { // support 1d global array
                if (ctx == Par) // initial impl disallows param
                   fatal("Array parameters must be pointers");
-               if (ty > FLOAT && ty < PTR)
+               if (ty > ATOM_TYPE && ty < PTR)
                   fatal("Struct array decl not yet supported");
                i = ty; j = 0; /* num DOF */
                do {
@@ -1589,7 +1593,7 @@ unwind_func: id = sym;
             if (ctx == Glo) { id->val = (int) data; data += sz; }
             else if (ctx == Loc) { id->val = (ld += sz / sizeof(int)); }
             else if (ctx == Par) {
-               if (ty > FLOAT && ty < PTR) // local struct decl
+               if (ty > ATOM_TYPE && ty < PTR) // local struct decl
                   fatal("struct parameters must be pointers");
                id->val = ld++;
             }
