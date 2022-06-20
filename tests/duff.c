@@ -48,8 +48,8 @@ void fastcopy(char *to, char *from, int count)
 int main()
 {
     char *message = "This is a test of duff's device\n";
-    char *output = malloc(64);
-    char *output2 = malloc(64);
+    char *output = (char *) malloc(64);
+    char *output2 = (char *) malloc(64);
 
     copy(output, message, 33);
     printf(output);

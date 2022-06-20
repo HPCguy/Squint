@@ -11,8 +11,8 @@ int main()
         printf("passed\n");
     else
         printf("failed, e - s = %x\n", v);
-    v = e - 1;
-    if ((int) v == s)
+    v = (int) (e - 1);
+    if ((int *) v == s)
         printf("passed\n");
     else
         printf("failed, e - s = %x\n", v);

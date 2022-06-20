@@ -299,8 +299,8 @@ char fatal(char *msg) { printf("%d: %s\n", line, msg); exit(-1); }
 
 void ef_add(char *name, int addr) // add external function
 {
-   ef_cache[ef_count] = malloc(sizeof(struct ef_s)) ;
-   ef_cache[ef_count]->name = malloc(strlen(name)+1);
+   ef_cache[ef_count] = (struct ef_s *) malloc(sizeof(struct ef_s)) ;
+   ef_cache[ef_count]->name = (char *) malloc(strlen(name)+1);
    strcpy(ef_cache[ef_count]->name, name);
    ef_cache[ef_count]->addr = addr;
    ++ef_count;
@@ -323,12 +323,12 @@ int ef_getidx(char *name) // get cache index of external function
       if ((dladdr = (int) dlsym(0, name))) {
          ef_add(name, dladdr);
       } else {
-         void *divmod_handle = dlopen("libgcc_s.so.1", 1);
+         void *divmod_handle = (void *) dlopen("libgcc_s.so.1", 1);
          if (!divmod_handle) fatal("failed to open libgcc_s.so.1");
          dladdr = (int) dlsym(divmod_handle, name);
          if (!dladdr) // fatal("bad function call");
          {
-            void *libm_handle = dlopen("libm.so.6", 1);
+            void *libm_handle = (void *) dlopen("libm.so.6", 1);
             if (!libm_handle) fatal("failed to open libm.so.6");
             dladdr = (int) dlsym(libm_handle, name);
             if (!dladdr) fatal("bad function call");
@@ -542,7 +542,7 @@ void next()
    }
 }
 
-int popcount(int i)
+int popcount32(int i)
 {
    i = i - ((i >> 1) & 0x55555555); // add pairs of bits
    i = (i & 0x33333333) + ((i >> 2) & 0x33333333); // quads
@@ -635,7 +635,7 @@ resolve_fnproto:
          case Glo: *--n = d->val; *--n = Num; break;
          default: fatal("undefined variable");
          }
-         if (d->type & 3) { // not a pointer -- an actual address!
+         if (d->type & 3) { // push reference address
             ty = d->type & ~3;
          }
          else {
@@ -800,6 +800,8 @@ resolve_fnproto:
          if (*n != Load) fatal("bad lvalue in assignment");
          // get the value of the right part `expr` as the result of `a=expr`
          expr(Assign);
+         if (((t ^ ty) & (PTR | PTR2)) &&
+             !(*n == Num && n[1] == 0)) fatal("assignment type mismatch\n");
          *--n = (int) (b + 2); *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
       case  OrAssign: // right associated
@@ -870,8 +872,8 @@ resolve_fnproto:
          ty = INT;
          break;
       case Eq:
-         tc = ty; next(); expr(Ge);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Ge);
+         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f == c1->f);
@@ -885,8 +887,8 @@ resolve_fnproto:
          }
          break;
       case Ne:
-         tc = ty; next(); expr(Ge);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Ge);
+         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f != c1->f);
@@ -900,8 +902,8 @@ resolve_fnproto:
          }
          break;
       case Ge:
-         tc = ty; next(); expr(Shl);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl);
+         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f >= c1->f);
@@ -915,8 +917,8 @@ resolve_fnproto:
          }
          break;
       case Lt:
-         tc = ty; next(); expr(Shl);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl);
+         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f < c1->f);
@@ -930,8 +932,8 @@ resolve_fnproto:
          }
          break;
       case Gt:
-         tc = ty; next(); expr(Shl);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl);
+         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f > c1->f);
@@ -945,8 +947,8 @@ resolve_fnproto:
          }
          break;
       case Le:
-         tc = ty; next(); expr(Shl);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl);
+         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f <= c1->f);
@@ -976,8 +978,8 @@ resolve_fnproto:
          ty = INT;
          break;
       case Add:
-         tc = ty; next(); expr(Mul);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Mul);
+         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c1->f = c1->f + c2->f;
@@ -993,37 +995,64 @@ resolve_fnproto:
          }
          break;
       case Sub:
-         tc = ty; next(); expr(Mul);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Mul);
+         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c1->f = c2->f - c1->f;
             }
             else { *--n = (int) b; *--n = SubF; }
          }
-         else {
+         else { // 4 cases: ptr-ptr, ptr-int, int-ptr (err), int-int
+            if (t < PTR && ty >= PTR) fatal("bad pointer subtraction");
             sz = (t >= PTR2) ? sizeof(int) :
                  ((t >= PTR) ? tsize[(t - PTR) >> 2] : 1);
-            if (sz > 1 && *n == Num) {
-               *--n = sz; *--n = Num; --n; *n = (int) (n + 3); *--n = Mul;
-            }
-            if (*n == Num && *b == Num) n[1] = b[1] - n[1];
-            else {
-               *--n = (int) b; *--n = Sub;
-               if (t == ty && sz > 1) {
-                  switch (sz) {
-                  case 4: *--n = 2; *--n = Num; --n; *n = (int) (n + 3);
-                         *--n = Shr; break;
-                  default: *--n = sz; *--n = Num; --n; *n = (int) (n + 3);
-                          *--n = Sub;
+            if (t >= PTR && ty >= PTR) {
+               if (t != ty) fatal("mismatched ptr type subtraction");
+               if (*n == Num && *b == Num) n[1] = (b[1] - n[1]) / sz;
+               else {
+                  *--n = (int) b; *--n = Sub;
+                  if (sz > 1 && (sz & (sz - 1)) == 0) {
+                     *--n = popcount32(sz - 1); *--n = Num;
+                     --n; *n = (int) (n + 3); *--n = Shr; // 2^n
+                  }
+                  else if (sz > 1) {
+                     *--n = sz; *--n = Num; --n; *n = (int) (n + 3);
+                     *--n = Div; ef_getidx("__aeabi_idiv");
                   }
                }
+               ty = INT;
             }
+            else if (t >= PTR && (ty == INT || ty == CHAR)) {
+               if (*n == Num) {
+                  n[1] *= sz;
+                  if (*b == Num) n[1] = b[1] - n[1];
+                  else { *--n = (int) b; *--n = Sub; }
+               }
+               else {
+                  if (sz > 1 && (sz & (sz - 1)) == 0) {
+                     *--n = popcount32(sz - 1); *--n = Num;
+                     --n; *n = (int) (n + 3); *--n = Shl; // 2^n
+                  }
+                  else if (sz > 1) {
+                     *--n = sz; *--n = Num;
+                     --n; *n = (int) (n + 3); *--n = Mul;
+                  }
+                  *--n = (int) b; *--n = Sub;
+               }
+               ty = t;
+            }
+            else if (t <= ATOM_TYPE && ty < ATOM_TYPE) {
+               if (*n == Num && *b == Num) n[1] = b[1] - n[1];
+               else { *--n = (int) b; *--n = Sub; }
+               ty = INT;
+            }
+            else fatal("illegal subtraction");
          }
          break;
       case Mul:
-         tc = ty; next(); expr(Inc);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Inc);
+         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c1->f = c1->f * c2->f;
@@ -1035,7 +1064,7 @@ resolve_fnproto:
             else {
                *--n = (int) b;
                if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
-                  n[2] = popcount(n[2] - 1); *--n = Shl; // 2^n
+                  n[2] = popcount32(n[2] - 1); *--n = Shl; // 2^n
                }
                else *--n = Mul;
             }
@@ -1054,8 +1083,8 @@ resolve_fnproto:
          next();
          break;
       case Div:
-         tc = ty; next(); expr(Inc);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Inc);
+         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c1->f = c2->f / c1->f;
@@ -1067,7 +1096,7 @@ resolve_fnproto:
             else {
                *--n = (int) b;
                if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
-                  n[2] = popcount(n[2] - 1); *--n = Shr; // 2^n
+                  n[2] = popcount32(n[2] - 1); *--n = Shr; // 2^n
                } else {
                   *--n = Div;
                   ef_getidx("__aeabi_idiv");
@@ -1249,7 +1278,7 @@ void gen(int *n)
             }
          }
          l = (i != ClearCache) ? (n[4] >> 8) : 0;
-         a = malloc(sizeof(int *) * k);
+         a = (int *) malloc(sizeof(int) * k);
          for (j = 0; *b ; b = (int *) *b) a[j++] = (int) b;
          a[j] = (int) b;
          while (j >= 0) { // push arguments
@@ -1446,7 +1475,8 @@ void stmt(int ctx)
                   // then type plus `PTR` indicates what kind of pointer
                   while (tk == Mul) { next(); ty += PTR; }
                   if (tk != Id) fatal("bad struct member definition");
-                  struct member_s *m = malloc(sizeof(struct member_s));
+                  struct member_s *m = (struct member_s *)
+                                       malloc(sizeof(struct member_s));
                   m->id = id;
                   m->offset = i;
                   m->type = ty;
@@ -1556,19 +1586,24 @@ unwind_func: id = sym;
             id->hetype = id->etype;
             int sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
             if (tk == Bracket) { // support 1d global array
-               if (ctx == Par) // initial impl disallows param
-                  fatal("Array parameters must be pointers");
                if (ty > ATOM_TYPE && ty < PTR)
                   fatal("Struct array decl not yet supported");
                i = ty; j = 0; /* num DOF */
                do {
-                  next(); expr(Cond);
-                  if (*n != Num) fatal("non-const array size");
-                  if (n[1] <= 0) fatal("non-positive array dimension");
-                  if (tk != ']') fatal("missing ]");
                   next();
-                  nd[j] = n[1];
-                  sz *= n[1]; n += 2;
+                  if (j == 0 && ctx == Par && tk == ']') {
+                     nd[j] = 1;
+                     next();
+                  }
+                  else {
+                     expr(Cond);
+                     if (*n != Num) fatal("non-const array size");
+                     if (n[1] <= 0) fatal("non-positive array dimension");
+                     if (tk != ']') fatal("missing ]");
+                     next();
+                     nd[j] = n[1];
+                     sz *= n[1]; n += 2;
+                  }
                   ++j;
                } while (tk == Bracket && j < 1);
                if (tk == Bracket) fatal("one subscript max on decl");
@@ -1587,7 +1622,9 @@ unwind_func: id = sym;
                   break;
                }
                ty = (i + PTR) | j; id->type = ty;
-               if (sz > osize) { osize = sz; oline = line; oid = id; }
+               if (ctx == Loc && sz > osize) {
+                  osize = sz; oline = line; oid = id;
+               }
             }
             sz = (sz + 3) & -4;
             if (ctx == Glo) { id->val = (int) data; data += sz; }
@@ -1603,6 +1640,8 @@ unwind_func: id = sym;
                if (b == 0) *--n = ';';
                b = n; *--n = loc - id->val; *--n = Loc;
                next(); a = n; i = ty; expr(ptk);
+               if (((i ^ ty) & (PTR | PTR2)) &&
+                  !(*n == Num && n[1] == 0)) fatal("assign type mismatch\n");
                *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign; ty = i;
                *--n = (int) b; *--n = '{';
             }
@@ -1789,8 +1828,8 @@ int *codegen(int *jitmem, int *jitmap)
    int *immloc, *immlocv, *il, *ill, *ivv;
    int *rMap;
 
-   immloc = il = malloc(1024 * 4);
-   int *iv = malloc(1024 * 4);
+   immloc = il = (int *) malloc(1024 * sizeof(int));
+   int *iv = (int *) malloc(1024 * sizeof(int));
    immlocv = iv;
    int *imm0 = 0;
    int *immf0 = 0;
@@ -2183,8 +2222,9 @@ int jit(int poolsz, int *main, int argc, char **argv)
    if (src) return 0; // skip for IR listing
 
    // setup JIT memory
-   if (!(jitmem = mmap(0, poolsz, _PROT_EXEC | _PROT_READ | _PROT_WRITE,
-                  _MAP_PRIVATE | _MAP_ANON, -1, 0))) {
+   if (!(jitmem = (char *) mmap(0, poolsz,
+                                _PROT_EXEC | _PROT_READ | _PROT_WRITE,
+                                _MAP_PRIVATE | _MAP_ANON, -1, 0))) {
       printf("could not mmap(%d) jit executable memory\n", poolsz);
       return -1;
    }
@@ -2214,8 +2254,8 @@ int jit(int poolsz, int *main, int argc, char **argv)
 
    // hack to jump into specific function pointer
    __clear_cache(jitmem, je);
-   int *res = bsearch(&sym, sym, 1, 1, (void *) _start);
-   if (((void *) 0) != res) return 0; return -1; // make compiler happy
+   int *res = (int *) bsearch(&sym, sym, 1, 1, (void *) _start);
+   if (((int *) 0) != res) return 0; return -1; // make compiler happy
 }
 
 int ELF32_ST_INFO(int b, int t) { return (b << 4) + (t & 0xf); }
@@ -2377,14 +2417,14 @@ enum {
 void elf32_init(int poolsz)
 {
    int i;
-   freebuf = malloc(poolsz);
+   freebuf = (char *) malloc(poolsz);
    char *o = (char *) (((int) freebuf + PAGE_SIZE - 1)  & -PAGE_SIZE);
    /* We must assign the plt_func_addr[x] a non-zero value, and also,
     * plt_func_addr[i] and plt_func_addr[i-1] has an offset of 16
     * (4 instruction * 4 bytes), so the first codegen and second codegen
     * have consistent code_size. Dummy address at this point.
     */
-   plt_func_addr = malloc(sizeof(char *) * SMALL_TBL_SZ);
+   plt_func_addr = (char **) malloc(sizeof(char *) * SMALL_TBL_SZ);
    for (i = 0; i < SMALL_TBL_SZ; ++i)
       plt_func_addr[i] = o + i * 16;
 
@@ -2395,7 +2435,7 @@ int elf32(int poolsz, int *main, int elf_fd)
 {
    int i;
    char *freecode;
-   char *code = freecode = malloc(poolsz);
+   char *code = freecode = (char *) malloc(poolsz);
    char *buf = freebuf;
    int *jitmap = (int *) (code + (poolsz >> 1));
    memset(buf, 0, poolsz);
@@ -2538,7 +2578,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    int shstrtab_off = interp_off + interp_str_size;
    int shstrtab_size = 0;
 
-   int *shdr_names = malloc(sizeof(int) * SHDR_NUM);
+   int *shdr_names = (int *) malloc(sizeof(int) * SHDR_NUM);
    if (!shdr_names) die("elf32: could not malloc shdr_names table");
 
    shdr_names[SNONE] = append_strtab(&data, "") - shstrtab_addr;
@@ -2564,7 +2604,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    char *libgcc_s = append_strtab(&data, "libgcc_s.so.1");
    char *libm = append_strtab(&data, "libm.so.6");
 
-   int *func_entries = malloc(sizeof(int) * ef_count);
+   int *func_entries = (int *) malloc(sizeof(int) * ef_count);
    if (!func_entries) die("elf32: could not malloc func_entries table");
 
    for (i = 0; i < ef_count; ++i)
@@ -2594,7 +2634,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    char *to_got_movt = data;  // linking, plt must jump here.
    data += 4;                 // reserved 2 and 3 entry for interp
    // .got function slot
-   char **got_func_slot = malloc(sizeof(char *) * ef_count);
+   char **got_func_slot = (char **) malloc(sizeof(char *) * ef_count);
    for (i = 0; i < ef_count; ++i) {
       got_func_slot[i] = data;
       *(int *) data = (int) plt_addr; data += 4;
@@ -2784,7 +2824,7 @@ int main(int argc, char **argv)
    int fd, i;
    int poolsz = 1024 * 1024; // arbitrary size
 
-   if (!(sym = malloc(poolsz)))
+   if (!(sym = (struct ident_s *) malloc(poolsz)))
       die("could not allocate symbol area");
    memset(sym, 0, poolsz);
 
@@ -2806,13 +2846,13 @@ int main(int argc, char **argv)
    next();
    struct ident_s *idmain = id; id->class = Main; // keep track of main
 
-   if (!(freedata = _data = data = malloc(poolsz)))
+   if (!(freedata = _data = data = (char *) malloc(poolsz)))
       printf("could not allocat data area");
    memset(data, 0, poolsz);
-   if (!(tsize = malloc(SMALL_TBL_SZ * sizeof(int))))
+   if (!(tsize = (int *) malloc(SMALL_TBL_SZ * sizeof(int))))
       die("could not allocate tsize area");
    memset(tsize,   0, SMALL_TBL_SZ * sizeof(int)); // not strictly necessary
-   if (!(freed_ast = ast = malloc(poolsz)))
+   if (!(freed_ast = ast = (int *) malloc(poolsz)))
       die("could not allocate abstract syntax tree area");
    memset(ast, 0, poolsz); // not strictly necessary
    ast = (int *) ((int) ast + poolsz); // AST is built as a stack
@@ -2866,11 +2906,13 @@ int main(int argc, char **argv)
       printf("could not open(%s)\n", *argv); return -1;
    }
 
-   if (!(text = le = e = malloc(poolsz)))
+   if (!(text = le = e = (char *) malloc(poolsz)))
       die("could not allocate text area");
-   if (!(members = malloc(SMALL_TBL_SZ * sizeof(struct member_s *))))
+   if (!(members = (struct member_s **)
+                   malloc(SMALL_TBL_SZ * sizeof(struct member_s *))))
       die("could not malloc() members area");
-   if (!(ef_cache = malloc(SMALL_TBL_SZ * sizeof(struct ef_s *))))
+   if (!(ef_cache = (struct ef_s **)
+                    malloc(SMALL_TBL_SZ * sizeof(struct ef_s *))))
       die("could not malloc() external function cache");
 
    memset(e, 0, poolsz);
@@ -2879,7 +2921,7 @@ int main(int argc, char **argv)
 
    if (elf) elf32_init(poolsz); // call before source code parsing
 
-   if (!(freep = lp = p = malloc(poolsz)))
+   if (!(freep = lp = p = (char *) malloc(poolsz)))
       die("could not allocate source area");
    if ((i = read(fd, p, poolsz - 1)) <= 0)
       die("unable to read from source file");
