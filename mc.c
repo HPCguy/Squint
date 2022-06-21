@@ -550,6 +550,44 @@ int popcount32(int i)
    return (i * 0x01010101) >> 24; // horizontal sum of bytes
 }
 
+// verify binary operations are legal
+void typecheck(int op, int tl, int tr)
+{
+   int pt = 0, it = 0, st = 0;
+   if (tl >= PTR)  pt += 2; // is pointer?
+   if (tr >= PTR)  pt += 1;
+
+   if (tl < FLOAT) it += 2; // is int?
+   if (tr < FLOAT) it += 1;
+
+   if (tl > ATOM_TYPE && tl < PTR) st += 2; // is struct/union?
+   if (tr > ATOM_TYPE && tr < PTR) st += 1;
+
+   if ((tl ^ tr) & (PTR | PTR2)) { // operation on different pointer levels
+      if (op == Add && pt != 3 && (it & ~pt)) ; // ptr + int or int + ptr ok
+      else if (op == Sub && pt == 2 && it == 1) ; // ptr - int ok
+      else if (op == Assign && pt == 2 && *n == Num && n[1] == 0) ; // ok
+      else if (op >= Eq && op <= Le && *n == Num && n[1] == 0) ; // ok
+      else fatal("bad pointer arithmetic");
+   }
+   else if (pt == 3 && op != Assign && op != Sub &&
+            (op < Eq || op > Le)) // pointers to same type
+      fatal("bad pointer arithmetic");
+
+   if (pt == 0 && op != Assign && (it == 1 || it == 2))
+      fatal("cast operation needed");
+
+   if (pt ==0 && st != 0)
+      fatal("illegal operation with dereferenced struct");
+}
+
+void bitopcheck(int tl, int tr)
+{
+   if (tl >= FLOAT || tr >= FLOAT)
+      fatal("bit operation on non-int types");
+}
+
+
 /* expression parsing
  * lev represents an operator.
  * because each operator `token` is arranged in order of priority,
@@ -710,11 +748,11 @@ resolve_fnproto:
          expr(Inc); // cast has precedence as Inc(++)
          if (t != ty && (t == FLOAT || ty == FLOAT)) {
             if (t == FLOAT && (ty == INT || ty == CHAR)) {
-               if (*n == Num) { *n = NumF; c1 = &n[1]; c1->f = c1->i; }
+               if (*n == Num) { *n = NumF; c1 = &n[1]; c1->f = (float) c1->i; }
                else { b = n; *--n = ITOF; *--n = (int) b; *--n = CastF; }
             }
             else if ((t == INT || t == CHAR) && ty == FLOAT) {
-               if (*n == NumF) { *n = Num; c1 = &n[1]; c1->i = c1->f; }
+               if (*n == NumF) { *n = Num; c1 = &n[1]; c1->i = (int) c1->f; }
                else { b = n; *--n = FTOI; *--n = (int) b; *--n = CastF; }
             }
             else fatal("explicit cast required");
@@ -722,7 +760,9 @@ resolve_fnproto:
          ty = t;
       } else {
          expr(Assign);
-         while (tk == ',') { next(); expr(Assign); }
+         while (tk == ',') {
+            next(); b = n;  expr(Assign); *--n = (int) b; *--n = '{';
+         }
          if (tk != ')') fatal("close parentheses expected");
          next();
       }
@@ -751,17 +791,16 @@ resolve_fnproto:
       ty = INT;
       break;
    case '~': // "~x" is equivalent to "x ^ -1"
-      next(); expr(Inc);
+      next(); expr(Inc); if (ty > ATOM_TYPE) fatal("~ptr is illegal");
       if (*n == Num) n[1] = ~n[1];
       else { *--n = -1; *--n = Num; --n; *n = (int) (n + 3); *--n = Xor; }
       ty = INT;
       break;
    case Add:
-      next(); expr(Inc); if (ty != FLOAT) ty = INT;
+      next(); expr(Inc); if (ty > ATOM_TYPE) fatal("unary '+' illegal on ptr");
       break;
    case Sub:
-      next();
-      expr(Inc);
+      next(); expr(Inc); if (ty > ATOM_TYPE) fatal("unary '-' illegal on ptr");
       if (*n == Num) n[1] = -n[1];
       else if (*n == NumF) { n[1] ^= 0x80000000; }
       else if (ty == FLOAT) {
@@ -772,13 +811,10 @@ resolve_fnproto:
       }
       if (ty != FLOAT) ty = INT;
       break;
-   case Div:
-   case Mod:
-      break;
-   // processing ++x and --x. x-- and x++ is handled later
    case Inc:
-   case Dec:
+   case Dec: // processing ++x and --x. x-- and x++ is handled later
       t = tk; next(); expr(Inc);
+      if ((ty & FLOAT) && ty < PTR) fatal("no ++/-- on float");
       if (*n != Load) fatal("bad lvalue in pre-increment");
       *n = t;
       break;
@@ -799,9 +835,7 @@ resolve_fnproto:
          // and pushes the address
          if (*n != Load) fatal("bad lvalue in assignment");
          // get the value of the right part `expr` as the result of `a=expr`
-         expr(Assign);
-         if (((t ^ ty) & (PTR | PTR2)) &&
-             !(*n == Num && n[1] == 0)) fatal("assignment type mismatch\n");
+         expr(Assign); typecheck(Assign, t, ty);
          *--n = (int) (b + 2); *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
       case  OrAssign: // right associated
@@ -827,11 +861,14 @@ resolve_fnproto:
          } else {
             *--n = Shl + (otk - ShlAssign);
             // Compound-op bypasses literal const optimizations
-            if (otk == DivAssign) ef_getidx("__aeabi_idiv");
-            if (otk == ModAssign) ef_getidx("__aeabi_idivmod");
+            if (ty != FLOAT) {
+               if (otk == DivAssign) ef_getidx("__aeabi_idiv");
+               if (otk == ModAssign) ef_getidx("__aeabi_idivmod");
+            }
          }
          if (t == FLOAT && (otk >= AddAssign && otk <= DivAssign))
             *n += 5;
+         typecheck(*n, t, ty);
          *--n = (int) (b + 2); *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
@@ -854,115 +891,103 @@ resolve_fnproto:
          ty = INT;
          break;
       case Or: // push the current value, calculate the right value
-         next(); expr(Xor);
+         next(); expr(Xor); bitopcheck(t, ty);
          if (*n == Num && *b == Num) n[1] = b[1] | n[1];
          else { *--n = (int) b; *--n = Or; }
          ty = INT;
          break;
       case Xor:
-         next(); expr(And);
+         next(); expr(And); bitopcheck(t, ty);
          if (*n == Num && *b == Num) n[1] = b[1] ^ n[1];
          else { *--n = (int) b; *--n = Xor; }
          ty = INT;
          break;
       case And:
-         next(); expr(Eq);
+         next(); expr(Eq); bitopcheck(t, ty);
          if (*n == Num && *b == Num) n[1] = b[1] & n[1];
          else { *--n = (int) b; *--n = And; }
          ty = INT;
          break;
       case Eq:
-         next(); expr(Ge);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Ge); typecheck(Eq, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f == c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f == c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = EqF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] == n[1];
             else { *--n = (int) b; *--n = Eq; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Ne:
-         next(); expr(Ge);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Ge); typecheck(Ne, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f != c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f != c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = NeF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] != n[1];
             else { *--n = (int) b; *--n = Ne; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Ge:
-         next(); expr(Shl);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl); typecheck(Ge, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f >= c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f >= c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = GeF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] >= n[1];
             else { *--n = (int) b; *--n = Ge; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Lt:
-         next(); expr(Shl);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl); typecheck(Lt, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f < c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f < c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = LtF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] < n[1];
             else { *--n = (int) b; *--n = Lt; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Gt:
-         next(); expr(Shl);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl); typecheck(Gt, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f > c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f > c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = GtF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] > n[1];
             else { *--n = (int) b; *--n = Gt; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Le:
-         next(); expr(Shl);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl); typecheck(Le, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f <= c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f <= c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = LeF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] <= n[1];
             else { *--n = (int) b; *--n = Le; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Shl:
-         next(); expr(Add);
+         next(); expr(Add); bitopcheck(t, ty);
          if (*n == Num && *b == Num) {
             if (n[1] < 0) n[1] = b[1] >> -n[1];
             else n[1] = b[1] << n[1];
@@ -970,7 +995,7 @@ resolve_fnproto:
          ty = INT;
          break;
       case Shr:
-         next(); expr(Add);
+         next(); expr(Add); bitopcheck(t, ty);
          if (*n == Num && *b == Num) {
             if (n[1] < 0) n[1] = b[1] << -n[1];
             else n[1] = b[1] >> n[1];
@@ -978,8 +1003,7 @@ resolve_fnproto:
          ty = INT;
          break;
       case Add:
-         next(); expr(Mul);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Mul); typecheck(Add, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c1->f = c1->f + c2->f;
@@ -995,8 +1019,7 @@ resolve_fnproto:
          }
          break;
       case Sub:
-         next(); expr(Mul);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Mul); typecheck(Sub, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c1->f = c2->f - c1->f;
@@ -1042,7 +1065,7 @@ resolve_fnproto:
                }
                ty = t;
             }
-            else if (t <= ATOM_TYPE && ty < ATOM_TYPE) {
+            else if (t <= ATOM_TYPE && ty <= ATOM_TYPE) {
                if (*n == Num && *b == Num) n[1] = b[1] - n[1];
                else { *--n = (int) b; *--n = Sub; }
                ty = INT;
@@ -1051,8 +1074,7 @@ resolve_fnproto:
          }
          break;
       case Mul:
-         next(); expr(Inc);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Inc); typecheck(Mul, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c1->f = c1->f * c2->f;
@@ -1074,6 +1096,7 @@ resolve_fnproto:
       case Inc:
       case Dec:
          if (ty & 3) fatal("can't inc/dec an array variable");
+         if ((ty & FLOAT) && ty < PTR) fatal("no ++/-- on float");
          sz = (ty >= PTR2) ? sizeof(int) :
               ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
          if (*n != Load) fatal("bad lvalue in post-increment");
@@ -1083,8 +1106,7 @@ resolve_fnproto:
          next();
          break;
       case Div:
-         next(); expr(Inc);
-         if (t != ty && (t == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Inc); typecheck(Div, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c1->f = c2->f / c1->f;
@@ -1106,7 +1128,8 @@ resolve_fnproto:
          }
          break;
       case Mod:
-         next(); expr(Inc);
+         next(); expr(Inc); typecheck(Mod, t, ty);
+         if (ty == FLOAT) fatal("use fmodf() for float modulo");
          if (*n == Num && *b == Num) n[1] = b[1] % n[1];
          else {
             *--n = (int) b;
@@ -1120,13 +1143,13 @@ resolve_fnproto:
          ty = INT;
          break;
       case Dot:
-         ty += PTR;
+         t += PTR;
          if (n[0] == Load && n[1] > ATOM_TYPE && n[1] < PTR) n += 2; // struct
       case Arrow:
-         if (ty <= PTR+ATOM_TYPE || ty >= PTR2) fatal("structure expected");
+         if (t <= PTR+ATOM_TYPE || t >= PTR2) fatal("structure expected");
          next();
          if (tk != Id) fatal("structure member expected");
-         m = members[(ty - PTR) >> 2]; while (m && m->id != id) m = m->next;
+         m = members[(t - PTR) >> 2]; while (m && m->id != id) m = m->next;
          if (!m) fatal("structure member not found");
          if (m->offset) {
             *--n = m->offset; *--n = Num; --n; *n = (int) (n + 3);
@@ -1137,7 +1160,7 @@ resolve_fnproto:
          next();
          break;
       case Bracket:
-         next(); expr(Assign);
+         next(); expr(Assign); if (ty >= FLOAT) fatal("non-int array index");
          if (tk != ']') fatal("close bracket expected");
          next();
          if (t < PTR) fatal("pointer type expected");
@@ -1342,7 +1365,7 @@ void gen(int *n)
       a = 0;
       *e = (int) (e + 7); *++e = PSH; i = *cas; *cas = (int) e;
       gen((int *) n[1]); // condition
-      if (e[-1] != IMM) fatal("bad case immediate");
+      if (*(e - 1) != IMM) fatal("bad case immediate");
       *++e = SUB; *++e = BNZ; cas = ++e; *e = i + e[-3];
       if (*(int *) n[2] == Switch) a = cas;
       gen((int *) n[2]); // expression
@@ -1405,7 +1428,7 @@ void stmt(int ctx)
       next();
       // If current token is not "{", it means having enum type name.
       // Skip the enum type name.
-      if (tk != '{') next();
+      if (tk == Id) next();
       if (tk == '{') {
          next();
          i = 0; // Enum value starts from 0
@@ -1639,9 +1662,7 @@ unwind_func: id = sym;
                int ptk = tk;
                if (b == 0) *--n = ';';
                b = n; *--n = loc - id->val; *--n = Loc;
-               next(); a = n; i = ty; expr(ptk);
-               if (((i ^ ty) & (PTR | PTR2)) &&
-                  !(*n == Num && n[1] == 0)) fatal("assign type mismatch\n");
+               next(); a = n; i = ty; expr(ptk); typecheck(Assign, i, ty);
                *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign; ty = i;
                *--n = (int) b; *--n = '{';
             }
@@ -2033,7 +2054,7 @@ int *codegen(int *jitmem, int *jitmap)
                      // ldr r0, [sp, #(sz + jj*4)]
                      // str r0, [sp, #rMap[jj]-4]
                      *je++ = 0xe59d0000 | ((sz - 4) + jj)*4;
-                     *je++ = 0xe58d0000 | (rMap[jj]*4-16);
+                     *je++ = 0xe58d0000 | (rMap[jj]*4 - 16);
                   }
                }
             }
