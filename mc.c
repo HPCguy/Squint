@@ -1011,11 +1011,24 @@ resolve_fnproto:
             else { *--n = (int) b; *--n = AddF; }
          }
          else {
-            sz = ((ty = t) >= PTR2) ? sizeof(int) :
-                                 ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
-            if (*n == Num) n[1] *= sz;
-            if (*n == Num && *b == Num) n[1] += b[1];
-            else { *--n = (int) b; *--n = Add; }
+            if (t >= PTR || ty >= PTR) {
+               if (t >= PTR) ty = t;
+               sz = (ty >= PTR2) ? sizeof(int) : tsize[(ty - PTR) >> 2];
+               if (*n != Num && *b != Num && sz != 1) {
+                  *--n = sz; *--n = Num; --n;
+                  *n = (int) ((t >= PTR) ? (n + 3) : b); *--n = Mul;
+                  --n; *n = (int) ((t >= PTR) ? b : (n + 5)); *--n = Add;
+               }
+               else {
+                  if (*n == Num)  n[1] *= sz;
+                  else if (*b == Num)  b[1] *= sz;
+                  *--n = (int) b; *--n = Add;
+               }
+            }
+            else {
+               if (*n == Num && *b == Num) n[1] += b[1];
+               else { *--n = (int) b; *--n = Add; }
+            }
          }
          break;
       case Sub:
