@@ -26,6 +26,8 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 
+#define SMALL_TBL_SZ 256
+
 #if 0
 float strtof(char *s, char **e);
 #endif
@@ -53,6 +55,13 @@ union conv {
    float f;
 } tkv;              // current token value
 int ty;             // current expression type
+                    // bit 0:1 - tensor rank, eg a[4][4][4]
+                    // 0=scalar, 1=1d, 2=2d, 3=3d
+                    //   1d etype -- bit 0:30)
+                    //   2d etype -- bit 0:15,16:30 [32768,65536]
+                    //   3d etype -- bit 0:10,11:20,21:30 [1024,1024,2048]
+                    // bit 2:9 - type
+                    // bit 10:11 - ptr level
 int loc;            // local variable offset
 int line;           // current line number
 int src;            // print source and assembly flag
@@ -67,12 +76,14 @@ int *n;             // current position in emitted abstract syntax tree
                     // right-to-left order.
 int ld;             // local variable depth
 int pplev, pplevt;  // preprocessor conditional level
+int oline, osize;   // for optimization suggestion
 
 // identifier
 struct ident_s {
    int tk;         // type-id or keyword
    int hash;
    char *name;     // name of this identifier
+   int pad;        // pad to multiple of 8 bytes
    /* fields starting with 'h' were designed to save and restore
     * the global class/type/val in order to handle the case if a
     * function declares a local with the same name as a global.
@@ -80,9 +91,10 @@ struct ident_s {
    int class, hclass; // FUNC, GLO (global var), LOC (local var), Syscall
    int type, htype;   // data type such as char and int
    int val, hval;
-   int etype; // extended type info
+   int etype, hetype; // extended type info. different meaning for funcs.
 } *id,  // currently parsed identifier
-  *sym; // symbol table (simple list of identifiers)
+  *sym, // symbol table (simple list of identifiers)
+  *oid; // for array optimization suggestion
 
 // (library) external functions
 struct ef_s {
@@ -264,8 +276,8 @@ enum {
    INVALID
 };
 
-// types
-enum { CHAR, INT, FLOAT, PTR = 256, PTR2 = 512 };
+// types + atomic type boundary
+enum { CHAR = 0, INT = 4, FLOAT = 8, ATOM_TYPE = 11, PTR = 1024, PTR2 = 2048 };
 
 // ELF generation
 char **plt_func_addr;
@@ -287,8 +299,8 @@ char fatal(char *msg) { printf("%d: %s\n", line, msg); exit(-1); }
 
 void ef_add(char *name, int addr) // add external function
 {
-   ef_cache[ef_count] = malloc(sizeof(struct ef_s)) ;
-   ef_cache[ef_count]->name = malloc(strlen(name)+1);
+   ef_cache[ef_count] = (struct ef_s *) malloc(sizeof(struct ef_s)) ;
+   ef_cache[ef_count]->name = (char *) malloc(strlen(name)+1);
    strcpy(ef_cache[ef_count]->name, name);
    ef_cache[ef_count]->addr = addr;
    ++ef_count;
@@ -311,12 +323,12 @@ int ef_getidx(char *name) // get cache index of external function
       if ((dladdr = (int) dlsym(0, name))) {
          ef_add(name, dladdr);
       } else {
-         void *divmod_handle = dlopen("libgcc_s.so.1", 1);
+         void *divmod_handle = (void *) dlopen("libgcc_s.so.1", 1);
          if (!divmod_handle) fatal("failed to open libgcc_s.so.1");
          dladdr = (int) dlsym(divmod_handle, name);
          if (!dladdr) // fatal("bad function call");
          {
-            void *libm_handle = dlopen("libm.so.6", 1);
+            void *libm_handle = (void *) dlopen("libm.so.6", 1);
             if (!libm_handle) fatal("failed to open libm.so.6");
             dladdr = (int) dlsym(libm_handle, name);
             if (!dladdr) fatal("bad function call");
@@ -530,13 +542,51 @@ void next()
    }
 }
 
-int popcount(int i)
+int popcount32(int i)
 {
    i = i - ((i >> 1) & 0x55555555); // add pairs of bits
    i = (i & 0x33333333) + ((i >> 2) & 0x33333333); // quads
    i = (i + (i >> 4)) & 0x0F0F0F0F; // groups of 8
    return (i * 0x01010101) >> 24; // horizontal sum of bytes
 }
+
+// verify binary operations are legal
+void typecheck(int op, int tl, int tr)
+{
+   int pt = 0, it = 0, st = 0;
+   if (tl >= PTR)  pt += 2; // is pointer?
+   if (tr >= PTR)  pt += 1;
+
+   if (tl < FLOAT) it += 2; // is int?
+   if (tr < FLOAT) it += 1;
+
+   if (tl > ATOM_TYPE && tl < PTR) st += 2; // is struct/union?
+   if (tr > ATOM_TYPE && tr < PTR) st += 1;
+
+   if ((tl ^ tr) & (PTR | PTR2)) { // operation on different pointer levels
+      if (op == Add && pt != 3 && (it & ~pt)) ; // ptr + int or int + ptr ok
+      else if (op == Sub && pt == 2 && it == 1) ; // ptr - int ok
+      else if (op == Assign && pt == 2 && *n == Num && n[1] == 0) ; // ok
+      else if (op >= Eq && op <= Le && *n == Num && n[1] == 0) ; // ok
+      else fatal("bad pointer arithmetic");
+   }
+   else if (pt == 3 && op != Assign && op != Sub &&
+            (op < Eq || op > Le)) // pointers to same type
+      fatal("bad pointer arithmetic");
+
+   if (pt == 0 && op != Assign && (it == 1 || it == 2))
+      fatal("cast operation needed");
+
+   if (pt == 0 && st != 0)
+      fatal("illegal operation with dereferenced struct");
+}
+
+void bitopcheck(int tl, int tr)
+{
+   if (tl >= FLOAT || tr >= FLOAT)
+      fatal("bit operation on non-int types");
+}
+
 
 /* expression parsing
  * lev represents an operator.
@@ -606,7 +656,8 @@ resolve_fnproto:
                if (tk == ')') fatal("unexpected comma in function call");
             } else if (tk != ')') fatal("missing comma in function call");
          }
-         tt = (tt << 8) + (nf << 4) + t;
+         if (t > 15) fatal("maximum of 15 function parameters");
+         tt = (tt << 8) + (nf << 4) + t; // func etype not like other etype
          if (d->etype && (d->etype != tt) ) fatal("argument type mismatch");
          next();
          // function or system call id
@@ -622,7 +673,12 @@ resolve_fnproto:
          case Glo: *--n = d->val; *--n = Num; break;
          default: fatal("undefined variable");
          }
-         *--n = ty = d->type; *--n = Load;
+         if ((d->type & 3) && d->class != Par) { // push reference address
+            ty = d->type & ~3;
+         }
+         else {
+            *--n = (ty = d->type & ~3); *--n = Load;
+         }
       }
       break;
    // directly take an immediate value as the expression value
@@ -642,24 +698,33 @@ resolve_fnproto:
    case Sizeof:
       next();
       if (tk != '(') fatal("open parentheses expected in sizeof");
-      next();
-      ty = INT; // Enum
-      switch (tk) {
-      case Char:
-      case Int:
-      case Float:
-         ty = tk - Char; next(); break;
-      case Struct:
-      case Union:
-         next();
-         if (tk != Id) fatal("bad struct/union type");
-         ty = id->etype; next(); break;
+      next(); d = 0;
+      if (tk == Id) {
+         d = id; ty = d->type; next();
       }
-      // multi-level pointers, plus `PTR` for each level
-      while (tk == Mul) { next(); ty += PTR; }
+      else {
+         ty = INT; // Enum
+         switch (tk) {
+         case Char:
+         case Int:
+         case Float:
+            ty = (tk - Char) << 2; next(); break;
+         case Struct:
+         case Union:
+            next();
+            if (tk != Id) fatal("bad struct/union type");
+            ty = id->etype; next(); break;
+         }
+         // multi-level pointers, plus `PTR` for each level
+         while (tk == Mul) { next(); ty += PTR; }
+      }
       if (tk != ')') fatal("close parentheses expected in sizeof");
       next();
-      *--n = (ty >= PTR) ? sizeof(int) : tsize[ty]; *--n = Num;
+      *--n = (ty & 3) ?
+             (((ty - PTR) >= PTR) ? sizeof(int) : tsize[(ty - PTR) >> 2]) :
+             ((ty >= PTR) ? sizeof(int) : tsize[ty >> 2]); *--n = Num;
+      // just one dimension supported at the moment
+      if (d != 0 && (ty & 3)) n[1] *= (id->etype + 1);
       ty = INT;
       break;
    // Type cast or parenthesis
@@ -670,7 +735,7 @@ resolve_fnproto:
          case Char:
          case Int:
          case Float:
-            t = tk - Char; next(); break;
+            t = (tk - Char) << 2; next(); break;
          default:
             next();
             if (tk != Id) fatal("bad struct/union type");
@@ -681,13 +746,13 @@ resolve_fnproto:
          if (tk != ')') fatal("bad cast");
          next();
          expr(Inc); // cast has precedence as Inc(++)
-         if (((t ^ ty) & FLOAT) && (t == FLOAT || ty == FLOAT)) {
-            if (t == FLOAT && ty == INT) {
-               if (*n == Num) { *n = NumF; c1 = &n[1]; c1->f = c1->i; }
+         if (t != ty && (t == FLOAT || ty == FLOAT)) {
+            if (t == FLOAT && (ty == INT || ty == CHAR)) {
+               if (*n == Num) { *n = NumF; c1 = &n[1]; c1->f = (float) c1->i; }
                else { b = n; *--n = ITOF; *--n = (int) b; *--n = CastF; }
             }
-            else if (t == INT && ty == FLOAT) {
-               if (*n == NumF) { *n = Num; c1 = &n[1]; c1->i = c1->f; }
+            else if ((t == INT || t == CHAR) && ty == FLOAT) {
+               if (*n == NumF) { *n = Num; c1 = &n[1]; c1->i = (int) c1->f; }
                else { b = n; *--n = FTOI; *--n = (int) b; *--n = CastF; }
             }
             else fatal("explicit cast required");
@@ -695,7 +760,9 @@ resolve_fnproto:
          ty = t;
       } else {
          expr(Assign);
-         while (tk == ',') { next(); expr(Assign); }
+         while (tk == ',') {
+            next(); b = n;  expr(Assign); *--n = (int) b; *--n = '{';
+         }
          if (tk != ')') fatal("close parentheses expected");
          next();
       }
@@ -724,17 +791,16 @@ resolve_fnproto:
       ty = INT;
       break;
    case '~': // "~x" is equivalent to "x ^ -1"
-      next(); expr(Inc);
+      next(); expr(Inc); if (ty > ATOM_TYPE) fatal("~ptr is illegal");
       if (*n == Num) n[1] = ~n[1];
       else { *--n = -1; *--n = Num; --n; *n = (int) (n + 3); *--n = Xor; }
       ty = INT;
       break;
    case Add:
-      next(); expr(Inc); if (ty != FLOAT) ty = INT;
+      next(); expr(Inc); if (ty > ATOM_TYPE) fatal("unary '+' illegal on ptr");
       break;
    case Sub:
-      next();
-      expr(Inc);
+      next(); expr(Inc); if (ty > ATOM_TYPE) fatal("unary '-' illegal on ptr");
       if (*n == Num) n[1] = -n[1];
       else if (*n == NumF) { n[1] ^= 0x80000000; }
       else if (ty == FLOAT) {
@@ -745,13 +811,10 @@ resolve_fnproto:
       }
       if (ty != FLOAT) ty = INT;
       break;
-   case Div:
-   case Mod:
-      break;
-   // processing ++x and --x. x-- and x++ is handled later
    case Inc:
-   case Dec:
+   case Dec: // processing ++x and --x. x-- and x++ is handled later
       t = tk; next(); expr(Inc);
+      if ((ty & FLOAT) && ty < PTR) fatal("no ++/-- on float");
       if (*n != Load) fatal("bad lvalue in pre-increment");
       *n = t;
       break;
@@ -766,13 +829,14 @@ resolve_fnproto:
       t = ty; b = n;
       switch (tk) {
       case Assign:
+         if (t & 3) fatal("Cannot assign to array type lvalue");
          next();
          // the left part is processed by the variable part of `tk=ID`
          // and pushes the address
          if (*n != Load) fatal("bad lvalue in assignment");
          // get the value of the right part `expr` as the result of `a=expr`
-         expr(Assign); *--n = (int) (b + 2);
-                       *--n = (ty << 16) | t; *--n = Assign; ty = t;
+         expr(Assign); typecheck(Assign, t, ty);
+         *--n = (int) (b + 2); *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
       case  OrAssign: // right associated
       case XorAssign:
@@ -784,10 +848,11 @@ resolve_fnproto:
       case MulAssign:
       case DivAssign:
       case ModAssign:
+         if (t & 3) fatal("Cannot assign to array type lvalue");
          otk = tk;
          *--n=';'; *--n = t; *--n = Load;
-         sz = (ty = t) >= PTR2 ? sizeof(int) :
-                              ty >= PTR ? tsize[ty - PTR] : 1;
+         sz = ((ty = t) >= PTR2) ? sizeof(int) :
+                              ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
          next(); c = n; expr(otk);
          if (*n == Num) n[1] *= sz;
          *--n = (int) c;
@@ -796,12 +861,15 @@ resolve_fnproto:
          } else {
             *--n = Shl + (otk - ShlAssign);
             // Compound-op bypasses literal const optimizations
-            if (otk == DivAssign) ef_getidx("__aeabi_idiv");
-            if (otk == ModAssign) ef_getidx("__aeabi_idivmod");
+            if (ty != FLOAT) {
+               if (otk == DivAssign) ef_getidx("__aeabi_idiv");
+               if (otk == ModAssign) ef_getidx("__aeabi_idivmod");
+            }
          }
          if (t == FLOAT && (otk >= AddAssign && otk <= DivAssign))
             *n += 5;
-         *--n = (int) (b + 2); *--n = (ty <<16) | t; *--n = Assign; ty = t;
+         typecheck(*n, t, ty);
+         *--n = (int) (b + 2); *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
          next(); expr(Assign); tc = ty;
@@ -823,115 +891,103 @@ resolve_fnproto:
          ty = INT;
          break;
       case Or: // push the current value, calculate the right value
-         next(); expr(Xor);
+         next(); expr(Xor); bitopcheck(t, ty);
          if (*n == Num && *b == Num) n[1] = b[1] | n[1];
          else { *--n = (int) b; *--n = Or; }
          ty = INT;
          break;
       case Xor:
-         next(); expr(And);
+         next(); expr(And); bitopcheck(t, ty);
          if (*n == Num && *b == Num) n[1] = b[1] ^ n[1];
          else { *--n = (int) b; *--n = Xor; }
          ty = INT;
          break;
       case And:
-         next(); expr(Eq);
+         next(); expr(Eq); bitopcheck(t, ty);
          if (*n == Num && *b == Num) n[1] = b[1] & n[1];
          else { *--n = (int) b; *--n = And; }
          ty = INT;
          break;
       case Eq:
-         tc = ty; next(); expr(Ge);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Ge); typecheck(Eq, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f == c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f == c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = EqF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] == n[1];
             else { *--n = (int) b; *--n = Eq; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Ne:
-         tc = ty; next(); expr(Ge);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Ge); typecheck(Ne, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f != c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f != c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = NeF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] != n[1];
             else { *--n = (int) b; *--n = Ne; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Ge:
-         tc = ty; next(); expr(Shl);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl); typecheck(Ge, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f >= c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f >= c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = GeF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] >= n[1];
             else { *--n = (int) b; *--n = Ge; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Lt:
-         tc = ty; next(); expr(Shl);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl); typecheck(Lt, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f < c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f < c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = LtF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] < n[1];
             else { *--n = (int) b; *--n = Lt; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Gt:
-         tc = ty; next(); expr(Shl);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl); typecheck(Gt, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f > c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f > c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = GtF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] > n[1];
             else { *--n = (int) b; *--n = Gt; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Le:
-         tc = ty; next(); expr(Shl);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Shl); typecheck(Le, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f <= c1->f);
-               *n = Num; ty = INT;
+               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f <= c1->f); *n = Num;
             }
             else { *--n = (int) b; *--n = LeF; }
          } else {
             if (*n == Num && *b == Num) n[1] = b[1] <= n[1];
             else { *--n = (int) b; *--n = Le; }
-            ty = INT;
          }
+         ty = INT;
          break;
       case Shl:
-         next(); expr(Add);
+         next(); expr(Add); bitopcheck(t, ty);
          if (*n == Num && *b == Num) {
             if (n[1] < 0) n[1] = b[1] >> -n[1];
             else n[1] = b[1] << n[1];
@@ -939,7 +995,7 @@ resolve_fnproto:
          ty = INT;
          break;
       case Shr:
-         next(); expr(Add);
+         next(); expr(Add); bitopcheck(t, ty);
          if (*n == Num && *b == Num) {
             if (n[1] < 0) n[1] = b[1] << -n[1];
             else n[1] = b[1] >> n[1];
@@ -947,8 +1003,7 @@ resolve_fnproto:
          ty = INT;
          break;
       case Add:
-         tc = ty; next(); expr(Mul);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Mul); typecheck(Add, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c1->f = c1->f + c2->f;
@@ -956,44 +1011,84 @@ resolve_fnproto:
             else { *--n = (int) b; *--n = AddF; }
          }
          else {
-            sz = (ty = t) >= PTR2 ? sizeof(int) :
-                                 ty >= PTR ? tsize[ty - PTR] : 1;
-            if (*n == Num) n[1] *= sz;
-            if (*n == Num && *b == Num) n[1] += b[1];
-            else { *--n = (int) b; *--n = Add; }
+            if (t >= PTR || ty >= PTR) {
+               if (t >= PTR) ty = t;
+               sz = (ty >= PTR2) ? sizeof(int) : tsize[(ty - PTR) >> 2];
+               if (sz != 1 && !(*n == Num && t >= PTR) &&
+                   !(*b == Num && t < PTR)) {
+                  *--n = sz; *--n = Num; --n;
+                  *n = (int) ((t >= PTR) ? (n + 3) : b); *--n = Mul;
+                  --n; *n = (int) ((t >= PTR) ? b : (n + 5)); *--n = Add;
+               }
+               else {
+                  if (*n == Num && t >= PTR) n[1] *= sz;
+                  else if (*b == Num && t < PTR) b[1] *= sz;
+                  *--n = (int) b; *--n = Add;
+               }
+            }
+            else {
+               if (*n == Num && *b == Num) n[1] += b[1];
+               else { *--n = (int) b; *--n = Add; }
+            }
          }
          break;
       case Sub:
-         tc = ty; next(); expr(Mul);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Mul); typecheck(Sub, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c1->f = c2->f - c1->f;
             }
             else { *--n = (int) b; *--n = SubF; }
          }
-         else {
-            sz = t >= PTR2 ? sizeof(int) : t >= PTR ? tsize[t - PTR] : 1;
-            if (sz > 1 && *n == Num) {
-               *--n = sz; *--n = Num; --n; *n = (int) (n + 3); *--n = Mul;
-            }
-            if (*n == Num && *b == Num) n[1] = b[1] - n[1];
-            else {
-               *--n = (int) b; *--n = Sub;
-               if (t == ty && sz > 1) {
-                  switch (sz) {
-                  case 4: *--n = 2; *--n = Num; --n; *n = (int) (n + 3);
-                         *--n = Shr; break;
-                  default: *--n = sz; *--n = Num; --n; *n = (int) (n + 3);
-                          *--n = Sub;
+         else { // 4 cases: ptr-ptr, ptr-int, int-ptr (err), int-int
+            if (t < PTR && ty >= PTR) fatal("bad pointer subtraction");
+            sz = (t >= PTR2) ? sizeof(int) :
+                 ((t >= PTR) ? tsize[(t - PTR) >> 2] : 1);
+            if (t >= PTR && ty >= PTR) {
+               if (t != ty) fatal("mismatched ptr type subtraction");
+               if (*n == Num && *b == Num) n[1] = (b[1] - n[1]) / sz;
+               else {
+                  *--n = (int) b; *--n = Sub;
+                  if (sz > 1 && (sz & (sz - 1)) == 0) {
+                     *--n = popcount32(sz - 1); *--n = Num;
+                     --n; *n = (int) (n + 3); *--n = Shr; // 2^n
+                  }
+                  else if (sz > 1) {
+                     *--n = sz; *--n = Num; --n; *n = (int) (n + 3);
+                     *--n = Div; ef_getidx("__aeabi_idiv");
                   }
                }
+               ty = INT;
             }
+            else if (t >= PTR && (ty == INT || ty == CHAR)) {
+               if (*n == Num) {
+                  n[1] *= sz;
+                  if (*b == Num) n[1] = b[1] - n[1];
+                  else { *--n = (int) b; *--n = Sub; }
+               }
+               else {
+                  if (sz > 1 && (sz & (sz - 1)) == 0) {
+                     *--n = popcount32(sz - 1); *--n = Num;
+                     --n; *n = (int) (n + 3); *--n = Shl; // 2^n
+                  }
+                  else if (sz > 1) {
+                     *--n = sz; *--n = Num;
+                     --n; *n = (int) (n + 3); *--n = Mul;
+                  }
+                  *--n = (int) b; *--n = Sub;
+               }
+               ty = t;
+            }
+            else if (t <= ATOM_TYPE && ty <= ATOM_TYPE) {
+               if (*n == Num && *b == Num) n[1] = b[1] - n[1];
+               else { *--n = (int) b; *--n = Sub; }
+               ty = INT;
+            }
+            else fatal("illegal subtraction");
          }
          break;
       case Mul:
-         tc = ty; next(); expr(Inc);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Inc); typecheck(Mul, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c1->f = c1->f * c2->f;
@@ -1005,7 +1100,7 @@ resolve_fnproto:
             else {
                *--n = (int) b;
                if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
-                  n[2] = popcount(n[2] - 1); *--n = Shl; // 2^n
+                  n[2] = popcount32(n[2] - 1); *--n = Shl; // 2^n
                }
                else *--n = Mul;
             }
@@ -1014,7 +1109,10 @@ resolve_fnproto:
          break;
       case Inc:
       case Dec:
-         sz = ty >= PTR2 ? sizeof(int) : ty >= PTR ? tsize[ty - PTR] : 1;
+         if (ty & 3) fatal("can't inc/dec an array variable");
+         if ((ty & FLOAT) && ty < PTR) fatal("no ++/-- on float");
+         sz = (ty >= PTR2) ? sizeof(int) :
+              ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
          if (*n != Load) fatal("bad lvalue in post-increment");
          *n = tk;
          *--n = sz; *--n = Num;
@@ -1022,8 +1120,7 @@ resolve_fnproto:
          next();
          break;
       case Div:
-         tc = ty; next(); expr(Inc);
-         if (tc != ty && (tc == FLOAT || ty == FLOAT)) fatal("type mismatch");
+         next(); expr(Inc); typecheck(Div, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c1->f = c2->f / c1->f;
@@ -1035,7 +1132,7 @@ resolve_fnproto:
             else {
                *--n = (int) b;
                if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
-                  n[2] = popcount(n[2] - 1); *--n = Shr; // 2^n
+                  n[2] = popcount32(n[2] - 1); *--n = Shr; // 2^n
                } else {
                   *--n = Div;
                   ef_getidx("__aeabi_idiv");
@@ -1045,7 +1142,8 @@ resolve_fnproto:
          }
          break;
       case Mod:
-         next(); expr(Inc);
+         next(); expr(Inc); typecheck(Mod, t, ty);
+         if (ty == FLOAT) fatal("use fmodf() for float modulo");
          if (*n == Num && *b == Num) n[1] = b[1] % n[1];
          else {
             *--n = (int) b;
@@ -1059,13 +1157,13 @@ resolve_fnproto:
          ty = INT;
          break;
       case Dot:
-         ty += PTR;
-         if (n[0] == Load && n[1] > FLOAT && n[1] < PTR) n += 2; // struct
+         t += PTR;
+         if (n[0] == Load && n[1] > ATOM_TYPE && n[1] < PTR) n += 2; // struct
       case Arrow:
-         if (ty <= PTR+FLOAT || ty >= PTR2) fatal("structure expected");
+         if (t <= PTR+ATOM_TYPE || t >= PTR2) fatal("structure expected");
          next();
          if (tk != Id) fatal("structure member expected");
-         m = members[ty - PTR]; while (m && m->id != id) m = m->next;
+         m = members[(t - PTR) >> 2]; while (m && m->id != id) m = m->next;
          if (!m) fatal("structure member not found");
          if (m->offset) {
             *--n = m->offset; *--n = Num; --n; *n = (int) (n + 3);
@@ -1076,11 +1174,11 @@ resolve_fnproto:
          next();
          break;
       case Bracket:
-         next(); expr(Assign);
+         next(); expr(Assign); if (ty >= FLOAT) fatal("non-int array index");
          if (tk != ']') fatal("close bracket expected");
          next();
          if (t < PTR) fatal("pointer type expected");
-         sz = (t = t - PTR) >= PTR ? sizeof(int) : tsize[t];
+         sz = ((t = t - PTR) >= PTR) ? sizeof(int) : tsize[t >> 2];
          if (sz > 1) {
             if (*n == Num) n[1] *= sz;
             else {
@@ -1111,8 +1209,9 @@ void gen(int *n)
    case NumF: *++e = IMMF; *++e = n[1]; break; // float value
    case Load:
       gen(n + 2); // load the value
-      if (n[1] > FLOAT && n[1] < PTR) fatal("struct copies not yet supported");
-      *++e = (n[1] >= PTR) ? LI : LC + n[1];
+      if (n[1] > ATOM_TYPE && n[1] < PTR)
+         fatal("struct copies not yet supported");
+      *++e = (n[1] >= PTR) ? LI : LC + (n[1] >> 2);
       break;
    case Loc: *++e = LEA; *++e = n[1]; break;       // get address of variable
    case '{': gen((int *) n[1]); gen(n + 2); break; // parse AST expr or stmt
@@ -1120,17 +1219,17 @@ void gen(int *n)
       gen((int *) n[2]); *++e = PSH; gen(n + 3); l = n[1] & 0xffff;
       // Add SC/SI instruction to save value in register to variable address
       // held on stack.
-      if (l > FLOAT && l < PTR) fatal("struct assign not yet supported");
+      if (l > ATOM_TYPE && l < PTR) fatal("struct assign not yet supported");
       if ((n[1] >> 16) == FLOAT && l == INT) *++e = FTOI;
       else if ((n[1] >> 16) == INT && l == FLOAT) *++e = ITOF;
-      *++e = (l >= PTR) ? SI : SC + l;
+      *++e = (l >= PTR) ? SI : SC + (l >> 2);
       break;
    case Inc: // increment or decrement variables
    case Dec:
       gen(n + 2);
       *++e = PSH; *++e = (n[1] == CHAR) ? LC : LI; *++e = PSH;
       *++e = IMM; *++e = (n[1] >= PTR2) ? sizeof(int) :
-                                      n[1] >= PTR ? tsize[n[1] - PTR] : 1;
+                         ((n[1] >= PTR) ? tsize[(n[1] - PTR) >> 2] : 1);
       *++e = (i == Inc) ? ADD : SUB;
       *++e = (n[1] == CHAR) ? SC : SI;
       break;
@@ -1216,7 +1315,7 @@ void gen(int *n)
             }
          }
          l = (i != ClearCache) ? (n[4] >> 8) : 0;
-         a = malloc(sizeof(int *) * k);
+         a = (int *) malloc(sizeof(int) * k);
          for (j = 0; *b ; b = (int *) *b) a[j++] = (int) b;
          a[j] = (int) b;
          while (j >= 0) { // push arguments
@@ -1280,7 +1379,7 @@ void gen(int *n)
       a = 0;
       *e = (int) (e + 7); *++e = PSH; i = *cas; *cas = (int) e;
       gen((int *) n[1]); // condition
-      if (e[-1] != IMM) fatal("bad case immediate");
+      if (*(e - 1) != IMM) fatal("bad case immediate");
       *++e = SUB; *++e = BNZ; cas = ++e; *e = i + e[-3];
       if (*(int *) n[2] == Switch) a = cas;
       gen((int *) n[2]); // expression
@@ -1332,6 +1431,7 @@ void stmt(int ctx)
    struct ident_s *dd;
    int *a, *b, *c, *d;
    int i, j, nf, atk;
+   int nd[3];
    int bt;
 
    if (ctx == Glo && (tk < Enum || tk > Union))
@@ -1342,7 +1442,7 @@ void stmt(int ctx)
       next();
       // If current token is not "{", it means having enum type name.
       // Skip the enum type name.
-      if (tk != '{') next();
+      if (tk == Id) next();
       if (tk == '{') {
          next();
          i = 0; // Enum value starts from 0
@@ -1376,21 +1476,21 @@ void stmt(int ctx)
       case Char:
       case Int:
       case Float:
-         bt = tk - Char; next(); break;
+         bt = (tk - Char) << 2; next(); break;
       case Struct:
       case Union:
          atk = tk; next();
          if (tk == Id) {
-            if (!id->etype) id->etype = tnew++;
+            if (!id->etype) id->etype = tnew++ << 2;
             bt = id->etype;
             next();
          } else {
-            bt = tnew++;
+            bt = tnew++ << 2;
          }
          if (tk == '{') {
             next();
-            if (members[bt]) fatal("duplicate structure definition");
-            tsize[bt] = 0; // for unions
+            if (members[bt >> 2]) fatal("duplicate structure definition");
+            tsize[bt >> 2] = 0; // for unions
             i = 0;
             while (tk != '}') {
                int mbt = INT; // Enum
@@ -1398,7 +1498,7 @@ void stmt(int ctx)
                case Char:
                case Int:
                case Float:
-                  mbt = tk - Char; next(); break;
+                  mbt = (tk - Char) << 2; next(); break;
                case Struct:
                case Union:
                   next();
@@ -1412,22 +1512,25 @@ void stmt(int ctx)
                   // then type plus `PTR` indicates what kind of pointer
                   while (tk == Mul) { next(); ty += PTR; }
                   if (tk != Id) fatal("bad struct member definition");
-                  struct member_s *m = malloc(sizeof(struct member_s));
+                  struct member_s *m = (struct member_s *)
+                                       malloc(sizeof(struct member_s));
                   m->id = id;
                   m->offset = i;
                   m->type = ty;
-                  m->next = members[bt];
-                  members[bt] = m;
-                  i += (ty >= PTR) ? sizeof(int) : tsize[ty];
+                  m->next = members[bt >> 2];
+                  members[bt >> 2] = m;
+                  i += (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
                   i = (i + 3) & -4;
-                  if (atk == Union) { if (i > tsize[bt]) tsize[bt] = i; i = 0; }
+                  if (atk == Union) {
+                     if (i > tsize[bt >> 2]) tsize[bt >> 2] = i; i = 0;
+                  }
                   next();
                   if (tk == ',') next();
                }
                next();
             }
             next();
-            if (atk != Union) tsize[bt] = i;
+            if (atk != Union) tsize[bt >> 2] = i;
          }
          break;
       }
@@ -1456,7 +1559,8 @@ void stmt(int ctx)
          if (tk == '(') { // function
             if (b != 0) fatal("func decl can't be mixed with var decl(s)");
             if (ctx != Glo) fatal("nested function");
-            if (ty > FLOAT && ty < PTR) fatal("return type can't be struct");
+            if (ty > ATOM_TYPE && ty < PTR)
+               fatal("return type can't be struct");
             if (id->class == Syscall && id->val)
                fatal("forward decl location failed one pass compilation");
             if (id->class == Func &&
@@ -1471,11 +1575,14 @@ void stmt(int ctx)
                if (ty == FLOAT) { ++nf; ++(dd->etype); }
                if (tk == ',') next();
             }
-            next(); dd->etype = (dd->etype << 8) + (nf << 4) + ld; // param info
+            if (ld > 15) fatal("maximum of 15 function parameters");
+            // function etype is not like other etypes
+            next(); dd->etype = (dd->etype << 8) + (nf << 4) + ld; // prm info
             if (tk == ';') { dd->val = 0; goto unwind_func; } // fn proto
             if (tk != '{') fatal("bad function definition");
             loc = ++ld;
             next();
+            oline = -1; osize = -1; oid = 0; // optimization hint
             // Not declaration and must not be function, analyze inner block.
             // e represents the address which will store pc
             // (ld - loc) indicates memory size to allocate
@@ -1485,6 +1592,9 @@ void stmt(int ctx)
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
             *--n = ld - loc; *--n = Enter;
+            if (oid && n[1] >= 64)
+               printf("--> %d: move %.*s to global scope for performance.\n",
+                      oline, (oid->hash & 0x3f), oid->name);
             cas = 0;
             gen(n);
 unwind_func: id = sym;
@@ -1493,6 +1603,7 @@ unwind_func: id = sym;
                   id->class = id->hclass;
                   id->type = id->htype;
                   id->val = id->hval;
+                  id->etype = id->hetype;
                }
                else if (id->class == Label) { // clear id for next func
                   id->class = 0; id->val = 0; id->type = 0;
@@ -1506,33 +1617,66 @@ unwind_func: id = sym;
             }
          }
          else {
-            int sz = (ty >= PTR) ? sizeof(int) : tsize[ty];
-            if (tk == Bracket) { // support 1d global array
-               if (ctx != Glo)
-                  fatal("Array decl only supported for global variables");
-               next(); expr(Cond);
-               if (*n != Num) fatal("non-const array size");
-               if (tk != ']') fatal("missing ]");
-               next();
-               sz *= n[1]; n += 2;
-               ty += PTR; id->type = ty;
-            }
-            sz = (sz + 3) & -4;
             id->hclass = id->class; id->class = ctx;
             id->htype = id->type; id->type = ty;
             id->hval = id->val;
+            id->hetype = id->etype;
+            int sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
+            if (tk == Bracket) { // support 1d global array
+               if (ty > ATOM_TYPE && ty < PTR)
+                  fatal("Struct array decl not yet supported");
+               i = ty; j = 0; /* num DOF */
+               do {
+                  next();
+                  if (j == 0 && ctx == Par && tk == ']') {
+                     nd[j] = 1;
+                     next();
+                  }
+                  else {
+                     expr(Cond);
+                     if (*n != Num) fatal("non-const array size");
+                     if (n[1] <= 0) fatal("non-positive array dimension");
+                     if (tk != ']') fatal("missing ]");
+                     next();
+                     nd[j] = n[1];
+                     sz *= n[1]; n += 2;
+                  }
+                  ++j;
+               } while (tk == Bracket && j < 1);
+               if (tk == Bracket) fatal("one subscript max on decl");
+               switch(j) {
+               case 1:
+                  id->etype = (nd[0]-1); break;
+               case 2:
+                  id->etype = ((nd[1]-1) << 16) + (nd[0]-1);
+                  if (nd[1] > 32768 || nd[0] > 65536)
+                     fatal("max bounds [32768][65536]");
+                  break;
+               case 3:
+                  id->etype = ((nd[2]-1) << 21) + ((nd[1]-1) << 11) + (nd[0]-1);
+                  if (nd[2] > 1024 || nd[1] > 1024 || nd[0] > 2048)
+                     fatal("max bounds [1024][1024][2048]");
+                  break;
+               }
+               ty = (i + PTR) | j; id->type = ty;
+               if (ctx == Loc && sz > osize) {
+                  osize = sz; oline = line; oid = id;
+               }
+            }
+            sz = (sz + 3) & -4;
             if (ctx == Glo) { id->val = (int) data; data += sz; }
             else if (ctx == Loc) { id->val = (ld += sz / sizeof(int)); }
             else if (ctx == Par) {
-               if (ty > FLOAT && ty < PTR) // local struct decl
+               if (ty > ATOM_TYPE && ty < PTR) // local struct decl
                   fatal("struct parameters must be pointers");
                id->val = ld++;
             }
-            if (ctx == Loc && tk == Assign) {
+            if (tk == Assign) {
+               if (ctx != Loc) fatal("decl assignment for local vars only");
                int ptk = tk;
                if (b == 0) *--n = ';';
                b = n; *--n = loc - id->val; *--n = Loc;
-               next(); a = n; i = ty; expr(ptk);
+               next(); a = n; i = ty; expr(ptk); typecheck(Assign, i, ty);
                *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign; ty = i;
                *--n = (int) b; *--n = '{';
             }
@@ -1719,8 +1863,8 @@ int *codegen(int *jitmem, int *jitmap)
    int *immloc, *immlocv, *il, *ill, *ivv;
    int *rMap;
 
-   immloc = il = malloc(1024 * 4);
-   int *iv = malloc(1024 * 4);
+   immloc = il = (int *) malloc(1024 * sizeof(int));
+   int *iv = (int *) malloc(1024 * sizeof(int));
    immlocv = iv;
    int *imm0 = 0;
    int *immf0 = 0;
@@ -1743,9 +1887,10 @@ int *codegen(int *jitmem, int *jitmap)
       case LEA:
          tmp = *pc++;
          if (tmp >= 64 || tmp <= -64) {
-            printf("jit: LEA %d out of bounds\n", tmp); exit(6);
+            if (!imm0) imm0 = je; *il++ = (int) (je++); *iv++ = tmp * 4;
+            *je++ = 0xe08b0000;   // add r0, fp, r0
          }
-         if (tmp >= 0)
+         else if (tmp >= 0)
             *je++ = 0xe28b0000 | tmp * 4;     // add r0, fp, #(tmp)
          else
             *je++ = 0xe24b0000 | (-tmp) * 4;  // sub r0, fp, #(tmp)
@@ -1923,7 +2068,7 @@ int *codegen(int *jitmem, int *jitmap)
                      // ldr r0, [sp, #(sz + jj*4)]
                      // str r0, [sp, #rMap[jj]-4]
                      *je++ = 0xe59d0000 | ((sz - 4) + jj)*4;
-                     *je++ = 0xe58d0000 | (rMap[jj]*4-16);
+                     *je++ = 0xe58d0000 | (rMap[jj]*4 - 16);
                   }
                }
             }
@@ -2096,7 +2241,7 @@ int *codegen(int *jitmem, int *jitmap)
       // skip he operand.
       else if (i <= ADJ || i == SYSC) { ++pc; }
    }
-   free(iv);
+   free(iv); free(immloc);
    return tje;
 }
 
@@ -2112,8 +2257,9 @@ int jit(int poolsz, int *main, int argc, char **argv)
    if (src) return 0; // skip for IR listing
 
    // setup JIT memory
-   if (!(jitmem = mmap(0, poolsz, _PROT_EXEC | _PROT_READ | _PROT_WRITE,
-                  _MAP_PRIVATE | _MAP_ANON, -1, 0))) {
+   if (!(jitmem = (char *) mmap(0, poolsz,
+                                _PROT_EXEC | _PROT_READ | _PROT_WRITE,
+                                _MAP_PRIVATE | _MAP_ANON, -1, 0))) {
       printf("could not mmap(%d) jit executable memory\n", poolsz);
       return -1;
    }
@@ -2143,8 +2289,8 @@ int jit(int poolsz, int *main, int argc, char **argv)
 
    // hack to jump into specific function pointer
    __clear_cache(jitmem, je);
-   int *res = bsearch(&sym, sym, 1, 1, (void *) _start);
-   if (((void *) 0) != res) return 0; return -1; // make compiler happy
+   int *res = (int *) bsearch(&sym, sym, 1, 1, (void *) _start);
+   if (((int *) 0) != res) return 0; return -1; // make compiler happy
 }
 
 int ELF32_ST_INFO(int b, int t) { return (b << 4) + (t & 0xf); }
@@ -2306,15 +2452,15 @@ enum {
 void elf32_init(int poolsz)
 {
    int i;
-   freebuf = malloc(poolsz);
+   freebuf = (char *) malloc(poolsz);
    char *o = (char *) (((int) freebuf + PAGE_SIZE - 1)  & -PAGE_SIZE);
    /* We must assign the plt_func_addr[x] a non-zero value, and also,
     * plt_func_addr[i] and plt_func_addr[i-1] has an offset of 16
     * (4 instruction * 4 bytes), so the first codegen and second codegen
     * have consistent code_size. Dummy address at this point.
     */
-   plt_func_addr = malloc(sizeof(char *) * PTR);
-   for (i = 0; i < PTR; ++i)
+   plt_func_addr = (char **) malloc(sizeof(char *) * SMALL_TBL_SZ);
+   for (i = 0; i < SMALL_TBL_SZ; ++i)
       plt_func_addr[i] = o + i * 16;
 
    ef_getidx("__libc_start_main"); // slot 0 of external func cache
@@ -2324,7 +2470,7 @@ int elf32(int poolsz, int *main, int elf_fd)
 {
    int i;
    char *freecode;
-   char *code = freecode = malloc(poolsz);
+   char *code = freecode = (char *) malloc(poolsz);
    char *buf = freebuf;
    int *jitmap = (int *) (code + (poolsz >> 1));
    memset(buf, 0, poolsz);
@@ -2401,8 +2547,10 @@ int elf32(int poolsz, int *main, int elf_fd)
    char *e_shoff = o;       o += 4; // e_shoff
    *(int *) o = 0x5000400;  o += 4; // e_flags
    *o++ = EHDR_SIZE; *o++ = 0;
-   *o++ = PHDR_ENT_SIZE; *o++ = 0; *o++ = PHDR_NUM; *o++ = 0; // e_phentsize & e_phnum
-   *o++ = SHDR_ENT_SIZE; *o++ = 0; *o++ = SHDR_NUM; *o++ = 0; // e_shentsize & e_shnum
+   // e_phentsize & e_phnum
+   *o++ = PHDR_ENT_SIZE; *o++ = 0; *o++ = PHDR_NUM; *o++ = 0;
+   // e_shentsize & e_shnum
+   *o++ = SHDR_ENT_SIZE; *o++ = 0; *o++ = SHDR_NUM; *o++ = 0;
    *o++ =  1; *o++ = 0;
 
    int phdr_size = PHDR_ENT_SIZE * PHDR_NUM;
@@ -2465,7 +2613,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    int shstrtab_off = interp_off + interp_str_size;
    int shstrtab_size = 0;
 
-   int *shdr_names = malloc(sizeof(int) * SHDR_NUM);
+   int *shdr_names = (int *) malloc(sizeof(int) * SHDR_NUM);
    if (!shdr_names) die("elf32: could not malloc shdr_names table");
 
    shdr_names[SNONE] = append_strtab(&data, "") - shstrtab_addr;
@@ -2491,7 +2639,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    char *libgcc_s = append_strtab(&data, "libgcc_s.so.1");
    char *libm = append_strtab(&data, "libm.so.6");
 
-   int *func_entries = malloc(sizeof(int) * ef_count);
+   int *func_entries = (int *) malloc(sizeof(int) * ef_count);
    if (!func_entries) die("elf32: could not malloc func_entries table");
 
    for (i = 0; i < ef_count; ++i)
@@ -2521,7 +2669,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    char *to_got_movt = data;  // linking, plt must jump here.
    data += 4;                 // reserved 2 and 3 entry for interp
    // .got function slot
-   char **got_func_slot = malloc(sizeof(char *) * ef_count);
+   char **got_func_slot = (char **) malloc(sizeof(char *) * ef_count);
    for (i = 0; i < ef_count; ++i) {
       got_func_slot[i] = data;
       *(int *) data = (int) plt_addr; data += 4;
@@ -2711,7 +2859,7 @@ int main(int argc, char **argv)
    int fd, i;
    int poolsz = 1024 * 1024; // arbitrary size
 
-   if (!(sym = malloc(poolsz)))
+   if (!(sym = (struct ident_s *) malloc(poolsz)))
       die("could not allocate symbol area");
    memset(sym, 0, poolsz);
 
@@ -2733,13 +2881,13 @@ int main(int argc, char **argv)
    next();
    struct ident_s *idmain = id; id->class = Main; // keep track of main
 
-   if (!(freedata = _data = data = malloc(poolsz)))
+   if (!(freedata = _data = data = (char *) malloc(poolsz)))
       printf("could not allocat data area");
    memset(data, 0, poolsz);
-   if (!(tsize = malloc(PTR * sizeof(int))))
+   if (!(tsize = (int *) malloc(SMALL_TBL_SZ * sizeof(int))))
       die("could not allocate tsize area");
-   memset(tsize,   0, PTR * sizeof(int)); // not strictly necessary
-   if (!(freed_ast = ast = malloc(poolsz)))
+   memset(tsize,   0, SMALL_TBL_SZ * sizeof(int)); // not strictly necessary
+   if (!(freed_ast = ast = (int *) malloc(poolsz)))
       die("could not allocate abstract syntax tree area");
    memset(ast, 0, poolsz); // not strictly necessary
    ast = (int *) ((int) ast + poolsz); // AST is built as a stack
@@ -2793,20 +2941,22 @@ int main(int argc, char **argv)
       printf("could not open(%s)\n", *argv); return -1;
    }
 
-   if (!(text = le = e = malloc(poolsz)))
+   if (!(text = le = e = (char *) malloc(poolsz)))
       die("could not allocate text area");
-   if (!(members = malloc(PTR * sizeof(struct member_s *))))
+   if (!(members = (struct member_s **)
+                   malloc(SMALL_TBL_SZ * sizeof(struct member_s *))))
       die("could not malloc() members area");
-   if (!(ef_cache = malloc(PTR * sizeof(struct ef_s *))))
+   if (!(ef_cache = (struct ef_s **)
+                    malloc(SMALL_TBL_SZ * sizeof(struct ef_s *))))
       die("could not malloc() external function cache");
 
    memset(e, 0, poolsz);
 
-   memset(members, 0, PTR * sizeof(struct member_s *));
+   memset(members, 0, SMALL_TBL_SZ * sizeof(struct member_s *));
 
    if (elf) elf32_init(poolsz); // call before source code parsing
 
-   if (!(freep = lp = p = malloc(poolsz)))
+   if (!(freep = lp = p = (char *) malloc(poolsz)))
       die("could not allocate source area");
    if ((i = read(fd, p, poolsz - 1)) <= 0)
       die("unable to read from source file");

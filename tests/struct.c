@@ -29,7 +29,7 @@ int main(int argc, char **argv)
     printf("%zu\n", sizeof(struct foo));
     printf("%c\n", bar.c);
 
-    d = malloc(sizeof(struct foo) * len);
+    d = (struct foo *) malloc(sizeof(struct foo) * len);
     ptr = d;
     for (i = 0; i < len / 2; ++i) {
         ptr->p = "one";

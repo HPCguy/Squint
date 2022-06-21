@@ -19,7 +19,7 @@ int main()
     union pt *p;
     int i;
 
-    p = malloc(4 * sizeof(union pt));
+    p = (union pt *) malloc(4 * sizeof(union pt));
 
     for (i = 0; i < 4; ++i) {
         p[i].space.x = i;

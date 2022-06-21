@@ -7,7 +7,7 @@ int main(int argc, char **argv)
     char *p;
     int fd, readsz;
 
-    if (!(p = malloc(1024 * 16))) {
+    if (!(p = (char *) malloc(1024 * 16))) {
         printf("failed to malloc memory\n");
         exit(1);
     }
