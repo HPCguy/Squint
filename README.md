@@ -16,8 +16,8 @@ benchmark provides an optimization example, and runs roughly
 ***4x faster after peephole optimization***.
 
 Source code size:
-* mc C compiler -- 2650 SLOC
-* squint optimizer -- 2270 SLOC
+* mc C compiler -- 2800 SLOC
+* squint optimizer -- 2800 SLOC
 
 The original AMaCC compiler is based on the phenomenal work of the 
 team at https://github.com/jserv/amacc , and I strongly suggest
@@ -32,7 +32,7 @@ used as a starting point for this work.
 
 | Benchmark |  AMaCC .text size | Mc+Squint .text | Gcc -O3 .text | Notes |
 | --- | --- | --- | --- | --- |
-| bezier.c | 4468 | 1668 | ***992*** | recursive |
+| bezier.c | 3672 | 1172 | ***768*** | recursive |
 | duff.c | 3068 | 564 | ***412*** | unusual |
 | maze.c | 6640 | 2632 | ***1752*** | misc |
 | shock.c | 8732 | ***2032*** | 3388 | floating point |
