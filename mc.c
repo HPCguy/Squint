@@ -577,7 +577,7 @@ void typecheck(int op, int tl, int tr)
    if (pt == 0 && op != Assign && (it == 1 || it == 2))
       fatal("cast operation needed");
 
-   if (pt ==0 && st != 0)
+   if (pt == 0 && st != 0)
       fatal("illegal operation with dereferenced struct");
 }
 
@@ -673,11 +673,11 @@ resolve_fnproto:
          case Glo: *--n = d->val; *--n = Num; break;
          default: fatal("undefined variable");
          }
-         if (d->type & 3) { // push reference address
+         if ((d->type & 3) && d->class != Par) { // push reference address
             ty = d->type & ~3;
          }
          else {
-            *--n = ty = d->type; *--n = Load;
+            *--n = (ty = d->type & ~3); *--n = Load;
          }
       }
       break;
@@ -1014,14 +1014,15 @@ resolve_fnproto:
             if (t >= PTR || ty >= PTR) {
                if (t >= PTR) ty = t;
                sz = (ty >= PTR2) ? sizeof(int) : tsize[(ty - PTR) >> 2];
-               if (*n != Num && *b != Num && sz != 1) {
+               if (sz != 1 && !(*n == Num && t >= PTR) &&
+                   !(*b == Num && t < PTR)) {
                   *--n = sz; *--n = Num; --n;
                   *n = (int) ((t >= PTR) ? (n + 3) : b); *--n = Mul;
                   --n; *n = (int) ((t >= PTR) ? b : (n + 5)); *--n = Add;
                }
                else {
-                  if (*n == Num)  n[1] *= sz;
-                  else if (*b == Num)  b[1] *= sz;
+                  if (*n == Num && t >= PTR) n[1] *= sz;
+                  else if (*b == Num && t < PTR) b[1] *= sz;
                   *--n = (int) b; *--n = Add;
                }
             }
