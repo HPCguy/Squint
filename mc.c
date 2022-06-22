@@ -747,11 +747,11 @@ resolve_fnproto:
          next();
          expr(Inc); // cast has precedence as Inc(++)
          if (t != ty && (t == FLOAT || ty == FLOAT)) {
-            if (t == FLOAT && (ty == INT || ty == CHAR)) {
+            if (t == FLOAT && ty < FLOAT) { // float : int
                if (*n == Num) { *n = NumF; c1 = &n[1]; c1->f = (float) c1->i; }
                else { b = n; *--n = ITOF; *--n = (int) b; *--n = CastF; }
             }
-            else if ((t == INT || t == CHAR) && ty == FLOAT) {
+            else if (t < FLOAT && ty == FLOAT) { // int : float
                if (*n == NumF) { *n = Num; c1 = &n[1]; c1->i = (int) c1->f; }
                else { b = n; *--n = FTOI; *--n = (int) b; *--n = CastF; }
             }
@@ -851,8 +851,8 @@ resolve_fnproto:
          if (t & 3) fatal("Cannot assign to array type lvalue");
          otk = tk;
          *--n=';'; *--n = t; *--n = Load;
-         sz = ((ty = t) >= PTR2) ? sizeof(int) :
-                              ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
+         sz = (t >= PTR2) ? sizeof(int) :
+                            ((t >= PTR) ? tsize[(t - PTR) >> 2] : 1);
          next(); c = n; expr(otk);
          if (*n == Num) n[1] *= sz;
          *--n = (int) c;
@@ -1010,26 +1010,20 @@ resolve_fnproto:
             }
             else { *--n = (int) b; *--n = AddF; }
          }
-         else {
-            if (t >= PTR || ty >= PTR) {
-               if (t >= PTR) ty = t;
-               sz = (ty >= PTR2) ? sizeof(int) : tsize[(ty - PTR) >> 2];
-               if (sz != 1 && !(*n == Num && t >= PTR) &&
-                   !(*b == Num && t < PTR)) {
-                  *--n = sz; *--n = Num; --n;
-                  *n = (int) ((t >= PTR) ? (n + 3) : b); *--n = Mul;
-                  --n; *n = (int) ((t >= PTR) ? b : (n + 5)); *--n = Add;
-               }
-               else {
-                  if (*n == Num && t >= PTR) n[1] *= sz;
-                  else if (*b == Num && t < PTR) b[1] *= sz;
-                  *--n = (int) b; *--n = Add;
-               }
+         else { // both terms are either int or "int *"
+            tc = ((t | ty) & (PTR | PTR2)) ? (t >= PTR) : (t >= ty);
+            c = n; if (tc) ty = t;
+            sz = (ty >= PTR2) ? sizeof(int) :
+                 ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
+            if (*n == Num && tc) { n[1] *= sz; sz = 1; }
+            else if (*b == Num && !tc) { b[1] *= sz; sz = 1; }
+            if (*n == Num && *b == Num) n[1] += b[1];
+            else if (sz != 1) {
+               *--n = sz; *--n = Num;
+               *--n = (int) (tc ? c : b); *--n = Mul;
+               *--n = (int) (tc ? b : c); *--n = Add;
             }
-            else {
-               if (*n == Num && *b == Num) n[1] += b[1];
-               else { *--n = (int) b; *--n = Add; }
-            }
+            else { *--n = (int) b; *--n = Add; }
          }
          break;
       case Sub:
@@ -1042,49 +1036,53 @@ resolve_fnproto:
          }
          else { // 4 cases: ptr-ptr, ptr-int, int-ptr (err), int-int
             if (t < PTR && ty >= PTR) fatal("bad pointer subtraction");
-            sz = (t >= PTR2) ? sizeof(int) :
-                 ((t >= PTR) ? tsize[(t - PTR) >> 2] : 1);
-            if (t >= PTR && ty >= PTR) {
-               if (t != ty) fatal("mismatched ptr type subtraction");
-               if (*n == Num && *b == Num) n[1] = (b[1] - n[1]) / sz;
-               else {
-                  *--n = (int) b; *--n = Sub;
-                  if (sz > 1 && (sz & (sz - 1)) == 0) {
-                     *--n = popcount32(sz - 1); *--n = Num;
-                     --n; *n = (int) (n + 3); *--n = Shr; // 2^n
+            if (t >= PTR) { // left arg is ptr
+               sz = (t >= PTR2) ? sizeof(int) : tsize[(t - PTR) >> 2];
+               if (ty >= PTR) { // ptr - ptr
+                  if (t != ty) fatal("mismatched ptr type subtraction");
+                  if (*n == Num && *b == Num) n[1] = (b[1] - n[1]) / sz;
+                  else {
+                     *--n = (int) b; *--n = Sub;
+                     if (sz > 1) {
+                        if ((sz & (sz - 1)) == 0) { // 2^n
+                           *--n = popcount32(sz - 1); *--n = Num;
+                           --n; *n = (int) (n + 3); *--n = Shr;
+                        }
+                        else {
+                           *--n = sz; *--n = Num; --n; *n = (int) (n + 3);
+                           *--n = Div; ef_getidx("__aeabi_idiv");
+                        }
+                     }
                   }
-                  else if (sz > 1) {
-                     *--n = sz; *--n = Num; --n; *n = (int) (n + 3);
-                     *--n = Div; ef_getidx("__aeabi_idiv");
-                  }
+                  ty = INT;
                }
-               ty = INT;
+               else { // ptr - int
+                  if (*n == Num) {
+                     n[1] *= sz;
+                     if (*b == Num) n[1] = b[1] - n[1];
+                     else { *--n = (int) b; *--n = Sub; }
+                  }
+                  else {
+                     if (sz > 1) {
+                        if ((sz & (sz - 1)) == 0) { // 2^n
+                           *--n = popcount32(sz - 1); *--n = Num;
+                           --n; *n = (int) (n + 3); *--n = Shl;
+                        }
+                        else {
+                           *--n = sz; *--n = Num;
+                           --n; *n = (int) (n + 3); *--n = Mul;
+                        }
+                     }
+                     *--n = (int) b; *--n = Sub;
+                  }
+                  ty = t;
+               }
             }
-            else if (t >= PTR && (ty == INT || ty == CHAR)) {
-               if (*n == Num) {
-                  n[1] *= sz;
-                  if (*b == Num) n[1] = b[1] - n[1];
-                  else { *--n = (int) b; *--n = Sub; }
-               }
-               else {
-                  if (sz > 1 && (sz & (sz - 1)) == 0) {
-                     *--n = popcount32(sz - 1); *--n = Num;
-                     --n; *n = (int) (n + 3); *--n = Shl; // 2^n
-                  }
-                  else if (sz > 1) {
-                     *--n = sz; *--n = Num;
-                     --n; *n = (int) (n + 3); *--n = Mul;
-                  }
-                  *--n = (int) b; *--n = Sub;
-               }
-               ty = t;
-            }
-            else if (t <= ATOM_TYPE && ty <= ATOM_TYPE) {
+            else { // int - int
                if (*n == Num && *b == Num) n[1] = b[1] - n[1];
                else { *--n = (int) b; *--n = Sub; }
                ty = INT;
             }
-            else fatal("illegal subtraction");
          }
          break;
       case Mul:
