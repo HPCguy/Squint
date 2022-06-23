@@ -1,13 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int len;
+#define len 10
+
 struct foo {
     char *p;
     char c;
     char *pad;
     int x;
-} * d;
+} d[len];
 
 char *str;
 
@@ -17,7 +18,6 @@ int main(int argc, char **argv)
     char c = '1';
     int i;
     str = "I am a String!\n";
-    len = 10;
     bar.x = 1;
     struct foo *p = &bar;
     p->c = 'a';
@@ -29,7 +29,6 @@ int main(int argc, char **argv)
     printf("%zu\n", sizeof(struct foo));
     printf("%c\n", bar.c);
 
-    d = (struct foo *) malloc(sizeof(struct foo) * len);
     ptr = d;
     for (i = 0; i < len / 2; ++i) {
         ptr->p = "one";

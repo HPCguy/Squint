@@ -1,11 +1,21 @@
+#include <stdlib.h>
 #include <stdio.h>
+
+int assert_eq(int a, int b)
+{
+    if (a != b) {
+        printf("Assertion: %d != %d\n", a, b);
+        exit(1);
+    }
+    return 0;
+}
 
 int main()
 {
     int i;
     int *s, *e, v;
-    int *first, *last;
     int data[10];
+    struct abc_s { int a, b, c; } sptr[10];
 
     s = (int *) 0xbebebeb0;
     e = (int *) 0xbebebeb4;
@@ -15,20 +25,22 @@ int main()
     else
         printf("failed, e - s = %x\n", v);
     v = (int) (e - 1);
-    if ((int *) v == s)
+    if (v == (int) s)
         printf("passed\n");
     else
         printf("failed, e - s = %x\n", v);
 
+    assert_eq(&sptr[5] - &sptr[2], 3);
+    assert_eq((int) (&sptr[5] - 3), (int) &sptr[2]);
+    assert_eq((int) &sptr[5], (int) (sptr + 5));
+    assert_eq((int) &sptr[5], (int) (5 + sptr));
+
     for (i = 0; i < 10; ++i) data[i] = i;
 
-    first = data; last = &data[9];
-
+    s = data; e = &data[9];
     for (i = 0; i < 10; ++i) {
-       if (first[i] != *(first + i) ||
-           last[-i] != *(last - i)) {
-          printf("failed, iter %d\n", i);
-       }
+       assert_eq(s[i], *(s + i));
+       assert_eq(e[-i], *(e - i));
     }
 
     return 0;

@@ -16,10 +16,8 @@ union pt {
 
 int main()
 {
-    union pt *p;
+    union pt p[4];
     int i;
-
-    p = (union pt *) malloc(4 * sizeof(union pt));
 
     for (i = 0; i < 4; ++i) {
         p[i].space.x = i;
@@ -32,6 +30,5 @@ int main()
         printf("(%d, %d)\n", p[i].plane.x, p[i].plane.y);
     }
 
-    free(p);
     return 0;
 }
