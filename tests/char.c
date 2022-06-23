@@ -20,9 +20,8 @@ void mcpy(char *a, char *b, int n)
 
 int main()
 {
-    char *p;
+    char p[128];
     int v;
-    p = (char *) malloc(128);
     mcpy(p, "hello world", 12);
     printf("%s\n", p);
     printf("memcmp = %d\n", mcmp(p, "hello world", 12));

@@ -276,8 +276,11 @@ enum {
    INVALID
 };
 
-// types + atomic type boundary
-enum { CHAR = 0, INT = 4, FLOAT = 8, ATOM_TYPE = 11, PTR = 1024, PTR2 = 2048 };
+// types -- 4 scalar types, 1020 aggregate types, 4 tensor ranks, 8 ptr levels
+// bits 0-1 = tensor rank, 2-11 = type id, 12-14 = ptr level
+// 4 type ids are scalars: 0 = char/void, 1 = int, 2 = float, 3 = reserved
+enum { CHAR = 0, INT = 4, FLOAT = 8, ATOM_TYPE = 11,
+       PTR = 0x1000, PTR2 = 0x2000 };
 
 // ELF generation
 char **plt_func_addr;
@@ -712,8 +715,9 @@ resolve_fnproto:
          case Struct:
          case Union:
             next();
-            if (tk != Id) fatal("bad struct/union type");
-            ty = id->etype; next(); break;
+            if (tk != Id || id->type <= ATOM_TYPE || id->type >= PTR)
+               fatal("bad struct/union type");
+            ty = id->type; next(); break;
          }
          // multi-level pointers, plus `PTR` for each level
          while (tk == Mul) { next(); ty += PTR; }
@@ -738,8 +742,9 @@ resolve_fnproto:
             t = (tk - Char) << 2; next(); break;
          default:
             next();
-            if (tk != Id) fatal("bad struct/union type");
-            t = id->etype; next(); break;
+            if (tk != Id || id->type <= ATOM_TYPE || id->type >= PTR)
+               fatal("bad struct/union type");
+            t = id->type; next(); break;
          }
          // t: pointer
          while (tk == Mul) { next(); t += PTR; }
@@ -747,11 +752,11 @@ resolve_fnproto:
          next();
          expr(Inc); // cast has precedence as Inc(++)
          if (t != ty && (t == FLOAT || ty == FLOAT)) {
-            if (t == FLOAT && (ty == INT || ty == CHAR)) {
+            if (t == FLOAT && ty < FLOAT) { // float : int
                if (*n == Num) { *n = NumF; c1 = &n[1]; c1->f = (float) c1->i; }
                else { b = n; *--n = ITOF; *--n = (int) b; *--n = CastF; }
             }
-            else if ((t == INT || t == CHAR) && ty == FLOAT) {
+            else if (t < FLOAT && ty == FLOAT) { // int : float
                if (*n == NumF) { *n = Num; c1 = &n[1]; c1->i = (int) c1->f; }
                else { b = n; *--n = FTOI; *--n = (int) b; *--n = CastF; }
             }
@@ -851,8 +856,8 @@ resolve_fnproto:
          if (t & 3) fatal("Cannot assign to array type lvalue");
          otk = tk;
          *--n=';'; *--n = t; *--n = Load;
-         sz = ((ty = t) >= PTR2) ? sizeof(int) :
-                              ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
+         sz = (t >= PTR2) ? sizeof(int) :
+                            ((t >= PTR) ? tsize[(t - PTR) >> 2] : 1);
          next(); c = n; expr(otk);
          if (*n == Num) n[1] *= sz;
          *--n = (int) c;
@@ -1010,26 +1015,20 @@ resolve_fnproto:
             }
             else { *--n = (int) b; *--n = AddF; }
          }
-         else {
-            if (t >= PTR || ty >= PTR) {
-               if (t >= PTR) ty = t;
-               sz = (ty >= PTR2) ? sizeof(int) : tsize[(ty - PTR) >> 2];
-               if (sz != 1 && !(*n == Num && t >= PTR) &&
-                   !(*b == Num && t < PTR)) {
-                  *--n = sz; *--n = Num; --n;
-                  *n = (int) ((t >= PTR) ? (n + 3) : b); *--n = Mul;
-                  --n; *n = (int) ((t >= PTR) ? b : (n + 5)); *--n = Add;
-               }
-               else {
-                  if (*n == Num && t >= PTR) n[1] *= sz;
-                  else if (*b == Num && t < PTR) b[1] *= sz;
-                  *--n = (int) b; *--n = Add;
-               }
+         else { // both terms are either int or "int *"
+            tc = ((t | ty) & (PTR | PTR2)) ? (t >= PTR) : (t >= ty);
+            c = n; if (tc) ty = t;
+            sz = (ty >= PTR2) ? sizeof(int) :
+                 ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
+            if (*n == Num && tc) { n[1] *= sz; sz = 1; }
+            else if (*b == Num && !tc) { b[1] *= sz; sz = 1; }
+            if (*n == Num && *b == Num) n[1] += b[1];
+            else if (sz != 1) {
+               *--n = sz; *--n = Num;
+               *--n = (int) (tc ? c : b); *--n = Mul;
+               *--n = (int) (tc ? b : c); *--n = Add;
             }
-            else {
-               if (*n == Num && *b == Num) n[1] += b[1];
-               else { *--n = (int) b; *--n = Add; }
-            }
+            else { *--n = (int) b; *--n = Add; }
          }
          break;
       case Sub:
@@ -1042,49 +1041,53 @@ resolve_fnproto:
          }
          else { // 4 cases: ptr-ptr, ptr-int, int-ptr (err), int-int
             if (t < PTR && ty >= PTR) fatal("bad pointer subtraction");
-            sz = (t >= PTR2) ? sizeof(int) :
-                 ((t >= PTR) ? tsize[(t - PTR) >> 2] : 1);
-            if (t >= PTR && ty >= PTR) {
-               if (t != ty) fatal("mismatched ptr type subtraction");
-               if (*n == Num && *b == Num) n[1] = (b[1] - n[1]) / sz;
-               else {
-                  *--n = (int) b; *--n = Sub;
-                  if (sz > 1 && (sz & (sz - 1)) == 0) {
-                     *--n = popcount32(sz - 1); *--n = Num;
-                     --n; *n = (int) (n + 3); *--n = Shr; // 2^n
+            if (t >= PTR) { // left arg is ptr
+               sz = (t >= PTR2) ? sizeof(int) : tsize[(t - PTR) >> 2];
+               if (ty >= PTR) { // ptr - ptr
+                  if (t != ty) fatal("mismatched ptr type subtraction");
+                  if (*n == Num && *b == Num) n[1] = (b[1] - n[1]) / sz;
+                  else {
+                     *--n = (int) b; *--n = Sub;
+                     if (sz > 1) {
+                        if ((sz & (sz - 1)) == 0) { // 2^n
+                           *--n = popcount32(sz - 1); *--n = Num;
+                           --n; *n = (int) (n + 3); *--n = Shr;
+                        }
+                        else {
+                           *--n = sz; *--n = Num; --n; *n = (int) (n + 3);
+                           *--n = Div; ef_getidx("__aeabi_idiv");
+                        }
+                     }
                   }
-                  else if (sz > 1) {
-                     *--n = sz; *--n = Num; --n; *n = (int) (n + 3);
-                     *--n = Div; ef_getidx("__aeabi_idiv");
-                  }
+                  ty = INT;
                }
-               ty = INT;
+               else { // ptr - int
+                  if (*n == Num) {
+                     n[1] *= sz;
+                     if (*b == Num) n[1] = b[1] - n[1];
+                     else { *--n = (int) b; *--n = Sub; }
+                  }
+                  else {
+                     if (sz > 1) {
+                        if ((sz & (sz - 1)) == 0) { // 2^n
+                           *--n = popcount32(sz - 1); *--n = Num;
+                           --n; *n = (int) (n + 3); *--n = Shl;
+                        }
+                        else {
+                           *--n = sz; *--n = Num;
+                           --n; *n = (int) (n + 3); *--n = Mul;
+                        }
+                     }
+                     *--n = (int) b; *--n = Sub;
+                  }
+                  ty = t;
+               }
             }
-            else if (t >= PTR && (ty == INT || ty == CHAR)) {
-               if (*n == Num) {
-                  n[1] *= sz;
-                  if (*b == Num) n[1] = b[1] - n[1];
-                  else { *--n = (int) b; *--n = Sub; }
-               }
-               else {
-                  if (sz > 1 && (sz & (sz - 1)) == 0) {
-                     *--n = popcount32(sz - 1); *--n = Num;
-                     --n; *n = (int) (n + 3); *--n = Shl; // 2^n
-                  }
-                  else if (sz > 1) {
-                     *--n = sz; *--n = Num;
-                     --n; *n = (int) (n + 3); *--n = Mul;
-                  }
-                  *--n = (int) b; *--n = Sub;
-               }
-               ty = t;
-            }
-            else if (t <= ATOM_TYPE && ty <= ATOM_TYPE) {
+            else { // int - int
                if (*n == Num && *b == Num) n[1] = b[1] - n[1];
                else { *--n = (int) b; *--n = Sub; }
                ty = INT;
             }
-            else fatal("illegal subtraction");
          }
          break;
       case Mul:
@@ -1481,8 +1484,8 @@ void stmt(int ctx)
       case Union:
          atk = tk; next();
          if (tk == Id) {
-            if (!id->etype) id->etype = tnew++ << 2;
-            bt = id->etype;
+            if (!id->type) id->type = tnew++ << 2;
+            bt = id->type;
             next();
          } else {
             bt = tnew++ << 2;
@@ -1503,7 +1506,7 @@ void stmt(int ctx)
                case Union:
                   next();
                   if (tk != Id) fatal("bad struct/union declaration");
-                  mbt = id->etype;
+                  mbt = id->type;
                   next(); break;
                }
                while (tk != ';') {
@@ -1555,7 +1558,7 @@ void stmt(int ctx)
             break;
          }
          next();
-         id->type = ty;
+         dd = id; dd->type = ty;
          if (tk == '(') { // function
             if (b != 0) fatal("func decl can't be mixed with var decl(s)");
             if (ctx != Glo) fatal("nested function");
@@ -1566,7 +1569,7 @@ void stmt(int ctx)
             if (id->class == Func &&
                id->val > (int) text && id->val < (int) e)
                fatal("duplicate global definition");
-            dd = id; dd->etype = 0; dd->class = Func; // type is function
+            dd->etype = 0; dd->class = Func; // type is function
             dd->val = (int) (e + 1); // function Pointer? offset/address
             next(); nf = 0; ld = 0; // "ld" is parameter's index.
             while (tk != ')') {
@@ -1617,14 +1620,12 @@ unwind_func: id = sym;
             }
          }
          else {
-            id->hclass = id->class; id->class = ctx;
-            id->htype = id->type; id->type = ty;
-            id->hval = id->val;
-            id->hetype = id->etype;
+            dd->hclass = dd->class; dd->class = ctx;
+            dd->htype = dd->type; dd->type = ty;
+            dd->hval = dd->val;
+            dd->hetype = dd->etype;
             int sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
             if (tk == Bracket) { // support 1d global array
-               if (ty > ATOM_TYPE && ty < PTR)
-                  fatal("Struct array decl not yet supported");
                i = ty; j = 0; /* num DOF */
                do {
                   next();
@@ -1646,36 +1647,36 @@ unwind_func: id = sym;
                if (tk == Bracket) fatal("one subscript max on decl");
                switch(j) {
                case 1:
-                  id->etype = (nd[0]-1); break;
+                  dd->etype = (nd[0]-1); break;
                case 2:
-                  id->etype = ((nd[1]-1) << 16) + (nd[0]-1);
+                  dd->etype = ((nd[1]-1) << 16) + (nd[0]-1);
                   if (nd[1] > 32768 || nd[0] > 65536)
                      fatal("max bounds [32768][65536]");
                   break;
                case 3:
-                  id->etype = ((nd[2]-1) << 21) + ((nd[1]-1) << 11) + (nd[0]-1);
+                  dd->etype = ((nd[2]-1) << 21) + ((nd[1]-1) << 11) + (nd[0]-1);
                   if (nd[2] > 1024 || nd[1] > 1024 || nd[0] > 2048)
                      fatal("max bounds [1024][1024][2048]");
                   break;
                }
-               ty = (i + PTR) | j; id->type = ty;
+               ty = (i + PTR) | j; dd->type = ty;
                if (ctx == Loc && sz > osize) {
-                  osize = sz; oline = line; oid = id;
+                  osize = sz; oline = line; oid = dd;
                }
             }
             sz = (sz + 3) & -4;
-            if (ctx == Glo) { id->val = (int) data; data += sz; }
-            else if (ctx == Loc) { id->val = (ld += sz / sizeof(int)); }
+            if (ctx == Glo) { dd->val = (int) data; data += sz; }
+            else if (ctx == Loc) { dd->val = (ld += sz / sizeof(int)); }
             else if (ctx == Par) {
                if (ty > ATOM_TYPE && ty < PTR) // local struct decl
                   fatal("struct parameters must be pointers");
-               id->val = ld++;
+               dd->val = ld++;
             }
             if (tk == Assign) {
                if (ctx != Loc) fatal("decl assignment for local vars only");
                int ptk = tk;
                if (b == 0) *--n = ';';
-               b = n; *--n = loc - id->val; *--n = Loc;
+               b = n; *--n = loc - dd->val; *--n = Loc;
                next(); a = n; i = ty; expr(ptk); typecheck(Assign, i, ty);
                *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign; ty = i;
                *--n = (int) b; *--n = '{';
@@ -2897,6 +2898,7 @@ int main(int argc, char **argv)
    tsize[tnew++] = sizeof(char);
    tsize[tnew++] = sizeof(int);
    tsize[tnew++] = sizeof(float);
+   tsize[tnew++] = 0;  // reserved for another scalar type
 
    --argc; ++argv;
    while (argc > 0 && **argv == '-') {
