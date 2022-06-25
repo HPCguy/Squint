@@ -700,7 +700,7 @@ resolve_fnproto:
     */
    case Sizeof:
       next();
-      if (tk != '(') fatal("open parentheses expected in sizeof");
+      if (tk != '(') fatal("open parenthesis expected in sizeof");
       next(); d = 0;
       if (tk == Id) {
          d = id; ty = d->type; next();
@@ -722,7 +722,7 @@ resolve_fnproto:
          // multi-level pointers, plus `PTR` for each level
          while (tk == Mul) { next(); ty += PTR; }
       }
-      if (tk != ')') fatal("close parentheses expected in sizeof");
+      if (tk != ')') fatal("close parenthesis expected in sizeof");
       next();
       *--n = (ty & 3) ?
              (((ty - PTR) >= PTR) ? sizeof(int) : tsize[(ty - PTR) >> 2]) :
@@ -768,7 +768,7 @@ resolve_fnproto:
          while (tk == ',') {
             next(); b = n;  expr(Assign); *--n = (int) b; *--n = '{';
          }
-         if (tk != ')') fatal("close parentheses expected");
+         if (tk != ')') fatal("close parenthesis expected");
          next();
       }
       break;
@@ -776,9 +776,7 @@ resolve_fnproto:
       next();
       expr(Inc); // dereference has the same precedence as Inc(++)
       if (ty < PTR) fatal("bad dereference");
-      ty -= PTR;
-      if (ty < CHAR || ty >= PTR2) fatal("unexpected type");
-      *--n = ty; *--n = Load; // jk PTR2 test too strict?
+      ty -= PTR; *--n = ty; *--n = Load;
       break;
    case And: // "&", take the address operation
       /* when "token" is a variable, it takes the address first and
@@ -791,6 +789,7 @@ resolve_fnproto:
       break;
    case '!': // "!x" is equivalent to "x == 0"
       next(); expr(Inc);
+      if (ty > ATOM_TYPE && ty < PTR) fatal("!(struct/union) is meaningless");
       if (*n == Num) n[1] = !n[1];
       else { *--n = 0; *--n = Num; --n; *n = (int) (n + 3); *--n = Eq; }
       ty = INT;
@@ -819,7 +818,7 @@ resolve_fnproto:
    case Inc:
    case Dec: // processing ++x and --x. x-- and x++ is handled later
       t = tk; next(); expr(Inc);
-      if ((ty & FLOAT) && ty < PTR) fatal("no ++/-- on float");
+      if (ty == FLOAT) fatal("no ++/-- on float");
       if (*n != Load) fatal("bad lvalue in pre-increment");
       *n = t;
       break;
@@ -835,13 +834,12 @@ resolve_fnproto:
       switch (tk) {
       case Assign:
          if (t & 3) fatal("Cannot assign to array type lvalue");
-         next();
          // the left part is processed by the variable part of `tk=ID`
          // and pushes the address
          if (*n != Load) fatal("bad lvalue in assignment");
          // get the value of the right part `expr` as the result of `a=expr`
-         expr(Assign); typecheck(Assign, t, ty);
-         *--n = (int) (b + 2); *--n = (ty << 16) | t; *--n = Assign; ty = t;
+         n += 2; b = n; next(); expr(Assign); typecheck(Assign, t, ty);
+         *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
       case  OrAssign: // right associated
       case XorAssign:
@@ -854,8 +852,9 @@ resolve_fnproto:
       case DivAssign:
       case ModAssign:
          if (t & 3) fatal("Cannot assign to array type lvalue");
+         if (*n != Load) fatal("bad lvalue in assignment");
          otk = tk;
-         *--n=';'; *--n = t; *--n = Load;
+         n += 2; b = n; *--n=';'; *--n = t; *--n = Load;
          sz = (t >= PTR2) ? sizeof(int) :
                             ((t >= PTR) ? tsize[(t - PTR) >> 2] : 1);
          next(); c = n; expr(otk);
@@ -874,7 +873,7 @@ resolve_fnproto:
          if (t == FLOAT && (otk >= AddAssign && otk <= DivAssign))
             *n += 5;
          typecheck(*n, t, ty);
-         *--n = (int) (b + 2); *--n = (ty << 16) | t; *--n = Assign; ty = t;
+         *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
          next(); expr(Assign); tc = ty;
@@ -1040,11 +1039,9 @@ resolve_fnproto:
             else { *--n = (int) b; *--n = SubF; }
          }
          else { // 4 cases: ptr-ptr, ptr-int, int-ptr (err), int-int
-            if (t < PTR && ty >= PTR) fatal("bad pointer subtraction");
             if (t >= PTR) { // left arg is ptr
                sz = (t >= PTR2) ? sizeof(int) : tsize[(t - PTR) >> 2];
                if (ty >= PTR) { // ptr - ptr
-                  if (t != ty) fatal("mismatched ptr type subtraction");
                   if (*n == Num && *b == Num) n[1] = (b[1] - n[1]) / sz;
                   else {
                      *--n = (int) b; *--n = Sub;
@@ -1113,7 +1110,7 @@ resolve_fnproto:
       case Inc:
       case Dec:
          if (ty & 3) fatal("can't inc/dec an array variable");
-         if ((ty & FLOAT) && ty < PTR) fatal("no ++/-- on float");
+         if (ty == FLOAT) fatal("no ++/-- on float");
          sz = (ty >= PTR2) ? sizeof(int) :
               ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
          if (*n != Load) fatal("bad lvalue in post-increment");
@@ -1177,11 +1174,41 @@ resolve_fnproto:
          next();
          break;
       case Bracket:
-         next(); expr(Assign); if (ty >= FLOAT) fatal("non-int array index");
-         if (tk != ']') fatal("close bracket expected");
-         next();
          if (t < PTR) fatal("pointer type expected");
+         int dim = id->type & 3, sum = 0, ii = dim - 1, ee = id->etype, *f = 0;
          sz = ((t = t - PTR) >= PTR) ? sizeof(int) : tsize[t >> 2];
+         do {
+            next(); expr(Assign); if (ty >= FLOAT) fatal("non-int array index");
+            if (tk != ']') fatal("close bracket expected");
+            c = n; next();
+            if (dim) {
+               int factor = ((ii == 2) ? (((ee>>11) & 0x3ff) + 1) : 1);
+               factor *= ((dim == 3 && ii >= 1) ? ((ee & 0x7ff) + 1) :
+                        ((dim == 2 && ii == 1) ? ((ee & 0xffff) + 1) : 1)) ;
+               if (*n == Num) {
+                  sum += factor * n[1]; n += 2; // delete the constant
+               }
+               else {
+                  // generate code to add a term
+                  if (factor > 1) {
+                     *--n = factor; *--n = Num;
+                     *--n = (int) c; *--n = Mul;
+                  }
+                  if (f) { *--n = (int) f; *--n = Add; }
+                  f = n;
+               }
+            }
+         } while (--ii >= 0) ;
+         if (dim) {
+            if (sum > 0) {
+               if (f) {
+                  *--n = sum; *--n = Num;
+                  *--n = (int) f; *--n = Add;
+               }
+               else { sum *= sz; sz = 1; *--n = sum; *--n = Num; }
+            }
+            else if (!f) goto add_simple;
+         }
          if (sz > 1) {
             if (*n == Num) n[1] *= sz;
             else {
@@ -1190,6 +1217,7 @@ resolve_fnproto:
          }
          if (*n == Num && *b == Num) n[1] += b[1];
          else { *--n = (int) b; *--n = Add; }
+add_simple:
          *--n = ((ty = t) >= PTR) ? INT : ty; *--n = Load;
          break;
       default:
@@ -1212,7 +1240,7 @@ void gen(int *n)
    case NumF: *++e = IMMF; *++e = n[1]; break; // float value
    case Load:
       gen(n + 2); // load the value
-      if (n[1] > ATOM_TYPE && n[1] < PTR)
+      if (n[1] > ATOM_TYPE && n[1] < PTR) // unreachable?
          fatal("struct copies not yet supported");
       *++e = (n[1] >= PTR) ? LI : LC + (n[1] >> 2);
       break;
@@ -1382,7 +1410,7 @@ void gen(int *n)
       a = 0;
       *e = (int) (e + 7); *++e = PSH; i = *cas; *cas = (int) e;
       gen((int *) n[1]); // condition
-      if (*(e - 1) != IMM) fatal("bad case immediate");
+      if (*(e - 1) != IMM) fatal("case label not a numeric literal");
       *++e = SUB; *++e = BNZ; cas = ++e; *e = i + e[-3];
       if (*(int *) n[2] == Switch) a = cas;
       gen((int *) n[2]); // expression
@@ -1505,7 +1533,8 @@ void stmt(int ctx)
                case Struct:
                case Union:
                   next();
-                  if (tk != Id) fatal("bad struct/union declaration");
+                  if (tk != Id || id->type <= ATOM_TYPE || id->type >= PTR)
+                     fatal("bad struct/union declaration");
                   mbt = id->type;
                   next(); break;
                }
@@ -1643,8 +1672,8 @@ unwind_func: id = sym;
                      sz *= n[1]; n += 2;
                   }
                   ++j;
-               } while (tk == Bracket && j < 1);
-               if (tk == Bracket) fatal("one subscript max on decl");
+               } while (tk == Bracket && j < 3);
+               if (tk == Bracket) fatal("three subscript max on decl");
                switch(j) {
                case 1:
                   dd->etype = (nd[0]-1); break;
@@ -1687,10 +1716,10 @@ unwind_func: id = sym;
       return;
    case If:
       next();
-      if (tk != '(') fatal("open parentheses expected");
+      if (tk != '(') fatal("open parenthesis expected");
       next();
       expr(Assign); a = n;
-      if (tk != ')') fatal("close parentheses expected");
+      if (tk != ')') fatal("close parenthesis expected");
       next();
       stmt(ctx);
       b = n;
@@ -1699,10 +1728,10 @@ unwind_func: id = sym;
       return;
    case While:
       next();
-      if (tk != '(') fatal("open parentheses expected");
+      if (tk != '(') fatal("open parenthesis expected");
       next();
       expr(Assign); b = n; // condition
-      if (tk != ')') fatal("close parentheses expected");
+      if (tk != ')') fatal("close parenthesis expected");
       next();
       ++brkc; ++cntc;
       stmt(ctx); a = n; // parse body of "while"
@@ -1716,11 +1745,11 @@ unwind_func: id = sym;
       --brkc; --cntc;
       if (tk != While) fatal("while expected");
       next();
-      if (tk != '(') fatal("open parentheses expected");
+      if (tk != '(') fatal("open parenthesis expected");
       next();
       *--n = ';';
       expr(Assign); b = n;
-      if (tk != ')') fatal("close parentheses expected");
+      if (tk != ')') fatal("close parenthesis expected");
       next();
       *--n = (int) b; *--n = (int) a; *--n = DoWhile;
       return;
@@ -1729,11 +1758,11 @@ unwind_func: id = sym;
       if (cas) j = (int) cas;
       cas = &i;
       next();
-      if (tk != '(') fatal("open parentheses expected");
+      if (tk != '(') fatal("open parenthesis expected");
       next();
       expr(Assign);
       a = n;
-      if (tk != ')') fatal("close parentheses expected");
+      if (tk != ')') fatal("close parenthesis expected");
       next();
       ++swtc; ++brkc;
       stmt(ctx);
@@ -1748,7 +1777,7 @@ unwind_func: id = sym;
       next();
       expr(Or);
       a = n;
-      if (*n != Num) fatal("bad case immediate");
+      if (*n != Num) fatal("case label not a numeric literal");
       j = n[1]; n[1] -= i; *cas = j;
       *--n = ';';
       if (tk != ':') fatal("colon expected");
@@ -1793,7 +1822,7 @@ unwind_func: id = sym;
     */
    case For:
       next();
-      if (tk != '(') fatal("open parentheses expected");
+      if (tk != '(') fatal("open parenthesis expected");
       next();
       *--n = ';';
       if (tk != ';') expr(Assign);
@@ -1813,7 +1842,7 @@ unwind_func: id = sym;
          int *g = n; next(); expr(Assign); *--n = (int) g; *--n = '{';
       }
       b = n;
-      if (tk != ')') fatal("close parentheses expected");
+      if (tk != ')') fatal("close parenthesis expected");
       next();
       ++brkc; ++cntc;
       stmt(ctx); c = n;
@@ -2921,7 +2950,7 @@ int main(int argc, char **argv)
       }
       else if ((*argv)[1] == 'D') {
          p = &(*argv)[2]; next();
-         if (tk != Id) fatal("-D bad identifier");
+         if (tk != Id) fatal("bad -D identifier");
          struct ident_s *dd = id; next(); i = 0;
          if (tk == Assign) {
             next();
