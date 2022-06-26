@@ -10,6 +10,8 @@ This compiler supports the following features beyond AMaCC:
 
 * ***Float*** data types (AMaCC is an integer based compiler).
 
+* Array declarations and initializers. (e.g. float foo[4][4] = { { 0.0, ... }, { 0.0 ... }, ... };
+
 * The Squint peephole optimizer that ***roughly halves the number of executable
 instructions in compiled code***.  The tests/sieve.c
 benchmark provides an optimization example, and runs roughly
