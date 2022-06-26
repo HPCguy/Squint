@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-char *frac[8];
+char frac[8][4] = { "000", "125", "250", "375", "500", "625", "750", "875" };
 
 int hull_area(int *x, int *y)
 {
@@ -58,15 +58,6 @@ void cubic_bezier(int *px, int *py, int threshold)
 int main()
 {
     int px[4], py[4];
-
-    frac[0] = "000";
-    frac[1] = "125";
-    frac[2] = "250";
-    frac[3] = "375";
-    frac[4] = "500";
-    frac[5] = "625";
-    frac[6] = "750";
-    frac[7] = "875";
 
     px[0] = 0 * 8;
     py[0] = 100 * 8;

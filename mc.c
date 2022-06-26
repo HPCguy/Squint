@@ -1176,8 +1176,12 @@ resolve_fnproto:
       case Bracket:
          if (t < PTR) fatal("pointer type expected");
          int dim = id->type & 3, sum = 0, ii = dim - 1, ee = id->etype, *f = 0;
+         int doload = 1;
          sz = ((t = t - PTR) >= PTR) ? sizeof(int) : tsize[t >> 2];
          do {
+            if (dim && tk != Bracket) { // ptr midway for partial subscripting
+              t += PTR*(ii+1); doload = 0; break;
+            }
             next(); expr(Assign); if (ty >= FLOAT) fatal("non-int array index");
             if (tk != ']') fatal("close bracket expected");
             c = n; next();
@@ -1218,13 +1222,78 @@ resolve_fnproto:
          if (*n == Num && *b == Num) n[1] += b[1];
          else { *--n = (int) b; *--n = Add; }
 add_simple:
-         *--n = ((ty = t) >= PTR) ? INT : ty; *--n = Load;
+         if (doload) { *--n = ((ty = t) >= PTR) ? INT : ty; *--n = Load; }
          break;
       default:
          printf("%d: compiler error tk=%d\n", line, tk); exit(-1);
       }
    }
 }
+
+void init_array(struct ident_s *tn, int extent[], int dim)
+{
+   int i, cursor, match, coff = 0, off, *p;
+   int inc[3];
+
+   inc[0] = extent[dim-1];
+   for (i = 1; i < dim; ++i) inc[i] = inc[i-1] * extent[dim-(i+1)];
+
+   // Global is preferred to local.
+   // Either suggest global or automatically move to global scope.
+   if (tn->class != Glo) fatal("only global array initialization supported");
+
+   switch (tn->type & ~3) {
+      case (CHAR  | PTR2) : fatal("Use extra dim of MAXCHAR length instead");
+      case (CHAR  | PTR ) : match = '"'; coff = 1; break; // strings
+      case (INT   | PTR ) : match = Num; break;
+      case (FLOAT | PTR ) : match = NumF; break;
+      default:
+         fatal("array-init must be literal ints, floats, or strings");
+   }
+
+   p = (int *) tn->val; i = 0; cursor = (dim - coff);
+   do {
+      if (tk == '{') {
+         next();
+         if (cursor) --cursor;
+         else fatal("overly nested initializer");
+         continue;
+      }
+      else if (tk == '}') {
+         next();
+         // skip remainder elements on this level (or set 0 if cmdline opt)
+         if ((off = i % inc[cursor+coff])) i += (inc[cursor+coff] - off);
+         if (++cursor == dim - coff) break;
+      }
+      else if (tk == '"') {
+         if (match == '"') {
+            off = strlen((char *) tkv.i) + 1;
+            if (off > inc[0]) {
+               off = inc[0];
+               printf("%d: string '%s' truncated to %d chars\n",
+                      line, (char *) tkv.i, off);
+            }
+            memcpy((char *)p + i, (char *) tkv.i, off);
+            i += inc[0];
+            next();
+         }
+         else fatal("can't assign string to scalar");
+      }
+      else if (tk == match) { p[i++] = tkv.i; next(); }
+      else if (tk == Num) {
+          if (match == '"') { *((char *) p + i) = tkv.i; i += inc[0]; }
+          else { tkv.f = tkv.i; p[i++] = tkv.i; }
+          next();
+      }
+      else if (tk == NumF) {
+         if (match == Num) { p[i++] = tkv.f; next(); }
+         else fatal("illegal string initializer");
+      }
+      else fatal("non-literal initializer");
+      if (tk == ',') next();
+   } while(1);
+}
+
 
 // AST parsing for IR generatiion
 // With a modular code generator, new targets can be easily supported such as
@@ -1678,13 +1747,13 @@ unwind_func: id = sym;
                case 1:
                   dd->etype = (nd[0]-1); break;
                case 2:
-                  dd->etype = ((nd[1]-1) << 16) + (nd[0]-1);
-                  if (nd[1] > 32768 || nd[0] > 65536)
+                  dd->etype = ((nd[0]-1) << 16) + (nd[1]-1);
+                  if (nd[0] > 32768 || nd[1] > 65536)
                      fatal("max bounds [32768][65536]");
                   break;
                case 3:
-                  dd->etype = ((nd[2]-1) << 21) + ((nd[1]-1) << 11) + (nd[0]-1);
-                  if (nd[2] > 1024 || nd[1] > 1024 || nd[0] > 2048)
+                  dd->etype = ((nd[0]-1) << 21) + ((nd[1]-1) << 11) + (nd[2]-1);
+                  if (nd[0] > 1024 || nd[1] > 1024 || nd[2] > 2048)
                      fatal("max bounds [1024][1024][2048]");
                   break;
                }
@@ -1702,13 +1771,17 @@ unwind_func: id = sym;
                dd->val = ld++;
             }
             if (tk == Assign) {
-               if (ctx != Loc) fatal("decl assignment for local vars only");
-               int ptk = tk;
-               if (b == 0) *--n = ';';
-               b = n; *--n = loc - dd->val; *--n = Loc;
-               next(); a = n; i = ty; expr(ptk); typecheck(Assign, i, ty);
-               *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign; ty = i;
-               *--n = (int) b; *--n = '{';
+               next();
+               if (ctx == Par) fatal("default arguments not supported");
+               if (tk == '{' && (dd->type & 3)) init_array(dd, nd, j);
+               else {
+                  if (b == 0) *--n = ';';
+                  if (ctx != Loc) fatal("decl assignment for local vars only");
+                  b = n; *--n = loc - dd->val; *--n = Loc;
+                  a = n; i = ty; expr(Assign); typecheck(Assign, i, ty);
+                  *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign; ty = i;
+                  *--n = (int) b; *--n = '{';
+               }
             }
          }
          if (ctx != Par && tk == ',') next();
