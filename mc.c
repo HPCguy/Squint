@@ -659,8 +659,8 @@ resolve_fnproto:
                if (tk == ')') fatal("unexpected comma in function call");
             } else if (tk != ')') fatal("missing comma in function call");
          }
-         if (t > 15) fatal("maximum of 15 function parameters");
-         tt = (tt << 8) + (nf << 4) + t; // func etype not like other etype
+         if (t > 22) fatal("maximum of 22 function parameters");
+         tt = (tt << 10) + (nf << 5) + t; // func etype not like other etype
          if (d->etype && (d->etype != tt) ) fatal("argument type mismatch");
          next();
          // function or system call id
@@ -1253,6 +1253,13 @@ void init_array(struct ident_s *tn, int extent[], int dim)
 
    p = (int *) tn->val; i = 0; cursor = (dim - coff);
    do {
+      if (tk == Sub) {
+         next();
+         if (tk == NumF) tkv.i |= 0x10000000;
+         else if (tk == Num) tkv.i = 0 - tkv.i;
+         else fatal("non-literal initializer") ;
+      }
+
       if (tk == '{') {
          next();
          if (cursor) --cursor;
@@ -1287,7 +1294,7 @@ void init_array(struct ident_s *tn, int extent[], int dim)
       }
       else if (tk == NumF) {
          if (match == Num) { p[i++] = tkv.f; next(); }
-         else fatal("illegal string initializer");
+         else fatal("illegal char/string initializer");
       }
       else fatal("non-literal initializer");
       if (tk == ',') next();
@@ -1409,12 +1416,12 @@ void gen(int *n)
       b = (int *) n[1]; k = b ? n[3] : 0;
       if (k) {
          if (i == Syscall) {
-            isPrtf = (n[4] & 240) && !strcmp(ef_cache[n[2]]->name,"printf");
+            isPrtf = (n[4] & 0x3e0) && !strcmp(ef_cache[n[2]]->name,"printf");
             if (isPrtf) {
                *++e = PHD; *++e = IMM; *++e = (k & 1)*4; *++e = VENT;
             }
          }
-         l = (i != ClearCache) ? (n[4] >> 8) : 0;
+         l = (i != ClearCache) ? (n[4] >> 10) : 0;
          a = (int *) malloc(sizeof(int) * k);
          for (j = 0; *b ; b = (int *) *b) a[j++] = (int) b;
          a[j] = (int) b;
@@ -1676,9 +1683,9 @@ void stmt(int ctx)
                if (ty == FLOAT) { ++nf; ++(dd->etype); }
                if (tk == ',') next();
             }
-            if (ld > 15) fatal("maximum of 15 function parameters");
+            if (ld > 22) fatal("maximum of 22 function parameters");
             // function etype is not like other etypes
-            next(); dd->etype = (dd->etype << 8) + (nf << 4) + ld; // prm info
+            next(); dd->etype = (dd->etype << 10) + (nf << 5) + ld; // prm info
             if (tk == ';') { dd->val = 0; goto unwind_func; } // fn proto
             if (tk != '{') fatal("bad function definition");
             loc = ++ld;
@@ -2033,7 +2040,7 @@ int *codegen(int *jitmem, int *jitmap)
          }
          break;
       case ADJ:
-         *je++ = 0xe28dd000 + ( *pc++ & 0xf) * 4; // add sp, sp, #(tmp * 4)
+         *je++ = 0xe28dd000 + ( *pc++ & 0x1f) * 4; // add sp, sp, #(tmp * 4)
          break;
       case LEV:
          *je++ = 0xe28bd000; *je++ = 0xe8bd8800; // add sp, fp, #0; pop {fp, pc}
@@ -2126,8 +2133,8 @@ int *codegen(int *jitmem, int *jitmap)
          break;
       case SYSC:
          if (pc[1] != ADJ) die("codegen: no ADJ after native proc");
-         if ((pc[2] & 0xf) > 10) die("codegen: no support for 11+ arguments");
-         c = pc[2]; ii = c & 0xf; c >>= 4; nf = c & 0xf; ni = ii - nf; c >>= 4;
+         if ((pc[2] & 0x1f) > 10) die("codegen: no support for 11+ arguments");
+         c = pc[2]; ii = c & 0x1f; c >>= 5; nf = c & 0x1f; ni = ii - nf; c >>= 5;
          tmp = ef_getaddr(*pc);  // look up address from ef index
 
          // Handle ridiculous printf() varargs ABI inline
@@ -2978,7 +2985,7 @@ int main(int argc, char **argv)
 
    // add __clear_cache to symbol table
    next(); id->class = ClearCache; id->type = INT; id->val = CLCA;
-   next(); id->class = Sqrt; id->type = FLOAT; id->val = SQRT; id->etype = 273;
+   next(); id->class = Sqrt; id->type = FLOAT; id->val = SQRT; id->etype = 1057;
 
    next(); id->tk = Char; id->class = Keyword; // handle void type
    next();
