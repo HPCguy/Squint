@@ -1111,7 +1111,7 @@ static void apply_peepholes5_5(int *funcBegin, int *funcEnd)
       if ((*scan & 0xff000000) == 0xea000000) { // chk branch to next stmt
          int tmp = (*scan & 0xffffff) | ((*scan & 0x800000) ? 0xff000000 : 0);
          scanp1 = active_inst(scan,1);
-         if ((scan + 2 + tmp) <= scanp1) {
+         if ((scan + 2 + tmp) <= scanp1 && (scan + 2 + tmp) > scan) {
             // verify all NOPs between scan and scanp1
             while (--scanp1 != scan) {
                if (*scanp1 != NOP) break;
