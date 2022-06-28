@@ -107,10 +107,12 @@ struct ef_s {
 int ef_count;
 
 struct member_s {
+   struct member_s *next;
    struct ident_s *id;
    int offset;
    int type;
-   struct member_s *next;
+   int etype;
+   int pad;
 } **members; // array (indexed by type) of struct member lists
 
 // tokens and classes (operators last and in precedence order)
@@ -585,11 +587,11 @@ void bitopcheck(int tl, int tr)
  */
 void expr(int lev)
 {
-   int otk;
    int t, tc, tt, nf, *b, sz, *c;
+   int otk, memsub = 0;
    union conv *c1, *c2;
    struct ident_s *d;
-   struct member_s *m /* jk = 0 */;
+   struct member_s *m;
 
    switch (tk) {
    case Id:
@@ -1131,14 +1133,16 @@ resolve_fnproto:
             *--n = m->offset; *--n = Num; --n; *n = (int) (n + 3);
             *--n = Add;
          }
-         ty = m->type;
-         *--n = (ty >= PTR) ? INT : ty; *--n = Load;
-         next();
-         break;
+         ty = m->type; next();
+         if (!(ty & 3)) {
+            *--n = (ty >= PTR) ? INT : ty; *--n = Load; break;
+         }
+         memsub = 1; int dim = ty & 3, ee = m->etype; b = n; t = ty & ~3;
       case Bracket:
          if (t < PTR) fatal("pointer type expected");
-         int dim = id->type & 3, sum = 0, ii = dim - 1, ee = id->etype, *f = 0;
-         int doload = 1;
+         if (memsub == 0) { dim = id->type & 3, ee = id->etype; }
+         int sum = 0, ii = dim - 1, *f = 0;
+         int doload = 1; memsub = 0;
          sz = ((t = t - PTR) >= PTR) ? sizeof(int) : tsize[t >> 2];
          do {
             if (dim && tk != Bracket) { // ptr midway for partial subscripting
@@ -1152,7 +1156,10 @@ resolve_fnproto:
                factor *= ((dim == 3 && ii >= 1) ? ((ee & 0x7ff) + 1) :
                         ((dim == 2 && ii == 1) ? ((ee & 0xffff) + 1) : 1)) ;
                if (*n == Num) {
-                  sum += factor * n[1]; n += 2; // delete the constant
+                  // elision with struct offset for efficiency
+                  if (*b == Add && b[2] == Num) b[3] += factor * n[1] * sz;
+                  else sum += factor * n[1];
+                  n += 2; // delete the subscript constant
                }
                else {
                   // generate code to add a term
@@ -1494,12 +1501,47 @@ void check_label(int **tt)
    }
 }
 
+void loc_array_decl(int ct, int extent[3], int *dims, int *et, int *size)
+{
+   int ii = ii; // keep this to disable frame optimization for now.
+   *dims = 0;
+   do {
+      next();
+      if (*dims == 0 && ct == Par && tk == ']') {
+         extent[*dims] = 1; next();
+      }
+      else {
+         expr(Cond);
+         if (*n != Num) fatal("non-const array size");
+         if (n[1] <= 0) fatal("non-positive array dimension");
+         if (tk != ']') fatal("missing ]");
+         next(); extent[*dims] = n[1]; *size *= n[1]; n += 2;
+      }
+      ++*dims;
+   } while (tk == Bracket && *dims < 3);
+   if (tk == Bracket) fatal("three subscript max on decl");
+   switch(*dims) {
+   case 1:
+      *et = (extent[0]-1); break;
+   case 2:
+      *et = ((extent[0]-1) << 16) + (extent[1]-1);
+      if (extent[0] > 32768 || extent[1] > 65536)
+         fatal("max bounds [32768][65536]");
+      break;
+   case 3:
+      *et = ((extent[0]-1) << 21) + ((extent[1]-1) << 11) + (extent[2]-1);
+      if (extent[0] > 1024 || extent[1] > 1024 || extent[2] > 2048)
+         fatal("max bounds [1024][1024][2048]");
+      break;
+   }
+}
+
 // statement parsing (syntax analysis, except for declarations)
 void stmt(int ctx)
 {
    struct ident_s *dd;
    int *a, *b, *c, *d;
-   int i, j, nf, atk;
+   int i, j, nf, atk, sz;
    int nd[3];
    int bt;
 
@@ -1583,19 +1625,23 @@ void stmt(int ctx)
                   // then type plus `PTR` indicates what kind of pointer
                   while (tk == Mul) { next(); ty += PTR; }
                   if (tk != Id) fatal("bad struct member definition");
+                  sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
                   struct member_s *m = (struct member_s *)
                                        malloc(sizeof(struct member_s));
-                  m->id = id;
+                  m->id = id; m->etype = 0; next();
+                  if (tk == Bracket) {
+                     j = ty; loc_array_decl(0, nd, &nf, &m->etype, &sz);
+                     ty = (j + PTR) | nf;
+                  }
+                  sz = (sz + 3) & -4;
                   m->offset = i;
                   m->type = ty;
                   m->next = members[bt >> 2];
                   members[bt >> 2] = m;
-                  i += (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
-                  i = (i + 3) & -4;
+                  i += sz;
                   if (atk == Union) {
                      if (i > tsize[bt >> 2]) tsize[bt >> 2] = i; i = 0;
                   }
-                  next();
                   if (tk == ',') next();
                }
                next();
@@ -1744,47 +1790,15 @@ unwind_func: id = sym;
             dd->htype = dd->type; dd->type = ty;
             dd->hval = dd->val;
             dd->hetype = dd->etype;
-            int sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
+            sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
             if (tk == Bracket) {
-               i = ty; j = 0; /* num DOF */
-               do {
-                  next();
-                  if (j == 0 && ctx == Par && tk == ']') {
-                     nd[j] = 1;
-                     next();
-                  }
-                  else {
-                     expr(Cond);
-                     if (*n != Num) fatal("non-const array size");
-                     if (n[1] <= 0) fatal("non-positive array dimension");
-                     if (tk != ']') fatal("missing ]");
-                     next();
-                     nd[j] = n[1];
-                     sz *= n[1]; n += 2;
-                  }
-                  ++j;
-               } while (tk == Bracket && j < 3);
-               if (tk == Bracket) fatal("three subscript max on decl");
-               switch(j) {
-               case 1:
-                  dd->etype = (nd[0]-1); break;
-               case 2:
-                  dd->etype = ((nd[0]-1) << 16) + (nd[1]-1);
-                  if (nd[0] > 32768 || nd[1] > 65536)
-                     fatal("max bounds [32768][65536]");
-                  break;
-               case 3:
-                  dd->etype = ((nd[0]-1) << 21) + ((nd[1]-1) << 11) + (nd[2]-1);
-                  if (nd[0] > 1024 || nd[1] > 1024 || nd[2] > 2048)
-                     fatal("max bounds [1024][1024][2048]");
-                  break;
-               }
+               i = ty; loc_array_decl(ctx, nd, &j, &dd->etype, &sz);
                ty = (i + PTR) | j; dd->type = ty;
-               if (ctx == Loc && sz > osize) {
-                  osize = sz; oline = line; oid = dd;
-               }
             }
             sz = (sz + 3) & -4;
+            if (ctx == Loc && sz > osize) {
+               osize = sz; oline = line; oid = dd;
+            }
             if (ctx == Glo) { dd->val = (int) data; data += sz; }
             else if (ctx == Loc) {
                dd->val = (ld += sz / sizeof(int)); ir_var[ir_count++] = dd;

@@ -1,5 +1,5 @@
 SHELL := bash
-CFLAGS = -O3 -Wall -Wno-misleading-indentation -Wno-incompatible-pointer-types \
+CFLAGS = -g -Wall -Wno-misleading-indentation -Wno-incompatible-pointer-types \
          -Wno-maybe-uninitialized
 OP = -Op
 CURR_DIR=$(abspath $(shell pwd))
@@ -73,7 +73,7 @@ $(OBJ_DIR)/$(BIN)-opt: $(BIN) $(PEEP)
 SHELL_HACK := $(shell mkdir -p $(IR_DIR) $(OBJ_DIR) $(ASM_DIR))
 $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
 	$(VECHO) "[*** verify $< <IR> *******]\n"
-	$(Q)$(ARM_EXEC) ./$(BIN) -s $< > $(IR_DIR)/$(notdir $(basename $<))
+	$(Q)$(ARM_EXEC) ./$(BIN) -si $< > $(IR_DIR)/$(notdir $(basename $<))
 	$(VECHO) "[*** verify $< <JIT> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN) $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF> *******]\n"
