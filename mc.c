@@ -1156,7 +1156,10 @@ resolve_fnproto:
                factor *= ((dim == 3 && ii >= 1) ? ((ee & 0x7ff) + 1) :
                         ((dim == 2 && ii == 1) ? ((ee & 0xffff) + 1) : 1)) ;
                if (*n == Num) {
-                  sum += factor * n[1]; n += 2; // delete the constant
+                  // elision with struct offset for efficiency
+                  if (*b == Add && b[2] == Num) b[3] += factor * n[1] * sz;
+                  else sum += factor * n[1];
+                  n += 2; // delete the subscript constant
                }
                else {
                   // generate code to add a term
