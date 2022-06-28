@@ -79,6 +79,7 @@ int pplev, pplevt;  // preprocessor conditional level
 int oline, osize;   // for optimization suggestion
 
 // identifier
+#define MAX_IR 256
 struct ident_s {
    int tk;         // type-id or keyword
    int hash;
@@ -94,7 +95,9 @@ struct ident_s {
    int etype, hetype; // extended type info. different meaning for funcs.
 } *id,  // currently parsed identifier
   *sym, // symbol table (simple list of identifiers)
-  *oid; // for array optimization suggestion
+  *oid, // for array optimization suggestion
+  *ir_var[MAX_IR]; // IR information for local vars and parameters
+int ir_count;
 
 // (library) external functions
 struct ef_s {
@@ -390,48 +393,7 @@ void next()
       }
       switch (tk) {
       case '\n':
-         if (src) {
-            int *base = le;
-            printf("%d: %.*s", line, p - lp, lp);
-            lp = p;
-            while (le < e) {
-               int off = le - base; // Func IR instruction memory offset
-               printf("%04d: %8.4s", off,
-                     & "LEA  IMM  IMMF JMP  JSR  BZ   BNZ  ENT  ADJ  LEV  "
-                       "PSH  PSHF LC   LI   LF   SC   SI   SF   "
-                       "OR   XOR  AND  EQ   NE   GE   LT   GT   LE   "
-                       "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
-                       "ADDF SUBF MULF DIVF FTOI ITOF "
-                       "EQF  NEF  GEF  LTF  GTF  LEF  SQRT "
-                       "SYSC CLCA VENT VLEV PHD  PHR0" [*++le * 5]);
-               if (*le < ADJ) {
-                  ++le;
-                  if (*le > (int) base && *le <= (int) e)
-                     printf(" %04d\n", off + ((*le - (int) le) >> 2) + 1);
-                  else if (*le < -256000000) {
-                     struct ident_s *scan = sym;
-                     for (; scan->tk; ++scan)
-                        if (scan->val == *le) {
-                           printf(" &%.*s", scan->hash & 0x3f, scan->name);
-                           if (src == 2) printf(" (%08x)", *le);
-                           printf("\n");
-                           break;
-                        }
-                     if (!scan->tk) printf(" %08x\n", *le);
-                  }
-                  else
-                     printf(" %d\n", *le);
-               }
-               else if (*le == ADJ) {
-                  ++le;
-                  printf(" %d\n", *le & 0xf);
-               }
-               else if (*le == SYSC) {
-                  printf(" %s\n", ef_cache[*(++le)]->name);
-               }
-               else printf("\n");
-            }
-         }
+         if (src) { printf("%d: %.*s", line, p - lp, lp); lp = p; }
          ++line;
       case ' ':
       case '\t':
@@ -1571,6 +1533,7 @@ void stmt(int ctx)
       } else if (tk == Id) {
          if (ctx != Par) fatal("enum can only be declared as parameter");
          id->type = INT; id->class = ctx; id->val = ld++;
+         ir_var[ir_count++] = id;
          next();
       }
       return;
@@ -1676,7 +1639,7 @@ void stmt(int ctx)
                fatal("duplicate global definition");
             dd->etype = 0; dd->class = Func; // type is function
             dd->val = (int) (e + 1); // function Pointer? offset/address
-            next(); nf = 0; ld = 0; // "ld" is parameter's index.
+            next(); nf = ir_count = ld = 0; // "ld" is parameter's index.
             while (tk != ')') {
                stmt(Par);
                dd->etype = dd->etype * 2;
@@ -1705,7 +1668,58 @@ void stmt(int ctx)
                       oline, (oid->hash & 0x3f), oid->name);
             cas = 0;
             gen(n);
+            if (src) {
+               int *base = le;
+               printf("%d: %.*s\n", line, p - lp, lp); lp = p;
+               while (le < e) {
+                  int off = le - base; // Func IR instruction memory offset
+                  printf("%04d: %8.4s", off,
+                        & "LEA  IMM  IMMF JMP  JSR  BZ   BNZ  ENT  ADJ  LEV  "
+                          "PSH  PSHF LC   LI   LF   SC   SI   SF   "
+                          "OR   XOR  AND  EQ   NE   GE   LT   GT   LE   "
+                          "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
+                          "ADDF SUBF MULF DIVF FTOI ITOF "
+                          "EQF  NEF  GEF  LTF  GTF  LEF  SQRT "
+                          "SYSC CLCA VENT VLEV PHD  PHR0" [*++le * 5]);
+                  if (*le < ADJ) {
+                     struct ident_s *scan;
+                     ++le;
+                     if (*le > (int) base && *le <= (int) e)
+                        printf(" %04d\n", off + ((*le - (int) le) >> 2) + 1);
+                     else if (*(le - 1) == LEA && src == 2) {
+                        int ii = 0;
+                        for (scan = ir_var[ii];  scan; scan = ir_var[++ii])
+                           if (loc - scan->val == *le) {
+                              printf(" %.*s (%d)\n",
+                                     scan->hash & 0x3f, scan->name, *le);
+                              break;
+                           }
+                     }
+                     else if ((*le & 0xf0000000) && -*le > 0x1000000) {
+                        for (scan = sym; scan->tk; ++scan)
+                           if (scan->val == *le) {
+                              printf(" &%.*s", scan->hash & 0x3f, scan->name);
+                              if (src == 2) printf(" (0x%08x)", *le);
+                              printf("\n");
+                              break;
+                           }
+                        if (!scan->tk) printf(" 0x%08x\n", *le);
+                     }
+                     else
+                        printf(" %d\n", *le);
+                  }
+                  else if (*le == ADJ) {
+                     ++le;
+                     printf(" %d\n", *le & 0xf);
+                  }
+                  else if (*le == SYSC) {
+                     printf(" %s\n", ef_cache[*(++le)]->name);
+                  }
+                  else printf("\n");
+               }
+            }
 unwind_func: id = sym;
+            if (src) memset(ir_var, 0, sizeof(struct ident_s *)*MAX_IR);
             while (id->tk) { // unwind symbol table locals
                if (id->class == Loc || id->class == Par) {
                   id->class = id->hclass;
@@ -1730,7 +1744,7 @@ unwind_func: id = sym;
             dd->hval = dd->val;
             dd->hetype = dd->etype;
             int sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
-            if (tk == Bracket) { // support 1d global array
+            if (tk == Bracket) {
                i = ty; j = 0; /* num DOF */
                do {
                   next();
@@ -1771,11 +1785,13 @@ unwind_func: id = sym;
             }
             sz = (sz + 3) & -4;
             if (ctx == Glo) { dd->val = (int) data; data += sz; }
-            else if (ctx == Loc) { dd->val = (ld += sz / sizeof(int)); }
+            else if (ctx == Loc) {
+               dd->val = (ld += sz / sizeof(int)); ir_var[ir_count++] = dd;
+            }
             else if (ctx == Par) {
                if (ty > ATOM_TYPE && ty < PTR) // local struct decl
                   fatal("struct parameters must be pointers");
-               dd->val = ld++;
+               dd->val = ld++; ir_var[ir_count++] = dd;
             }
             if (tk == Assign) {
                next();
