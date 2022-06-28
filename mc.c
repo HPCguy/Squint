@@ -1696,7 +1696,7 @@ void stmt(int ctx)
                            }
                      }
                      else if ((*le & 0xf0000000) &&
-                              (le > 0 || -*le > 0x1000000)) {
+                              (*le > 0 || -*le > 0x1000000)) {
                         for (scan = sym; scan->tk; ++scan)
                            if (scan->val == *le) {
                               printf(" &%.*s", scan->hash & 0x3f, scan->name);
