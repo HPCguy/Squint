@@ -1173,7 +1173,7 @@ resolve_fnproto:
             }
          } while (--ii >= 0) ;
          if (dim) {
-            if (sum > 0) {
+            if (sum != 0) {
                if (f) {
                   *--n = sum; *--n = Num;
                   *--n = (int) f; *--n = Add;
