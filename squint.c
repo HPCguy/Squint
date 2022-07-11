@@ -663,7 +663,7 @@ static void create_bb_info(int *instInfo, int *funcBegin, int *funcEnd)
          if ((*rInfo & RI_cond) == RI_cond) {
             dst = skip_nop(&funcBegin[rInfo-instInfo]+1, S_FWD);
             off = dst - funcBegin;
-            instInfo[off] = instInfo[off] | RI_bb;
+            instInfo[off] |= RI_bb;
             // rInfo[1] = rInfo[1] | RI_bb;
          }
          if (((*scan >> 24) & 0x0f) == 0x0a) { /* local branch */
@@ -671,7 +671,7 @@ static void create_bb_info(int *instInfo, int *funcBegin, int *funcEnd)
                       ((*scan & 0x00800000) ? 0xff000000 : 0);
             dst = skip_nop(scan + 2 + tmp, S_FWD);
             off = dst - funcBegin;
-            instInfo[off] = instInfo[off] | RI_bb;
+            instInfo[off] |= RI_bb;
          }
       }
       ++rInfo;
@@ -1171,6 +1171,7 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd,
       scan = skip_nop(scan, S_FWD);
 
       if ((*scan & movMask) == movInst) {
+         if (instInfo[scan-funcBegin] & RI_bb) continue;
          rx = dofloat ?
               ((*scan & 0x0f)*2 + ((*scan & 0x20) ? 1 : 0)) : (*scan & 0x0f);
          rd = dofloat ?
