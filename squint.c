@@ -79,6 +79,7 @@
 /* NOP -- mov rn, rn */
 #define NOP       0xe1a00000
 #define NOP1      0xe1a01001
+#define NOP11     0xe1a0b00b
 #define NOP13     0xe1a0d00d
 
 enum search_dir { S_BACK = -1, S_FWD = 1 };
@@ -311,7 +312,8 @@ static void rel_pc_ldr(int *dst, int *src)
 
 /* check for nop, PHD, and PHR0 instructions */
 static int is_nop(int inst) {
-   return ( (inst == NOP) || (inst == NOP1) || (inst == NOP13) );
+   return ( (inst == NOP) || (inst == NOP1) ||
+            (inst == NOP11) || (inst == NOP13) );
 }
 
 /* skip any nop instructions in given direction. */
@@ -331,7 +333,7 @@ static int *skip_nop(int *begin, enum search_dir dir)
       while (is_const(scan)) scan += dir;
 
       /* skip past any NOPS in instruction stream */
-      if (*scan == NOP || *scan == NOP13) {
+      if (*scan == NOP || *scan == NOP11 || *scan == NOP13) {
          scan += dir;
          done = 0;
       }

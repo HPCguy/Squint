@@ -130,7 +130,8 @@ enum {
    Shl, Shr, Add, Sub, Mul, Div, Mod, // operator: <<, >>, +, -, *, /, %
    AddF, SubF, MulF, DivF,       // float type operators (hidden)
    EqF, NeF, GeF, LtF, GtF, LeF,
-   CastF, Inc, Dec, Dot, Arrow, Bracket // operator: ++, --, ., ->, [
+   CastF, Inc, Dec, Dot, Arrow, Bracket, // operator: ++, --, ., ->, [
+   Phf // inform peephole optimizer a function call is beginning
 };
 
 // opcodes
@@ -276,7 +277,8 @@ enum {
    VLEV, /* 50 */
 
    PHD,  /* 51 PeepHole Disable next assembly instruction in optimizer */
-   PHR0, /* 52 Inform PeepHole optimizer that R0 holds a return value */
+   PHF,  /* 52 Inform peephole optimizer a function call is beginning */
+   PHR0, /* 53 Inform PeepHole optimizer that R0 holds a return value */
 
    INVALID
 };
@@ -614,9 +616,12 @@ resolve_fnproto:
             d->name[namelen] = ch;
          }
          next();
-         t = 0; b = 0; tt = 0; nf = 0; // argument count
+         t = 0; b = c = 0; tt = 0; nf = 0; // argument count
+         if (peephole && d->class != Sqrt) { *--n = Phf; c = n; }
          while (tk != ')') {
-            expr(Assign); *--n = (int) b; b = n; ++t;
+            expr(Assign);
+            if (c != 0) { *--n = (int) c; *--n = '{'; c = 0; } // peephole
+            *--n = (int) b; b = n; ++t;
             tt = tt * 2; if (ty == FLOAT) { ++nf; ++tt; }
             if (tk == ',') {
                next();
@@ -1479,6 +1484,7 @@ void gen(int *n)
       while (b != 0) { t = (int *) *b; *b = (int) d; b = t; }
       label->val = (int) d; label->class = Label;
       break;
+   case Phf: *++e = PHF; break;
    default:
       if (i != ';') {
          printf("%d: compiler error gen=%08x\n", line, i); exit(-1);
@@ -1726,7 +1732,7 @@ void stmt(int ctx)
                           "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
                           "ADDF SUBF MULF DIVF FTOI ITOF "
                           "EQF  NEF  GEF  LTF  GTF  LEF  SQRT "
-                          "SYSC CLCA VENT VLEV PHD  PHR0" [*++le * 5]);
+                          "SYSC CLCA VENT VLEV PHD  PHF  PHR0" [*++le * 5]);
                   if (*le < ADJ) {
                      struct ident_s *scan;
                      ++le;
@@ -2290,6 +2296,7 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0x049d1004; // popeq {r1}
          break;
       case PHD:  *je++ = 0xe1a01001; break;      // mov r1, r1
+      case PHF:  *je++ = 0xe1a0b00b; break;      // mov fp, fp
       case PHR0: *je++ = 0xe1a0d00d; break;      // mov sp, sp
       default:
          if ((EQ <= i && i <= LE) || (EQF <= i && i <= LEF)) {
