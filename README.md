@@ -17,9 +17,11 @@ instructions in compiled code***.  The tests/sieve.c
 benchmark provides an optimization example, and runs roughly
 ***4x faster after peephole optimization***.
 
+* Greatly improved type checking, error checking, and IR code generation (try -si option).
+
 Source code size:
-* mc C compiler -- 2800 SLOC
-* squint optimizer -- 2800 SLOC
+* mc C compiler -- 3000 SLOC
+* squint optimizer -- 2900 SLOC
 
 The original AMaCC compiler is based on the phenomenal work of the 
 team at https://github.com/jserv/amacc , and I strongly suggest
