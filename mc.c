@@ -740,7 +740,8 @@ resolve_fnproto:
       } else {
          expr(Assign);
          while (tk == ',') {
-            next(); b = n;  expr(Assign); *--n = (int) b; *--n = '{';
+            next(); b = n;  expr(Assign);
+            if (b != n) { *--n = (int) b; *--n = '{'; }
          }
          if (tk != ')') fatal("close parenthesis expected");
          next();
@@ -2016,7 +2017,8 @@ unwind_func: id = sym;
       next();
       *--n = ';';
       while (tk != '}') {
-         a = n; check_label(&a); stmt(ctx); *--n = (int) a; *--n = '{';
+         a = n; check_label(&a); stmt(ctx);
+         if (a != n) { *--n = (int) a; *--n = '{'; }
       }
       next();
       return;
@@ -3158,6 +3160,7 @@ int main(int argc, char **argv)
       next();
    }
 
+   if (idmain->val == 0) fatal("missing main() function");
    int ret = elf ? elf32(poolsz, (int *) idmain->val, elf_fd) :
                    jit(poolsz,   (int *) idmain->val, argc, argv);
    free(freep);
