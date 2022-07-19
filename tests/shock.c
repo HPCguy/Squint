@@ -24,8 +24,8 @@
 #include <stdio.h>
 #include <math.h>
 
-float gammaa;
-float gammaInverse;
+float gammaa       = 1.4142135;
+float gammaInverse = 0.70710678;
 
 
 /**************************************************************************
@@ -233,10 +233,6 @@ void DumpPlot(int numElems, float *mass, float *momentum,
 
 int main(void)
 {
-   /* initialize gloabals */
-   gammaa        = 1.4142135;
-   gammaInverse = 0.70710678;
-
    int numElems = 512;          // 2048
    int numFaces = numElems - 1;
    int numTotalCycles = 100;    // 1024

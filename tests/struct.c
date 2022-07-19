@@ -10,14 +10,13 @@ struct foo {
     int x;
 } d[len];
 
-char *str;
+char str[16] = "I am a String!\n";
 
 int main(int argc, char **argv)
 {
     struct foo bar, *ptr;
     char c = '1';
     int i;
-    str = "I am a String!\n";
     bar.x = 1;
     struct foo *p = &bar;
     p->c = 'a';

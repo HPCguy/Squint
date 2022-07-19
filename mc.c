@@ -130,7 +130,8 @@ enum {
    Shl, Shr, Add, Sub, Mul, Div, Mod, // operator: <<, >>, +, -, *, /, %
    AddF, SubF, MulF, DivF,       // float type operators (hidden)
    EqF, NeF, GeF, LtF, GtF, LeF,
-   CastF, Inc, Dec, Dot, Arrow, Bracket // operator: ++, --, ., ->, [
+   CastF, Inc, Dec, Dot, Arrow, Bracket, // operator: ++, --, ., ->, [
+   Phf // inform peephole optimizer a function call is beginning
 };
 
 // opcodes
@@ -276,7 +277,8 @@ enum {
    VLEV, /* 50 */
 
    PHD,  /* 51 PeepHole Disable next assembly instruction in optimizer */
-   PHR0, /* 52 Inform PeepHole optimizer that R0 holds a return value */
+   PHF,  /* 52 Inform peephole optimizer a function call is beginning */
+   PHR0, /* 53 Inform PeepHole optimizer that R0 holds a return value */
 
    INVALID
 };
@@ -303,7 +305,11 @@ char *append_strtab(char **strtab, char *str)
    return res;
 }
 
-char fatal(char *msg) { printf("%d: %s\n", line, msg); exit(-1); }
+char fatal(char *msg)
+{
+   printf("%d: %.*s\n", line, p - lp, lp);
+   printf("%d: %s\n", line, msg); exit(-1);
+}
 
 void ef_add(char *name, int addr) // add external function
 {
@@ -395,8 +401,8 @@ void next()
       }
       switch (tk) {
       case '\n':
-         if (src) { printf("%d: %.*s", line, p - lp, lp); lp = p; }
-         ++line;
+         if (src) { printf("%d: %.*s", line, p - lp, lp); }
+         lp = p; ++line;
       case ' ':
       case '\t':
       case '\v':
@@ -614,9 +620,12 @@ resolve_fnproto:
             d->name[namelen] = ch;
          }
          next();
-         t = 0; b = 0; tt = 0; nf = 0; // argument count
+         t = 0; b = c = 0; tt = 0; nf = 0; // argument count
+         if (peephole && d->class != Sqrt) { *--n = Phf; c = n; }
          while (tk != ')') {
-            expr(Assign); *--n = (int) b; b = n; ++t;
+            expr(Assign);
+            if (c != 0) { *--n = (int) c; *--n = '{'; c = 0; } // peephole
+            *--n = (int) b; b = n; ++t;
             tt = tt * 2; if (ty == FLOAT) { ++nf; ++tt; }
             if (tk == ',') {
                next();
@@ -1201,7 +1210,7 @@ add_simple:
 
 void init_array(struct ident_s *tn, int extent[], int dim)
 {
-   int i, cursor, match, coff = 0, off, *p;
+   int i, cursor, match, coff = 0, off, empty, *vi;
    int inc[3];
 
    inc[0] = extent[dim-1];
@@ -1213,59 +1222,57 @@ void init_array(struct ident_s *tn, int extent[], int dim)
 
    switch (tn->type & ~3) {
       case (CHAR  | PTR2) : fatal("Use extra dim of MAXCHAR length instead");
-      case (CHAR  | PTR ) : match = '"'; coff = 1; break; // strings
-      case (INT   | PTR ) : match = Num; break;
-      case (FLOAT | PTR ) : match = NumF; break;
+      case (CHAR  | PTR ) : match = CHAR + PTR; coff = 1; break; // strings
+      case (INT   | PTR ) : match = INT; break;
+      case (FLOAT | PTR ) : match = FLOAT; break;
       default:
          fatal("array-init must be literal ints, floats, or strings");
    }
 
-   p = (int *) tn->val; i = 0; cursor = (dim - coff);
+   vi = (int *) tn->val; i = 0; cursor = (dim - coff);
    do {
-      if (tk == Sub) {
-         next();
-         if (tk == NumF) tkv.i |= 0x10000000;
-         else if (tk == Num) tkv.i = 0 - tkv.i;
-         else fatal("non-literal initializer") ;
-      }
-
       if (tk == '{') {
          next();
          if (cursor) --cursor;
          else fatal("overly nested initializer");
-         continue;
+         empty = 1; continue;
       }
       else if (tk == '}') {
          next();
          // skip remainder elements on this level (or set 0 if cmdline opt)
-         if ((off = i % inc[cursor+coff])) i += (inc[cursor+coff] - off);
+         if ((off = i % inc[cursor+coff]) || empty)
+            i += (inc[cursor+coff] - off);
          if (++cursor == dim - coff) break;
       }
-      else if (tk == '"') {
-         if (match == '"') {
-            off = strlen((char *) tkv.i) + 1;
-            if (off > inc[0]) {
-               off = inc[0];
-               printf("%d: string '%s' truncated to %d chars\n",
-                      line, (char *) tkv.i, off);
+      else {
+         expr(Cond);
+         if (*n != Num && *n != NumF) fatal("non-literal initializer");
+
+         if (ty == CHAR + PTR) {
+            if (match == CHAR + PTR) {
+               off = strlen((char *) n[1]) + 1;
+               if (off > inc[0]) {
+                  off = inc[0];
+                  printf("%d: string '%s' truncated to %d chars\n",
+                         line, (char *) n[1], off);
+               }
+               memcpy((char *)vi + i, (char *) n[1], off);
+               i += inc[0];
             }
-            memcpy((char *)p + i, (char *) tkv.i, off);
-            i += inc[0];
-            next();
+            else fatal("can't assign string to scalar");
          }
-         else fatal("can't assign string to scalar");
+         else if (ty == match) { vi[i++] = n[1]; }
+         else if (ty == INT) {
+            if (match == CHAR + PTR) { *((char *) vi + i) = n[1]; i += inc[0];}
+            else { *((float *)(n+1)) = (float) n[1]; vi[i++] = n[1]; }
+         }
+         else if (ty == FLOAT) {
+            if (match == INT) { vi[i++] = (int) *((float *)(n+1)); }
+            else fatal("illegal char/string initializer");
+         }
+         n += 2; // clean up AST
+         empty = 0;
       }
-      else if (tk == match) { p[i++] = tkv.i; next(); }
-      else if (tk == Num) {
-          if (match == '"') { *((char *) p + i) = tkv.i; i += inc[0]; }
-          else { tkv.f = tkv.i; p[i++] = tkv.i; }
-          next();
-      }
-      else if (tk == NumF) {
-         if (match == Num) { p[i++] = tkv.f; next(); }
-         else fatal("illegal char/string initializer");
-      }
-      else fatal("non-literal initializer");
       if (tk == ',') next();
    } while(1);
 }
@@ -1479,6 +1486,7 @@ void gen(int *n)
       while (b != 0) { t = (int *) *b; *b = (int) d; b = t; }
       label->val = (int) d; label->class = Label;
       break;
+   case Phf: *++e = PHF; break;
    default:
       if (i != ';') {
          printf("%d: compiler error gen=%08x\n", line, i); exit(-1);
@@ -1726,7 +1734,7 @@ void stmt(int ctx)
                           "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
                           "ADDF SUBF MULF DIVF FTOI ITOF "
                           "EQF  NEF  GEF  LTF  GTF  LEF  SQRT "
-                          "SYSC CLCA VENT VLEV PHD  PHR0" [*++le * 5]);
+                          "SYSC CLCA VENT VLEV PHD  PHF  PHR0" [*++le * 5]);
                   if (*le < ADJ) {
                      struct ident_s *scan;
                      ++le;
@@ -1813,12 +1821,30 @@ unwind_func: id = sym;
                if (ctx == Par) fatal("default arguments not supported");
                if (tk == '{' && (dd->type & 3)) init_array(dd, nd, j);
                else {
-                  if (b == 0) *--n = ';';
-                  if (ctx != Loc) fatal("decl assignment for local vars only");
-                  b = n; *--n = loc - dd->val; *--n = Loc;
-                  a = n; i = ty; expr(Assign); typecheck(Assign, i, ty);
-                  *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign; ty = i;
-                  *--n = (int) b; *--n = '{';
+                  if (ctx == Loc) {
+                     if (b == 0) *--n = ';';
+                     b = n; *--n = loc - dd->val; *--n = Loc;
+                     a = n; i = ty; expr(Assign); typecheck(Assign, i, ty);
+                     *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign;
+                     ty = i; *--n = (int) b; *--n = '{';
+                  }
+                  else { // ctx == Glo
+                     i = ty; expr(Cond); typecheck(Assign, i, ty);
+                     if (ty == CHAR + PTR && (dd->type & 3) != 1)
+                        fatal("use decl char foo[nn] = \"...\";");
+                     if ((*n == Num || *n == NumF) && (i == INT || i == FLOAT))
+                        *((int *) dd->val) = tkv.i;
+                     else if (ty == CHAR + PTR) {
+                        i = strlen((char *) tkv.i) + 1;
+                        if (i > (dd->etype + 1)) {
+                            i = dd->etype + 1;
+                            printf("%d: string truncated to width\n", line);
+                        }
+                        memcpy((char *) dd->val, (char *) tkv.i, i);
+                     }
+                     else fatal("global assignment must eval to lit expr");
+                     n += 2;
+                  }
                }
             }
          }
@@ -2290,6 +2316,7 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0x049d1004; // popeq {r1}
          break;
       case PHD:  *je++ = 0xe1a01001; break;      // mov r1, r1
+      case PHF:  *je++ = 0xe1a0b00b; break;      // mov fp, fp
       case PHR0: *je++ = 0xe1a0d00d; break;      // mov sp, sp
       default:
          if ((EQ <= i && i <= LE) || (EQF <= i && i <= LEF)) {
@@ -2320,8 +2347,10 @@ int *codegen(int *jitmem, int *jitmap)
          if (i == LEV || i == JMP) genpool = 1;
          else if ( ((int) je > (int) imm0 + 3072) || // pad for optimizer
                    (immf0 && ((int) je > (int) immf0 + 512)) ) {
-            tje = je; --tje; // workaround for "*(ptr - literal)" bug
+            tje = je - 1;
             if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
+                (*tje & 0x000f0000) != 0x000f0000 && // pc-relative mem op
+                (*tje & 0xffb00f00) != 0xed900a00 && // vldr
                 (*tje & 0xfff00ff0) != 0xe0000090) { // mul
                tje = je++; genpool = 2;
             }

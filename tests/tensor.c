@@ -3,6 +3,22 @@
 
 #define SIZE 3
 
+int foo[4][4] =
+{
+   { 0, 1, 2.0, SIZE },
+   { 4, 5, -6 } ,
+   { },
+   { 4*SIZE, 13, 14.0, 15.0 }
+};
+
+float goo[4][4] =
+{
+   { 0.0, 1.0, 2, SIZE },
+   { 4.0, 5.0, -6.0 } ,
+   { } ,
+   { 4*SIZE, 13.0, 14, 15 }
+};
+
 int assert_eq(int a, int b)
 {
     if (a != b) {
@@ -20,6 +36,22 @@ int main()
    int A[SIZE][SIZE];
    int A_t[SIZE][SIZE];
 
+   printf("\nint foo[4][4]\n--------\n");
+
+   for (i=0; i<4; ++i) {
+      for(j=0; j<4; ++j)
+         printf("%d ", foo[i][j]);
+      printf("\n");
+   }
+
+   printf("\nfloat goo[4][4]\n--------\n");
+
+   for (i=0; i<4; ++i) {
+      for(j=0; j<4; ++j)
+         printf("%f ", goo[i][j]);
+      printf("\n");
+   }
+
    p = (int *) A;
 
    for (i = 0; i < SIZE*SIZE; ++i) p[i] = i;
@@ -30,7 +62,7 @@ int main()
       }
    }
 
-   printf("A[%d][%d]\n--------\n", SIZE, SIZE);
+   printf("\nA[%d][%d]\n--------\n", SIZE, SIZE);
 
    for (i = 0; i < SIZE; ++i) {
       for (j = 0; j < SIZE; ++j) {
