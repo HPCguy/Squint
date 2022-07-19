@@ -62,6 +62,7 @@ int ty;             // current expression type
                     //   3d etype -- bit 0:10,11:20,21:30 [1024,1024,2048]
                     // bit 2:9 - type
                     // bit 10:11 - ptr level
+int rtf, rtt;       // return flag and return type for current function
 int loc;            // local variable offset
 int line;           // current line number
 int src;            // print source and assembly flag
@@ -305,7 +306,7 @@ char *append_strtab(char **strtab, char *str)
    return res;
 }
 
-char fatal(char *msg)
+void fatal(char *msg)
 {
    printf("%d: %.*s\n", line, p - lp, lp);
    printf("%d: %s\n", line, msg); exit(-1);
@@ -541,7 +542,7 @@ void typecheck(int op, int tl, int tr)
       else if (op == Sub && pt == 2 && it == 1) ; // ptr - int ok
       else if (op == Assign && pt == 2 && *n == Num && n[1] == 0) ; // ok
       else if (op >= Eq && op <= Le && *n == Num && n[1] == 0) ; // ok
-      else fatal("bad pointer arithmetic");
+      else fatal("bad pointer arithmetic or cast needed");
    }
    else if (pt == 3 && op != Assign && op != Sub &&
             (op < Eq || op > Le)) // pointers to same type
@@ -1592,6 +1593,7 @@ void stmt(int ctx)
    case Float:
    case Struct:
    case Union:
+      dd = id;
       switch (tk) {
       case Char:
       case Int:
@@ -1680,6 +1682,9 @@ void stmt(int ctx)
             break;
          }
          next();
+         if (tk == '(') {
+            rtf = 0; rtt = (ty == 0 && !memcmp(dd->name, "void", 4)) ? -1 : ty;
+         }
          dd = id; dd->type = ty;
          if (tk == '(') { // function
             if (b != 0) fatal("func decl can't be mixed with var decl(s)");
@@ -1716,6 +1721,7 @@ void stmt(int ctx)
                int *t = n; check_label(&t); stmt(Loc);
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
+            if (rtf == 0 && rtt != -1) fatal("expecting return value");
             *--n = ld - loc; *--n = Enter;
             if (oid && n[1] >= 64)
                printf("--> %d: move %.*s to global scope for performance.\n",
@@ -1948,7 +1954,15 @@ unwind_func: id = sym;
    // RETURN_stmt -> 'return' expr ';' | 'return' ';'
    case Return:
       a = 0; next();
-      if (tk != ';') { expr(Assign); a = n; }
+      if (tk != ';') {
+         expr(Assign); a = n;
+         if (rtt == -1) fatal("not expecting return value");
+         typecheck(Eq, rtt, ty);
+      }
+      else {
+         if (rtt != -1) fatal("return value expected");
+      }
+      rtf = 1; // signal a return statement exisits
       *--n = (int) a; *--n = Return;
       if (tk != ';') fatal("semicolon expected");
       next();
