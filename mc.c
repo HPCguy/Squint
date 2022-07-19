@@ -2347,8 +2347,10 @@ int *codegen(int *jitmem, int *jitmap)
          if (i == LEV || i == JMP) genpool = 1;
          else if ( ((int) je > (int) imm0 + 3072) || // pad for optimizer
                    (immf0 && ((int) je > (int) immf0 + 512)) ) {
-            tje = je; --tje; // workaround for "*(ptr - literal)" bug
+            tje = je - 1;
             if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
+                (*tje & 0x000f0000) != 0x000f0000 && // pc-relative mem op
+                (*tje & 0xffb00f00) != 0xed900a00 && // vldr
                 (*tje & 0xfff00ff0) != 0xe0000090) { // mul
                tje = je++; genpool = 2;
             }
