@@ -63,6 +63,7 @@ int ty;             // current expression type
                     // bit 2:9 - type
                     // bit 10:11 - ptr level
 int rtf, rtt;       // return flag and return type for current function
+int last_jmp;       // keep track of farthest jump address during gen()
 int loc;            // local variable offset
 int line;           // current line number
 int src;            // print source and assembly flag
@@ -1330,11 +1331,14 @@ void gen(int *n)
       // Add "JMP" instruction after true branch to jump over false branch.
       // Point "b" to the jump address field to be patched later.
       if (n[3]) {
-         *b = (int) (e + 3); *++e = JMP; b = ++e; gen((int *) n[3]);
+         if (*e == LEV) { l = *b = (int) (e + 1); b = 0; }
+         else { l = *b = (int) (e + 3); *++e = JMP; b = ++e; }
+         if (last_jmp < l) last_jmp = l;
+         gen((int *) n[3]);
       } // else statment
       // Patch the jump address field pointed to by "d" to hold the address
       // past the false branch.
-      *b = (int) (e + 1);
+      if (b != 0) { *b = (int) (e + 1); if (last_jmp < *b) last_jmp = *b; }
       break;
    // operators
    /* If current token is logical OR operator:
@@ -1479,12 +1483,31 @@ void gen(int *n)
       break;
    case Default: def = e + 1; gen((int *) n[1]); break;
    case Return:  if (n[1]) gen((int *) n[1]); *++e = LEV; break;
-   case Enter: *++e = ENT; *++e = n[1]; gen(n + 2);
-            if (*e != LEV) *++e = LEV; break;
+   case Enter: *++e = ENT; *++e = n[1]; last_jmp = 0x80000000; gen(n + 2);
+      if (*e == LEV && last_jmp != 0x8000000) {
+         b = e; while (*(b - 1) == LEV) --b;
+         while (last_jmp > (int) b) {
+            do {
+               t = le + 1;
+               while (t < e) {
+                  if (*t == JMP || *t == BZ || *t == BNZ) {
+                     if (t[1] == last_jmp) t[1] = (int) b;
+                  }
+                  t += (*t <= ADJ || *t == SYSC) ? 2 : 1;
+               }
+               last_jmp -= 4;
+            } while (last_jmp != (int) b);
+            while (*(b - 1) == (int) b) { *(b-1) = LEV; *(b-2) = LEV; b -= 2; }
+         }
+         e = b;
+      }
+      else *++e = LEV;
+      break;
    case Label: // target of goto
       label = (struct ident_s *) n[1];
       if (label->class != 0) fatal("duplicate label definition");
-      d = e + 1; b = (int *) label->val;
+      d = e + 1; if (last_jmp < (int) d) last_jmp = (int) d;
+      b = (int *) label->val;
       while (b != 0) { t = (int *) *b; *b = (int) d; b = t; }
       label->val = (int) d; label->class = Label;
       break;
@@ -1756,6 +1779,8 @@ void stmt(int ctx)
                               break;
                            }
                      }
+                     else if (*(le - 1) == IMMF)
+                        printf(" %f\n", *((float *) le));
                      else if ((*le & 0xf0000000) &&
                               (*le > 0 || -*le > 0x1000000)) {
                         for (scan = sym; scan->tk; ++scan)
