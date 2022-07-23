@@ -1864,7 +1864,8 @@ unwind_func: id = sym;
                      i = ty; expr(Cond); typecheck(Assign, i, ty);
                      if (ty == CHAR + PTR && (dd->type & 3) != 1)
                         fatal("use decl char foo[nn] = \"...\";");
-                     if ((*n == Num || *n == NumF) && (i == INT || i == FLOAT))
+                     if ((*n == Num && (i == CHAR || i == INT)) ||
+                         (*n == NumF && i == FLOAT))
                         *((int *) dd->val) = tkv.i;
                      else if (ty == CHAR + PTR) {
                         i = strlen((char *) tkv.i) + 1;
