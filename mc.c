@@ -1865,25 +1865,27 @@ unwind_func: id = sym;
                   }
                   else { // ctx == Glo
                      i = ty; expr(Cond); typecheck(Assign, i, ty);
+                     if (*n != Num && *n != NumF)
+                        fatal("global assignment must eval to lit expr");
                      if (ty == CHAR + PTR) {
                         if ((dd->type & 3) == 0)
-                           *((int *) dd->val) = tkv.i;
+                           *((int *) dd->val) = n[1];
                         else if ((dd->type & 3) != 1)
                            fatal("use decl char foo[nn] = \"...\";");
                         else { // 1d array of char
-                           i = strlen((char *) tkv.i) + 1;
+                           i = strlen((char *) n[1]) + 1;
                            if (i > (dd->etype + 1)) {
                                i = dd->etype + 1;
                                printf("%d: string truncated to width\n", line);
                            }
-                           memcpy((char *) dd->val, (char *) tkv.i, i);
+                           memcpy((char *) dd->val, (char *) n[1], i);
                         }
                      }
                      else if ((*n == Num && (i == CHAR || i == INT)) ||
                          (*n == NumF && i == FLOAT)) {
-                        *((int *) dd->val) = tkv.i;
+                        *((int *) dd->val) = n[1];
                      }
-                     else fatal("global assignment must eval to lit expr");
+                     else fatal("unsupported global initializer");
                      n += 2;
                   }
                }
