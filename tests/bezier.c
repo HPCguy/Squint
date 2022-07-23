@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-char frac[8][4] = { "000", "125", "250", "375", "500", "625", "750", "875" };
+char *frac[8] = { "000", "125", "250", "375", "500", "625", "750", "875" };
 
 int hull_area(int *x, int *y)
 {

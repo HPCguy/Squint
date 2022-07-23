@@ -10,7 +10,7 @@ struct foo {
     int x;
 } d[len];
 
-char str[16] = "I am a String!\n";
+char *str = "I am a String!\n";
 
 int main(int argc, char **argv)
 {

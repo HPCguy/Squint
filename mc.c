@@ -1224,7 +1224,7 @@ void init_array(struct ident_s *tn, int extent[], int dim)
    if (tn->class != Glo) fatal("only global array initialization supported");
 
    switch (tn->type & ~3) {
-      case (CHAR  | PTR2) : fatal("Use extra dim of MAXCHAR length instead");
+      case (CHAR  | PTR2) : match = CHAR + PTR2; break;
       case (CHAR  | PTR ) : match = CHAR + PTR; coff = 1; break; // strings
       case (INT   | PTR ) : match = INT; break;
       case (FLOAT | PTR ) : match = FLOAT; break;
@@ -1252,7 +1252,10 @@ void init_array(struct ident_s *tn, int extent[], int dim)
          if (*n != Num && *n != NumF) fatal("non-literal initializer");
 
          if (ty == CHAR + PTR) {
-            if (match == CHAR + PTR) {
+            if (match == CHAR + PTR2) {
+               vi[i++] = n[1];
+            }
+            else if (match == CHAR + PTR) {
                off = strlen((char *) n[1]) + 1;
                if (off > inc[0]) {
                   off = inc[0];
@@ -1862,18 +1865,23 @@ unwind_func: id = sym;
                   }
                   else { // ctx == Glo
                      i = ty; expr(Cond); typecheck(Assign, i, ty);
-                     if (ty == CHAR + PTR && (dd->type & 3) != 1)
-                        fatal("use decl char foo[nn] = \"...\";");
-                     if ((*n == Num && (i == CHAR || i == INT)) ||
-                         (*n == NumF && i == FLOAT))
-                        *((int *) dd->val) = tkv.i;
-                     else if (ty == CHAR + PTR) {
-                        i = strlen((char *) tkv.i) + 1;
-                        if (i > (dd->etype + 1)) {
-                            i = dd->etype + 1;
-                            printf("%d: string truncated to width\n", line);
+                     if (ty == CHAR + PTR) {
+                        if ((dd->type & 3) == 0)
+                           *((int *) dd->val) = tkv.i;
+                        else if ((dd->type & 3) != 1)
+                           fatal("use decl char foo[nn] = \"...\";");
+                        else { // 1d array of char
+                           i = strlen((char *) tkv.i) + 1;
+                           if (i > (dd->etype + 1)) {
+                               i = dd->etype + 1;
+                               printf("%d: string truncated to width\n", line);
+                           }
+                           memcpy((char *) dd->val, (char *) tkv.i, i);
                         }
-                        memcpy((char *) dd->val, (char *) tkv.i, i);
+                     }
+                     else if ((*n == Num && (i == CHAR || i == INT)) ||
+                         (*n == NumF && i == FLOAT)) {
+                        *((int *) dd->val) = tkv.i;
                      }
                      else fatal("global assignment must eval to lit expr");
                      n += 2;
