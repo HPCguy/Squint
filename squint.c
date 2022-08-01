@@ -625,8 +625,11 @@ static void create_inst_info_f(int *instInfo, int *funcBegin, int *funcEnd)
                   ((*scan & 0x20) ? 1 : 0) | ((*scan & RI_Rm) * 2);
       else if (*scan == 0xee300a40) // vsub s0, s0, s0
          *rInfo = RI_RdAct | RI_RdDest; // def of s0, but not a use
-      else if (*scan == 0xeef40ac0) // vcmpe Fd1, Fm0
-         *rInfo = RI_RdAct | RI_RmAct | 0x1000;
+      else if ((*scan & 0xffbf0fff) == 0xeeb50ac0) // vcmpe Fd1, #0
+         *rInfo = RI_RdAct | ((*scan & RI_Rd) * 2) | ((*scan & (1<<22)) >> 10);
+      else if (*scan == 0xeef40ac0) // vcmpe Fd, Fm0
+         *rInfo = RI_RdAct | RI_RmAct |
+                             ((*scan & RI_Rd) * 2) | ((*scan & (1<<22)) >> 10);
       else if ((*scan & 0xffbf0fc0) == 0xeeb10ac0) // vsqrt Fd, Fm
          *rInfo = RI_RdAct | RI_RdDest | RI_RmAct |
                     ((*scan & 0x400000) ? 0x1000 : 0) | ((*scan & RI_Rd) * 2) |
@@ -1143,6 +1146,11 @@ static void apply_peepholes5(int *funcBegin, int *funcEnd)
           *scan = 0xe5102000 | (*scan & 0x8f0000) | ((*scan & 0xff) << 2);
         *scanp1 = 0xe5002000 | (*scanp1 & 0x8f0000) | ((*scanp1 & 0xff) << 2);
       }
+      else if (*scan == 0xee300a40) {  // vsub.f32 s0, s0, s0
+         if ((*scanp1 & 0xffbf0fff) == 0xeeb40ac0) {   // vcmpe.f32 sx, s0
+            *scanp1 |= (1 << 16); *scan = NOP;
+         }
+      }
    }
 }
 
@@ -1456,10 +1464,16 @@ static void apply_peepholes7_5(int *instInfo, int *funcBegin, int *funcEnd)
 }
 
 
-static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd)
+static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd,
+                             int flow, int fhigh)
 {
    int *scan, *scanm1, *scanp1;
    int *rdt, *info, *rfinal;
+   int *rnu, *rnd, *rdu, *rdd, rn, rd, mask1, mask2;
+   int *finfo = malloc((funcEnd-funcBegin+2)*sizeof(int));
+
+   create_inst_info_f(finfo, funcBegin, funcEnd);
+   create_bb_info(finfo, funcBegin, funcEnd);
 
    create_inst_info(instInfo, funcBegin, funcEnd);
    create_bb_info(instInfo, funcBegin, funcEnd);
@@ -1570,8 +1584,54 @@ fallback:
             }
          }
       }
+      else if ((*scan & 0xffb00f50) == 0xee200a00) {  // vmul sd, sn, sm
+         scanp1 = active_inst(scan,1);
+         if ((*scanp1 & 0xffb00f50) == 0xee300a00 ||  // vadd sd, sn, sm
+             (*scanp1 & 0xffb00f50) == 0xee300a40) {  // vsub sd, sn, sm
+            if ((*scanp1 & 0xffb00f50) == 0xee300a00) {
+               mask1 = 0xff40ff00; mask2 = 0xff800f00;
+            }
+            else {
+               mask1 = 0xff40ff40; mask2 = 0xff800f40;
+            }
+            if ((*scanp1 & RI_Rn) == ((*scanp1 & RI_Rd) << 4) &&
+                (((*scanp1 >> 15) & 0x80) ^ (*scanp1 & 0x80)) == 0) {
+               *scanp1 = (*scanp1 & mask1) | (*scan & 0x000f00af);
+               *scan = NOP;
+            }
+            else if (((*scan & RI_Rd)>>16) == (*scanp1 & RI_Rm) &&
+                     ((*scan & 0x00400000)>>17) == (*scanp1 & 0x20)) {
+               rn = ((*scanp1 & RI_Rn)>>15) + ((*scanp1 & 0x80) ? 1 : 0);
+               if (rn < flow || rn >= fhigh) continue;
+               rnu = find_use(finfo, &finfo[scanp1-funcBegin+1], rn, S_FWD);
+               if (rnu != 0) {
+                  rnd = find_def(finfo, &finfo[scanp1-funcBegin+1], rn, S_FWD);
+                  if (rnd == 0 || rnu <= rnd) continue;
+               }
+               rd = ((*scan & RI_Rd)>>11) + ((*scan & 0x00400000) ? 1 : 0);
+               rdu = &finfo[scanp1-funcBegin];
+               rdd = find_def(finfo, &finfo[scanp1-funcBegin+1], rd, S_FWD);
+               if (rdd == 0) rdd = &finfo[funcEnd-funcBegin];
+               rdd = find_use(finfo, rdd, rd, S_BACK); // last xform
+               for (rdt = rdu+1; rdt<=rdd; ++rdt)
+                  if (*rdt & RI_bb) break;
+               if (rdt > rdd) {
+                  *scanp1 = (*scanp1 & mask2) | ((*scanp1 & RI_Rn)>>4) |
+                            ((*scanp1 & 0x80)<<15) | (*scan & 0x000f00af);
+                  *scan = NOP;
+                  do {
+                     rdu = find_use(finfo, rdu+1, rd, S_FWD);
+                     reg_rename_f(rn, rd,
+                                  rdu, &funcBegin[rdu-finfo]);
+                  } while (rdu < rdd);
+               }
+            }
+         }
+      }
    }
    ++funcEnd;
+
+   free(finfo);
 }
 
 static void apply_ptr_cleanup(int *instInfo, int *funcBegin, int *funcEnd)
@@ -2740,7 +2800,8 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
                      else if ((*scanp1 & 0xffffff00) == 0xe59f1000) {
                         // ldr r1, [pc, #x]
                         scanp1 = active_inst(scanp1, 1);
-                        if (*scanp1 == 0xed810a00) { // vstr s0, [r1]
+                        if ((*scanp1 & 0xffffff00) == 0xed810a00) {
+                           // vstr s0, [r1, #x]
                            *scanp1 |= (((fbase+i) & 0x0e)<<11) |
                                       (((fbase+i) & 1)*0x400000);
                            *scan = NOP;
@@ -2786,7 +2847,8 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
                         else if ((*scanp1 & 0xffffff00) == 0xe59f1000) {
                            // ldr r1, [pc, #x]
                            scanp1 = active_inst(scanp1, 1);
-                           if (*scanp1 == 0xed810a00) { // vstr s0, [r1]
+                           if ((*scanp1 & 0xffffff00) == 0xed810a00) {
+                              // vstr s0, [r1, #x]
                               *scanp1 |= (((fbase+i) & 0x0e)<<11) |
                                          (((fbase+i) & 1)*0x400000);
                               *scan = NOP;
@@ -3028,7 +3090,7 @@ int squint_opt(int *begin, int *end)
 {
    int optApplied = 0 ;
    int *scan = begin;
-   int *tmpbuf = (int *) malloc((end-begin+1)*sizeof(int));
+   int *tmpbuf = (int *) malloc((end-begin+2)*sizeof(int));
    int noFloatConst;
 
    create_const_map(begin, end);
@@ -3057,7 +3119,7 @@ int squint_opt(int *begin, int *end)
 
          // registers available to be allocated at or above this value
          int ibase = 3;
-         int fbase = 2;
+         int fbase = 2, flow, fhigh;
          int hasFuncCall = 0;
 
          // check for function calls
@@ -3100,7 +3162,9 @@ int squint_opt(int *begin, int *end)
          if (!noFloatConst) // correction for rename_register1
             apply_peepholes4_5(tmpbuf, funcBegin, retAddr);
 
+         flow = fbase;
          fbase = create_pushpop_map3(tmpbuf, funcBegin, retAddr, fbase, 1);
+         fhigh = fbase;
 
          if (!hasFuncCall)
             fbase = rename_register2(tmpbuf, funcBegin, retAddr, fbase, 1);
@@ -3118,7 +3182,7 @@ int squint_opt(int *begin, int *end)
 
          rename_nop(funcBegin, retAddr);
 
-         apply_peepholes8(tmpbuf, funcBegin, retAddr);
+         apply_peepholes8(tmpbuf, funcBegin, retAddr, flow, fhigh);
 
          if (noFloatConst)
             simplify_frame(funcBegin, retAddr);
