@@ -87,13 +87,16 @@ The MC compiler is a non-public HPC version of Squint that I am working on offli
 For floating point, my HPC compiler is currently always faster than gcc with the above
 compiler options, by a minimum of 3%.
 
-That said, make no mistake, my current optimizations are all crap and yet I am still
+That said, make no mistake, my current optimizations are all crap** and yet I am still
 beating gcc. I am only one person with no resources, so I  pick the path I see as
 most interesting and plod along at a snail's pace when I am not watching TV,
 playing video games, or reading/commenting on news articles.
 
 If I had the resources to hire a small team and treat this as a real full time project,
 I could do ***much*** better!  If you might be interested, let's talk.
+
+** No common subexpression elimination, register renaming to reduce stalls,
+   code motion to reduce stalls, or register coloring to reduce register pressure, etc.
 ```
 Below is the assembly language for the tests/shock.c ComputeFaceInfo() function for all three compilers:
 
