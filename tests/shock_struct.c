@@ -27,6 +27,8 @@
 float gammaa       = 1.4142135;
 float gammaInverse = 0.70710678;
 
+struct flux { float f0, f1, f2; };
+struct kin  { float mass, mom, energy; };
 
 /**************************************************************************
  * Subroutine:  CreateShockTubeMesh
@@ -50,8 +52,7 @@ float gammaInverse = 0.70710678;
 
  *************************************************************************/
 
-void InitializeShockTubeMesh(int numElem, float *mass, float *momentum,
-                                          float *energy, float *pressure)
+void InitializeShockTubeMesh(int numElem, struct kin *kv, float *pressure)
 {
    int i;
    int midTube = numElem / 2;
@@ -64,9 +65,9 @@ void InitializeShockTubeMesh(int numElem, float *mass, float *momentum,
    float densityRatio = 0.7; 
 
    for (i = 0; i < midTube; ++i) {
-      mass[i]     = massInitial;
-      pressure[i] = pressureInitial;
-      energy[i]   = energyInitial;
+      kv[i].mass   = massInitial;
+      kv[i].energy = energyInitial;
+      pressure[i]  = pressureInitial;
    }
 
    massInitial     = massInitial * densityRatio;
@@ -74,13 +75,13 @@ void InitializeShockTubeMesh(int numElem, float *mass, float *momentum,
    energyInitial   = pressureInitial/(gammaa - 1.0);
 
    for (i = midTube; i < numElem; ++i) {
-      mass[i]     = massInitial;
-      pressure[i] = pressureInitial;
-      energy[i]   = energyInitial;
+      kv[i].mass   = massInitial;
+      kv[i].energy = energyInitial;
+      pressure[i]  = pressureInitial;
    }
 
    for (i = 0; i < numElem; ++i) {
-      momentum[i] = 0.0;
+      kv[i].mom = 0.0;
    }
 }
 
@@ -97,8 +98,7 @@ void InitializeShockTubeMesh(int numElem, float *mass, float *momentum,
  *
  *************************************************************************/
 
-void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy, 
-                                  float *f0, float *f1, float *f2)
+void ComputeFaceInfo(int numFace, struct kin *kv, struct flux *fl)
 {
    int i;
    int contributor;
@@ -112,9 +112,9 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
       int downWind = i + 1; /* downwind element */
 
       /* calculate face centered quantities */
-      float massf =     0.5 * (mass[upWind]     + mass[downWind]);
-      float momentumf = 0.5 * (momentum[upWind] + momentum[downWind]);
-      float energyf =   0.5 * (energy[upWind]   + energy[downWind]);
+      float massf =     0.5 * (kv[upWind].mass + kv[downWind].mass);
+      float momentumf = 0.5 * (kv[upWind].mom  + kv[downWind].mom);
+      float energyf =   0.5 * (kv[upWind].energy + kv[downWind].energy);
       float pressuref = (gammaa - 1.0) *
                          (energyf - 0.5*momentumf*momentumf/massf);
       float c = sqrtf(gammaa*pressuref/massf);
@@ -128,39 +128,39 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
       /* OK, calculate face quantities */
 
       contributor = ((v >= 0.0) ? upWind : downWind);
-      massf = mass[contributor];
-      momentumf = momentum[contributor];
-      energyf = energy[contributor];
+      massf = kv[contributor].mass;
+      momentumf = kv[contributor].mom;
+      energyf = kv[contributor].energy;
       pressuref = energyf - 0.5*momentumf*momentumf/massf;
       ev = v*(gammaa - 1.0);
 
-      f0[i] = ev*massf;
-      f1[i] = ev*momentumf;
-      f2[i] = ev*(energyf - pressuref);
+      fl[i].f0 = ev*massf;
+      fl[i].f1 = ev*momentumf;
+      fl[i].f2 = ev*(energyf - pressuref);
 
       contributor = ((v + c >= 0.0) ? upWind : downWind);
-      massf = mass[contributor];
-      momentumf = momentum[contributor];
-      energyf = energy[contributor];
+      massf = kv[contributor].mass;
+      momentumf = kv[contributor].mom;
+      energyf = kv[contributor].energy;
       pressuref = (gammaa - 1.0)*(energyf - 0.5*momentumf*momentumf/massf);
       ev = 0.5*(v + c);
       cLocal = sqrtf(gammaa*pressuref/massf);
 
-      f0[i] += ev*massf;
-      f1[i] += ev*(momentumf + massf*cLocal);
-      f2[i] += ev*(energyf + pressuref + momentumf*cLocal);
+      fl[i].f0 += ev*massf;
+      fl[i].f1 += ev*(momentumf + massf*cLocal);
+      fl[i].f2 += ev*(energyf + pressuref + momentumf*cLocal);
 
       contributor = ((v - c >= 0.0) ? upWind : downWind);
-      massf = mass[contributor];
-      momentumf = momentum[contributor];
-      energyf = energy[contributor];
+      massf = kv[contributor].mass;
+      momentumf = kv[contributor].mom;
+      energyf = kv[contributor].energy;
       pressuref = (gammaa - 1.0)*(energyf - 0.5*momentumf*momentumf/massf);
       ev = 0.5*(v - c);
       cLocal = sqrtf(gammaa*pressuref/massf);
 
-      f0[i] += ev*massf;
-      f1[i] += ev*(momentumf - massf*cLocal);
-      f2[i] += ev*(energyf + pressuref - momentumf*cLocal);
+      fl[i].f0 += ev*massf;
+      fl[i].f1 += ev*(momentumf - massf*cLocal);
+      fl[i].f2 += ev*(energyf + pressuref - momentumf*cLocal);
    }
 }
 
@@ -173,23 +173,22 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
  *
  *************************************************************************/
 
-void UpdateElemInfo(int numElem, float *mass, float *momentum,
-                                 float *energy, float *pressure,
-                                 float *f0, float *f1, float *f2, float dtdx)
+void UpdateElemInfo(int numElem, struct kin *kv, float *pressure,
+                                 struct flux *fl, float dtdx)
 {
    int i;
 
-   for (i = 1; i < numElem; ++i)
+   for (i = 1; i < numElem; ++i) 
    {
       /* each element inside the tube has an upwind and downwind face */
       int upWind = i-1;     /* upwind face */
       int downWind = i;   /* downwind face */
 
-      mass[i]     -= gammaInverse*(f0[downWind] - f0[upWind])*dtdx;
-      momentum[i] -= gammaInverse*(f1[downWind] - f1[upWind])*dtdx;
-      energy[i]   -= gammaInverse*(f2[downWind] - f2[upWind])*dtdx;
+      kv[i].mass   -= gammaInverse*(fl[downWind].f0 - fl[upWind].f0)*dtdx;
+      kv[i].mom    -= gammaInverse*(fl[downWind].f1 - fl[upWind].f1)*dtdx;
+      kv[i].energy -= gammaInverse*(fl[downWind].f2 - fl[upWind].f2)*dtdx;
       pressure[i]  = (gammaa - 1.0) *
-                          (energy[i] - 0.5*momentum[i]*momentum[i]/mass[i]);
+                     (kv[i].energy - 0.5*kv[i].mom*kv[i].mom/kv[i].mass);
    }
 }
 
@@ -199,13 +198,13 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
  * Purpose   :  Create a plot for a single field
  *************************************************************************/
 
-void DumpField(char *tag, int numElem, float *field)
+void DumpField(char *tag, int numElem, float *field, int stride)
 {
    int i;
 
    printf(tag);
    for (i = 0; i < numElem; ++i) {
-      printf("%d.0 %f\n", i, field[i]);
+      printf("%d.0 %f\n", i, field[i*stride]);
    }
 }
 
@@ -215,13 +214,12 @@ void DumpField(char *tag, int numElem, float *field)
  * Purpose   :  create output that can be viewed with gnuplot: plot "file"
  *************************************************************************/
 
-void DumpPlot(int numElem, float *mass, float *momentum,
-                           float *energy, float *pressure)
+void DumpPlot(int numElem, struct kin *kv, float *pressure)
 {
-   DumpField("# mass\n", numElem, mass);
-   DumpField("\n\n# momentum\n", numElem, momentum);
-   DumpField("\n\n# energy\n", numElem, energy);
-   DumpField("\n\n# pressure\n", numElem, pressure);
+   DumpField("# mass\n", numElem, &kv[0].mass, 3);
+   DumpField("\n\n# momentum\n", numElem, &kv[0].mom, 3);
+   DumpField("\n\n# energy\n", numElem, &kv[0].energy, 3);
+   DumpField("\n\n# pressure\n", numElem, pressure, 1);
 }
 
 
@@ -237,16 +235,14 @@ int main(void)
    int numTotalCycles = 100;    // 1024
    // int dumpInterval = 20;
 
-   float *mass     = (float *) malloc((numElems+1)*sizeof(float));
-   float *momentum = (float *) malloc((numElems+1)*sizeof(float));
-   float *energy   = (float *) malloc((numElems+1)*sizeof(float));
+   struct kin *kn =
+      (struct kin *) malloc((numElems+1)*sizeof(struct kin));
    float *pressure = (float *) malloc((numElems+1)*sizeof(float));
 
-   float *f0 = (float *) malloc((numElems-1)*sizeof(float));
-   float *f1 = (float *) malloc((numElems-1)*sizeof(float));
-   float *f2 = (float *) malloc((numElems-1)*sizeof(float));
+   struct flux *fl =
+      (struct flux *) malloc((numElems-1)*sizeof(struct flux));
 
-   InitializeShockTubeMesh(numElems+1, mass, momentum, energy, pressure);
+   InitializeShockTubeMesh(numElems+1, kn, pressure);
 
    float time = 0.0;
    float dx = 1.0 / (float) numElems;
@@ -258,16 +254,15 @@ int main(void)
       // if (currCycle % dumpInterval == 0)
       //    DumpPlot(numElems, mass, momentum, energy, pressure);
 
-      ComputeFaceInfo(numFaces, mass, momentum, energy, f0, f1, f2);
-      UpdateElemInfo (numElems-1, mass, momentum, energy, pressure,
-                      f0, f1, f2, dt/dx);
+      ComputeFaceInfo(numFaces, kn, fl);
+      UpdateElemInfo (numElems-1, kn, pressure,
+                      fl, dt/dx);
       time = time + dt;
    }
 
-   DumpPlot(numElems, mass, momentum, energy, pressure);
+   DumpPlot(numElems, kn, pressure);
 
-   free(f2); free(f1); free(f0);
-   free(pressure); free(energy); free(momentum); free(mass);
+   free(fl); free(pressure); free(kn);
 
    return 0 ;
 }

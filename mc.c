@@ -428,11 +428,12 @@ void next()
          break;
       case '#': // skip include statements, and most preprocessor directives
          if (!strncmp(p, "define", 6)) {
-            p += 6; next();
+            p += 6; next(); t = 1;
             if (tk == Id) {
                next();
+               while (tk == Sub) { t *= -1; next(); }
                if (tk == Num) {
-                  id->class = Num; id->type = INT; id->val = tkv.i;
+                  id->class = Num; id->type = INT; id->val = t*tkv.i;
                }
             }
          }
