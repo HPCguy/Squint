@@ -103,6 +103,7 @@ Below is the assembly language for the tests/shock.c ComputeFaceInfo() function 
 
 | gcc | Squint | MC (my HPC compiler) |
 | --- | --- | --- |
+| ??? inst/iter | 142 inst/iter | 113 inst/iter |
 | 105f0: vldr  s22, [lr] | 5d0: mov  r5, r3 | 5f0: mov  r0, #12 |
 | 105f4: vcvt.f64.f32  d7, s21 | 5d4: add  r6, r3, #1 | 5f4: mla  r0, r3, r0, r4 |
 | 105f8: vadd.f32  s24, s28, s21 | 5d8: add  r0, r7, r5, lsl #2 | 5f8: vldr  s1, [r0] |
@@ -198,7 +199,7 @@ Below is the assembly language for the tests/shock.c ComputeFaceInfo() function 
 | 10760: vstmia  r3!, {s23} | 740: vldr  s7, [r0] | 760: vmul.f32  s12, s6, s0 |
 | 10764: vstmia  r2!, {s22} | 744: vadd.f32  s5, s11, s12 | 764: vsub.f32  s0, s13, s15 |
 | 10768: vstmia  r1!, {s20} | 748: vmla.f32  s5, s8, s14 | 768: vmul.f32  s10, s3, s0 |
-| 1076c: beq  1085c | 74c: vmla.f32  s7, s10, s5 | 76c: vmul.f32  s1, s2, s12 |
+| 1076c: beq  1085c ***exit loop*** | 74c: vmla.f32  s7, s10, s5 | 76c: vmul.f32  s1, s2, s12 |
 | 10770: mov  r9, r5 | 750: vstr  s7, [r0] | 770: vdiv.f32  s0, s1, s9 |
 | 10774: add  r5, r5, #4 | 754: vsub.f32  s1, s13, s15 | 774: vsqrt.f32  s14, s0 |
 | 10778: vldr  s20, [r4] | 758: vcmpe.f32  s1, #0.0 | 778: mov  r0, #12 |
@@ -246,6 +247,46 @@ Below is the assembly language for the tests/shock.c ComputeFaceInfo() function 
 | 10820: mov  lr, r5 | 800: cmp  r3, r0 | |
 | 10824: mov  ip, r4 | 804: blt  0x5d0 | |
 | 10828: b  10660 | | |
+| 10ae8: str  r1, [sp, #84] | | |
+| 10aec: strd  r2, [sp, #88] | | |
+| 10af0: bl  1043c <sqrtf@plt> | | |
+| 10af4: ldr  r3, [pc, #-676] | | |
+| 10af8: vldr  d7, [pc, #136] | | |
+| 10afc: ldr  r1, [sp, #84] | | |
+| 10b00: vldr  s25, [r3, #4] | | |
+| 10b04: ldrd  r2, [sp, #88] | | |
+| 10b08: vcvt.f64.f32  d15, s25 | | |
+| 10b0c: vsub.f64  d6, d15, d7 | | |
+| 10b10: b  107fc <main+0x36c> | | |
+| 10b14: vstr  s14, [sp, #84] | | |
+| 10b18: str  r1, [sp, #88] | | |
+| 10b1c: strd  r2, [sp, #92] | | |
+| 10b20: bl  1043c <sqrtf@plt> | | |
+| 10b24: ldr  r3, [pc, #100] | | |
+| 10b28: vldr  d7, [pc, #88] | | |
+| 10b2c: ldr  r1, [sp, #88] | | |
+| 10b30: vldr  s25, [r3, #4] | | |
+| 10b34: ldrd  r2, [sp, #92] | | |
+| 10b38: vcvt.f64.f32  d15, s25 | | |
+| 10b3c: vsub.f64  d6, d15, d7 | | |
+| 10b40: vldr  s14, [sp, #84] | | |
+| 10b44: b  1073c <main+0x2ac> | | |
+| 10b48: vstr  s14, [sp, #84] | | |
+| 10b4c: vstr  s15, [sp, #88] | | |
+| 10b50: str  r1, [sp, #92] | | |
+| 10b54: strd  r2, [sp, #96] | | |
+| 10b58: bl  1043c <sqrtf@plt> | | |
+| 10b5c: ldr  r3, [pc, #44] | | |
+| 10b60: vldr  d7, [pc, #32] | | |
+| 10b64: ldr  r1, [sp, #92] | | |
+| 10b68: vldr  s25, [r3, #4] | | |
+| 10b6c: ldrd  r2, [sp, #96] | | |
+| 10b70: vcvt.f64.f32  d15, s25 | | |
+| 10b74: vsub.f64  d6, d15, d7 | | |
+| 10b78: vldr  s14, [sp, #84] | | |
+| 10b7c: vldr  s15, [sp, #88] | | |
+| 10b80: b  106ac <main+0x21c> | | |
+
 
 By the end of 2022, I expect to have automatic vectorization and/or parallelization working
 in my offline HPC compiler.  The HPC extensions/restrictions make it "natural" to manage
