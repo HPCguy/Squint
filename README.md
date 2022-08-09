@@ -245,7 +245,7 @@ Below is the assembly language for the tests/shock.c ComputeFaceInfo() function 
 
 By the end of 2022, I expect to have automatic vectorization and/or parallelization working
 in my offline HPC compiler.  The HPC extensions/restrictions make it "natural" to manage
-parallel partitions, unlike the mess created by C semantics.
+parallel partitions, unlike the mess created by C standard semantics.
 
 ## Prerequisites
 * This compiler project depends on several GNU/Linux behaviors, and it
