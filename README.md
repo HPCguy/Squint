@@ -90,9 +90,10 @@ compiler options, by a minimum of 3%.
 That said, make no mistake, my current optimizations are all crap and yet I am still
 beating gcc. I am only one person with no resources, so I  pick the path I see as
 most interesting and plod along at a snail's pace when I am not watching TV,
-playing video games, or reading/commenting on news articles. If I had the resources
-to hire a small team and treat this as a real full time project,
-I could do ***much*** better!
+playing video games, or reading/commenting on news articles.
+
+If I had the resources to hire a small team and treat this as a real full time project,
+I could do ***much*** better!  If you might be interested, let's talk.
 ```
 Below is the assembly language for the tests/shock.c ComputeFaceInfo() function for all three compilers:
 
