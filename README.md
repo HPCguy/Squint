@@ -97,6 +97,7 @@ I could do ***much*** better!  If you might be interested, let's talk.
 
 ** No common subexpression elimination, register renaming to reduce stalls,
    code motion to reduce stalls, or register coloring to reduce register pressure, etc.
+   None of these things are hard to do, but all consume time to implement.
 ```
 Below is the assembly language for the tests/shock.c ComputeFaceInfo() function for all three compilers:
 
