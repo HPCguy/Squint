@@ -21,7 +21,7 @@ benchmark provides an optimization example, and runs roughly
 
 Source code size:
 * mc C compiler -- 3000 SLOC
-* squint optimizer -- 2900 SLOC
+* squint optimizer -- 3325 SLOC
 
 The original AMaCC compiler is based on the phenomenal work of the 
 team at https://github.com/jserv/amacc , and I strongly suggest
@@ -39,7 +39,7 @@ used as a starting point for this work.
 | bezier.c | 3672 | 1172 | ***768*** | recursive |
 | duff.c | 3068 | 564 | ***412*** | unusual |
 | maze.c | 6640 | 2632 | ***1752*** | misc |
-| shock.c | 8732 | ***2284*** | 3388 | floating point |
+| shock.c | 8732 | ***1512*** | 3388 | floating point |
 | mc.c | 123264 | 61240 | ***34932*** | full compiler |
 
 | Benchmark | AMaCC compile time | Mc+Squint time | Gcc -O3 time |
@@ -49,7 +49,7 @@ used as a starting point for this work.
 | Benchmark | AMaCC runtime | Mc+Squint | Gcc | Gcc -O1 | Gcc -03 |
 | --- | --- | --- | --- | --- | --- |
 | sieve (int) | 3.676s |  ***0.936s*** | 1.642s | 0.942s | 0.962s |
-| shock (float) | 39.192s | ***3.273s*** | 9.666s | 4.383s | 3.702s |
+| shock (float) | 39.192s | ***3.047s*** | 9.666s | 4.383s | 3.702s |
 | fib 42 (int) | 10.546s | 4.595s | 6.209s | 4.504s | ***3.553s*** |
 
 Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
