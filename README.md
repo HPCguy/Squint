@@ -73,15 +73,20 @@ sys	0m0.031s
 Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
 
 ## Assembly language quality
-
-Below is a comparison of assembly language quality of three compilers on the Raspberry Pi 4B when compiling tests/shock.c.
+```
+Below is a comparison of assembly language quality of three compilers on the Raspberry Pi 4B
+when compiling tests/shock.c.
 
 gcc options: "gcc -mfloat-abi=hard -mtune=cortex-a72 -O3 tests/shock.c -lm"
-The Squint compiler uses the compiler in this repository with the -Op option, followed by the Squint optimizer.
+
+The Squint compiler uses the compiler in this repository with the -Op option,
+followed by the Squint optimizer.
+
 The MC compiler is a non-public HPC version of Squint that I am working on offline.
 
-For floating point, my HPC compiler is currently always faster than gcc with the above compiler options, by a minimum of 3%.
-
+For floating point, my HPC compiler is currently always faster than gcc with the above
+compiler options, by a minimum of 3%.
+```
 Below is the assembly language for the tests/shock.c ComputeFaceInfo() function for all three compilers:
 
 | gcc | Squint | MC (my HPC compiler) |
