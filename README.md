@@ -52,18 +52,6 @@ sys	0m0.031s
 
 ## Performance
 
-| Benchmark |  AMaCC .text size | Mc+Squint .text | Gcc -O3 .text | Notes |
-| --- | --- | --- | --- | --- |
-| bezier.c | 3672 | 1172 | ***768*** | recursive |
-| duff.c | 3068 | 564 | ***412*** | unusual |
-| maze.c | 6640 | 2632 | ***1752*** | misc |
-| shock.c | 8732 | ***1512*** | 3388 | floating point |
-| mc.c | 123264 | 61240 | ***34932*** | full compiler |
-
-| Benchmark | AMaCC compile time | Mc+Squint time | Gcc -O3 time |
-| --- | --- | --- | --- |
-| mc.c | ***0.140s*** | 0.352s | 3.462s |
-
 | Benchmark | AMaCC runtime | Mc+Squint | Gcc | Gcc -O1 | Gcc -03 |
 | --- | --- | --- | --- | --- | --- |
 | sieve (int) | 3.676s |  ***0.936s*** | 1.642s | 0.942s | 0.962s |
@@ -71,6 +59,18 @@ sys	0m0.031s
 | fib 42 (int) | 10.546s | 4.595s | 6.209s | 4.504s | ***3.553s*** |
 
 Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
+
+| Benchmark | AMaCC compile time | Mc+Squint time | Gcc -O3 time |
+| --- | --- | --- | --- |
+| mc.c | ***0.140s*** | 0.352s | 3.462s |
+
+| Benchmark |  AMaCC .text size | Mc+Squint .text | Gcc -O3 .text | Notes |
+| --- | --- | --- | --- | --- |
+| bezier.c | 3672 | 1172 | ***768*** | recursive |
+| duff.c | 3068 | 564 | ***412*** | unusual |
+| maze.c | 6640 | 2632 | ***1752*** | misc |
+| shock.c | 8732 | ***1512*** | 3388 | floating point |
+| mc.c | 123264 | 61240 | ***34932*** | full compiler |
 
 ## Assembly language quality
 ```
@@ -103,7 +103,7 @@ Below is the assembly language for the tests/shock.c ComputeFaceInfo() function 
 
 | gcc | Squint | MC (my HPC compiler) |
 | --- | --- | --- |
-| ??? inst/iter | 142 inst/iter | 113 inst/iter |
+| ***??? inst/iter*** | ***142 inst/iter*** | ***113 inst/iter*** |
 | 105f0: vldr  s22, [lr] | 5d0: mov  r5, r3 | 5f0: mov  r0, #12 |
 | 105f4: vcvt.f64.f32  d7, s21 | 5d4: add  r6, r3, #1 | 5f4: mla  r0, r3, r0, r4 |
 | 105f8: vadd.f32  s24, s28, s21 | 5d8: add  r0, r7, r5, lsl #2 | 5f8: vldr  s1, [r0] |
