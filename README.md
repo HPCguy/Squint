@@ -6,7 +6,7 @@ complete, C compiler (mc.c) that supports JIT execution, ELF executable
 generation, and peephole optimization.  mc.c is a follow on to the AMaCC
 compiler.  See the AMaCC documentation referenced below for more information.
 
-The MC compiler found here is a subset of ***the full HPC MC compiler which is
+The MC compiler found in this repository is a subset of ***the full HPC MC compiler which is
 being developed offline.  That said, results from the full MC compiler
 are shown below.***
 
