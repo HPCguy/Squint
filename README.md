@@ -8,7 +8,7 @@ compiler.  See the AMaCC documentation referenced below for more information.
 
 The MC C compiler found in this repository is a subset of ***the full MC HPC compiler which is
 being developed offline.  That said, results from the full MC HPC compiler
-are shown below.***
+are shown [below](#assembly-language-quality)***.
 
 This compiler supports the following features beyond AMaCC:
 
