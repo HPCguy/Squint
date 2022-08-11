@@ -643,7 +643,8 @@ static void create_inst_info_f(int *instInfo, int *funcBegin, int *funcEnd)
       else if (*scan == 0xeef40ac0) // vcmpe Fd, Fm0
          *rInfo = RI_RdAct | RI_RmAct |
                              ((*scan & RI_Rd) * 2) | ((*scan & (1<<22)) >> 10);
-      else if ((*scan & 0xffbf0fc0) == 0xeeb10ac0) // vsqrt Fd, Fm
+      else if ((*scan & 0xffbf0fc0) == 0xeeb00ac0 || // vabs  Fd, Fm
+               (*scan & 0xffbf0fc0) == 0xeeb10ac0)   // vsqrt Fd, Fm
          *rInfo = RI_RdAct | RI_RdDest | RI_RmAct |
                     ((*scan & 0x400000) ? 0x1000 : 0) | ((*scan & RI_Rd) * 2) |
                     ((*scan & 0x20) ? 1 : 0) | ((*scan & RI_Rm) * 2);
@@ -1097,7 +1098,7 @@ static void apply_peepholes3_2(int *funcBegin, int *funcEnd)
 
 static void apply_peepholes3_5(int *funcBegin, int *funcEnd)
 {
-   int *scan, *scanp1;
+   int *scan, *scanp1, *scanp2, *scanp3, *scanp4, *scanp5, *scanp6, *scanp7;
 
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
@@ -1119,24 +1120,41 @@ static void apply_peepholes3_5(int *funcBegin, int *funcEnd)
       scan = skip_nop(scan, S_FWD);
 
       if (*scan == 0xeef1fa10) {      // vmrs  APSR_nzcv, fpscr
-         int *scanp3 = active_inst(scan, 3);
+         scanp3 = active_inst(scan, 3);
          if (*scanp3 == 0xe3500000) {      //  cmp   r0, #0
-            int *scanp4 = active_inst(scanp3, 1);
-            int *scanp6 = active_inst(scanp4, 2);
+            scanp4 = active_inst(scanp3, 1);
+            scanp6 = active_inst(scanp4, 2);
             if ((*scanp4 & 0x0f000000) == 0x0a000000 && // beq
                 (*scanp6 & 0xff000000) == 0xea000000) { // b
-               int *scanp5 = active_inst(scanp4, 1);
-               int *scanp7 = active_inst(scanp6, 1);
+               scanp5 = active_inst(scanp4, 1);
+               scanp7 = active_inst(scanp6, 1);
                if ((*scanp5 & RI_Rd) == (*scanp7 & RI_Rd) &&
                    (*scanp5 & RI_Rd) == 0) {
                   scanp1 = active_inst(scan, 1);
                   *scanp6 = ((*scanp6 & 0x0fffffff) | (*scanp1 & 0xf0000000))
                                ^ (((*scanp1 & 0xff) == 0) ? 0x10000000 : 0);
-                  *scanp1 = NOP; //scanp2
-                  scanp1[1] = NOP;
+                  *scanp1 = NOP;
+                  scanp1[1] = NOP; // scanp2
                   *scanp3 = NOP;
                   *scanp4 = NOP;
+                  scan = scanp6;
                }
+            }
+            else {
+               int match =
+                  ((*scanp4 & 0xf0000000) == 0) ? 0 /* eq */ : 1 /* ne */;
+               scanp1 = active_inst(scan  ,1);
+               scanp2 = active_inst(scanp1,1);
+               if ((*scanp1 & 1) == match) {
+                  *scanp4 = (*scanp4 & 0x0fffffff) | (*scanp1 & 0xf0000000);
+               }
+               else {
+                  *scanp4 = (*scanp4 & 0x0fffffff) | (*scanp2 & 0xf0000000);
+               }
+               *scanp1 = NOP;
+               *scanp2 = NOP;
+               *scanp3 = NOP;
+               scan = scanp4;
             }
          }
       }
