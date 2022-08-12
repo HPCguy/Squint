@@ -3063,7 +3063,7 @@ int main(int argc, char **argv)
    int *freed_ast, *ast;
    int elf_fd;
    int fd, i;
-   int poolsz = 1024 * 1024; // arbitrary size
+   int poolsz = 4 * 1024 * 1024; // arbitrary size
 
    if (!(sym = (struct ident_s *) malloc(poolsz)))
       die("could not allocate symbol area");
