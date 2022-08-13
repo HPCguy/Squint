@@ -1717,7 +1717,8 @@ static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd,
       else if ((*scan & 0xffbf0fd0) == 0xeeb00a40) { // vmov Fd, Fm
          scanm1 = active_inst(scan,-1);
          if (((*scanm1 & RI_Rd) >> 12) == (*scan & RI_Rm) &&
-             (((*scanm1 & RI_Sd) >> 18) ^ (*scan & 0x10)) == 0) {
+             (((*scanm1 & RI_Sd) >> 18) ^ (*scan & 0x10)) == 0 &&
+             (*scan & RI_Rm) == 0) {
             *scan = (*scanm1 & ~(RI_Rd | RI_Sd)) |
                     (*scan & (RI_Rd | RI_Sd));
             *scanm1 = NOP;
