@@ -1812,6 +1812,8 @@ unwind_func: id = sym;
             }
          }
          else {
+            if (ty > ATOM_TYPE && ty < PTR && tsize[bt >> 2] == 0)
+               fatal("struct forward decl not supported... yet");
             dd->hclass = dd->class; dd->class = ctx;
             dd->htype = dd->type; dd->type = ty;
             dd->hval = dd->val;
