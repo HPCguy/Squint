@@ -142,8 +142,9 @@ static int find_const(int addr)
 
 static int is_const(int *inst)
 {
-   int addr = (inst-cbegin)*4;
+   if (cnst_pool_size == 0) return 0;
 
+   int addr = (inst-cbegin)*4;
    return (cnst_pool[find_const(addr)].data_addr == addr);
 }
 
@@ -1717,7 +1718,8 @@ static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd,
       else if ((*scan & 0xffbf0fd0) == 0xeeb00a40) { // vmov Fd, Fm
          scanm1 = active_inst(scan,-1);
          if (((*scanm1 & RI_Rd) >> 12) == (*scan & RI_Rm) &&
-             (((*scanm1 & RI_Sd) >> 18) ^ (*scan & 0x10)) == 0) {
+             (((*scanm1 & RI_Sd) >> 18) ^ (*scan & 0x10)) == 0 &&
+             (*scan & RI_Rm) == 0) {
             *scan = (*scanm1 & ~(RI_Rd | RI_Sd)) |
                     (*scan & (RI_Rd | RI_Sd));
             *scanm1 = NOP;
@@ -3599,7 +3601,7 @@ int squint_opt(int *begin, int *end)
             ++scan;
          }
          --scan;
-         funcEnd = scan;
+         funcEnd = scan; // inst before EOF or next func
 
          // verify this function has been prepared for peephole opt
          if (funcBegin[3] != NOP) continue;
@@ -3622,6 +3624,7 @@ int squint_opt(int *begin, int *end)
          /***   convert stack VM to frame VM     ***/
          /******************************************/
 
+         // retAddr points to last ret in function
          simplify_branch(funcBegin, retAddr);
          skip_const_blk = 1;
          apply_peepholes1(funcBegin, retAddr);
