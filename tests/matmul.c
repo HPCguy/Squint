@@ -1,4 +1,4 @@
-#define SIZE 512
+#define SIZE 256
 
 float A[SIZE][SIZE], B[SIZE][SIZE], C[SIZE][SIZE];
 

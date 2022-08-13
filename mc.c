@@ -119,7 +119,7 @@ struct member_s {
 // tokens and classes (operators last and in precedence order)
 // ( >= 128 so not to collide with ASCII-valued tokens)
 enum {
-   Func=128, Syscall, Main, ClearCache, Fabs, Sqrt,
+   Func=128, Syscall, Main, ClearCache, Fneg, Fabs, Sqrt,
    Glo, Par, Loc, Keyword, Id, Load,
    Enter, Num, NumF, Enum, Char, Int, Float, Struct, Union, Sizeof, Return, Goto,
    Break, Continue, If, DoWhile, While, For, Switch, Case, Default, Else, Label,
@@ -271,17 +271,18 @@ enum {
     * off and the result will be stored in R0.
     */
 
-   FABS, /* 46 float fabsf(float); */
-   SQRT, /* 47 float sqrtf(float); */
-   SYSC, /* 48 system call */
-   CLCA, /* 49 clear cache, used by JIT compilation */
+   FNEG, /* 46 float fnegf(float); returns -arg */
+   FABS, /* 47 float fabsf(float); */
+   SQRT, /* 48 float sqrtf(float); */
+   SYSC, /* 49 system call */
+   CLCA, /* 50 clear cache, used by JIT compilation */
 
-   VENT, /* 50 Needed fo Varargs ABI, which requires 8-byte stack align */
-   VLEV, /* 51 */
+   VENT, /* 51 Needed fo Varargs ABI, which requires 8-byte stack align */
+   VLEV, /* 52 */
 
-   PHD,  /* 52 PeepHole Disable next assembly instruction in optimizer */
-   PHF,  /* 53 Inform peephole optimizer a function call is beginning */
-   PHR0, /* 54 Inform PeepHole optimizer that R0 holds a return value */
+   PHD,  /* 53 PeepHole Disable next assembly instruction in optimizer */
+   PHF,  /* 54 Inform peephole optimizer a function call is beginning */
+   PHR0, /* 55 Inform PeepHole optimizer that R0 holds a return value */
 
    INVALID
 };
@@ -625,7 +626,7 @@ resolve_fnproto:
          }
          next();
          t = 0; b = c = 0; tt = 0; nf = 0; // argument count
-         if (peephole && d->class != Fabs && d->class != Sqrt) {
+         if (peephole && (d->class < Fneg || d->class > Sqrt)) {
             *--n = Phf; c = n;
          }
          while (tk != ')') {
@@ -788,7 +789,8 @@ resolve_fnproto:
       if (*n == Num) n[1] = -n[1];
       else if (*n == NumF) { n[1] ^= 0x80000000; }
       else if (ty == FLOAT) {
-         *--n = 0xbf800000; *--n = NumF; --n; *n = (int) (n + 3); *--n = MulF;
+         *--n = 0; *--n = 1057; *--n = 1;
+         *--n = FNEG; --n; *n = (int) (n+4); *--n = Fneg;
       }
       else {
          *--n = -1; *--n = Num; --n; *n = (int) (n + 3); *--n = Mul;
@@ -1425,6 +1427,7 @@ void gen(int *n)
       if (k && i == Syscall && isPrtf) *++e = VLEV;
       if (peephole && i != ClearCache) *++e = PHR0;
       break;
+   case Fneg:
    case Fabs:
    case Sqrt: b = (int *) n[1]; gen(b + 1); *++e = n[2]; break;
    case While:
@@ -1749,7 +1752,7 @@ void stmt(int ctx)
                           "OR   XOR  AND  EQ   NE   GE   LT   GT   LE   "
                           "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
                           "ADDF SUBF MULF DIVF FTOI ITOF "
-                          "EQF  NEF  GEF  LTF  GTF  LEF  FABS SQRT "
+                          "EQF  NEF  GEF  LTF  GTF  LEF  FNEG FABS SQRT "
                           "SYSC CLCA VENT VLEV PHD  PHF  PHR0" [*++le * 5]);
                   if (*le < ADJ) {
                      struct ident_s *scan;
@@ -2333,6 +2336,7 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0xe3a02000; *je++ = 0xef000000; // mov r2, #0
                                                  // svc 0
          break;
+      case FNEG: *je++ = 0xeeb10a40; break;      // fnegs  s0, s0
       case FABS: *je++ = 0xeeb00ac0; break;      // fabss  s0, s0
       case SQRT: *je++ = 0xeeb10ac0; break;      // fsqrts s0, s0
       case VENT:
@@ -3074,7 +3078,7 @@ int main(int argc, char **argv)
    // Register keywords in symbol stack. Must match the sequence of enum
    p = "enum char int float struct union sizeof return goto break continue "
        "if do while for switch case default else "
-       "__clear_cache fabsf sqrtf void main";
+       "__clear_cache fnegf fabsf sqrtf void main";
 
    // call "next" to create symbol table entry.
    // store the keyword's token type in the symbol table entry's "tk" field.
@@ -3084,6 +3088,7 @@ int main(int argc, char **argv)
 
    // add __clear_cache to symbol table
    next(); id->class = ClearCache; id->type = INT; id->val = CLCA;
+   next(); id->class = Fneg; id->type = FLOAT; id->val = FNEG; id->etype = 1057;
    next(); id->class = Fabs; id->type = FLOAT; id->val = FABS; id->etype = 1057;
    next(); id->class = Sqrt; id->type = FLOAT; id->val = SQRT; id->etype = 1057;
 

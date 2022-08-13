@@ -67,7 +67,7 @@ void sieve3(char *buf, int max)
 
 int main()
 {
-    int size = 1024 * 1024;
+    int size = 256 * 1024;
     char *buf = (char *) malloc(size);
 
     memset(buf, 255, size);
