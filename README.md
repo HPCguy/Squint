@@ -107,7 +107,8 @@ Below is the assembly language for the tests/shock.c ComputeFaceInfo() function 
 
 | gcc | Squint | MC (my HPC compiler) |
 | --- | --- | --- |
-| ***??? inst/iter*** | ***142 inst/iter*** | ***113 inst/iter*** |
+| ***186 instructions*** | ***142 instructions*** | ***113 instructions*** |
+| ***??? inststructions/iter*** | ***142 instructions/iter*** | ***113 instructions/iter*** |
 | 105e0: b  10770 | 5d0: mov  r5, r3 | 5f0: mov  r0, #12 |
 | 105e4: mov  r0, r7 | 5d4: add  r6, r3, #1 | 5f4: mla  r0, r3, r0, r4 |
 | 105e8: mov  lr, r9 | 5d8: add  r0, r7, r5, lsl #2 | 5f8: vldr  s1, [r0] |
