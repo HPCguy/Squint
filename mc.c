@@ -78,6 +78,7 @@ int *n;             // current position in emitted abstract syntax tree
 int ld;             // local variable depth
 int pplev, pplevt;  // preprocessor conditional level
 int oline, osize;   // for optimization suggestion
+int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
 
 // identifier
 #define MAX_IR 256
@@ -771,7 +772,7 @@ resolve_fnproto:
    case '!': // "!x" is equivalent to "x == 0"
       next(); expr(Inc);
       if (ty > ATOM_TYPE && ty < PTR) fatal("!(struct/union) is meaningless");
-      if (*n == Num) n[1] = !n[1];
+      if (*n == Num) n[1] = n[1] ? 0 : (btrue ? -1 : 1);
       else { *--n = 0; *--n = Num; --n; *n = (int) (n + 3); *--n = Eq; }
       ty = INT;
       break;
@@ -866,13 +867,15 @@ resolve_fnproto:
          break;
       case Lor: // short circuit, the logical or
          next(); expr(Lan);
-         if (*n == Num && *b == Num) n[1] = b[1] || n[1];
+         if (*n == Num && *b == Num)
+            n[1] = (b[1] || n[1]) ? (btrue ? -1 : 1) : 0;
          else { *--n = (int) b; *--n = Lor; }
          ty = INT;
          break;
       case Lan: // short circuit, logic and
          next(); expr(Or);
-         if (*n == Num && *b == Num) n[1] = b[1] && n[1];
+         if (*n == Num && *b == Num)
+            n[1] = (b[1] && n[1]) ? (btrue ? -1 : 1) : 0;
          else { *--n = (int) b; *--n = Lan; }
          ty = INT;
          break;
@@ -898,11 +901,13 @@ resolve_fnproto:
          next(); expr(Ge); typecheck(Eq, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f == c1->f); *n = Num;
+               c1 = &n[1]; c2 = &b[1];
+               c1->i = (c2->f == c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
             }
             else { *--n = (int) b; *--n = EqF; }
          } else {
-            if (*n == Num && *b == Num) n[1] = b[1] == n[1];
+            if (*n == Num && *b == Num)
+               n[1] = (b[1] == n[1]) ? (btrue ? -1 : 1) : 0;
             else { *--n = (int) b; *--n = Eq; }
          }
          ty = INT;
@@ -911,11 +916,13 @@ resolve_fnproto:
          next(); expr(Ge); typecheck(Ne, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f != c1->f); *n = Num;
+               c1 = &n[1]; c2 = &b[1];
+               c1->i = (c2->f != c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
             }
             else { *--n = (int) b; *--n = NeF; }
          } else {
-            if (*n == Num && *b == Num) n[1] = b[1] != n[1];
+            if (*n == Num && *b == Num)
+               n[1] = (b[1] != n[1]) ? (btrue ? -1 : 1) : 0;
             else { *--n = (int) b; *--n = Ne; }
          }
          ty = INT;
@@ -924,11 +931,13 @@ resolve_fnproto:
          next(); expr(Shl); typecheck(Ge, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f >= c1->f); *n = Num;
+               c1 = &n[1]; c2 = &b[1];
+               c1->i = (c2->f >= c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
             }
             else { *--n = (int) b; *--n = GeF; }
          } else {
-            if (*n == Num && *b == Num) n[1] = b[1] >= n[1];
+            if (*n == Num && *b == Num)
+               n[1] = (b[1] >= n[1]) ? (btrue ? -1 : 1) : 0;
             else { *--n = (int) b; *--n = Ge; }
          }
          ty = INT;
@@ -937,11 +946,13 @@ resolve_fnproto:
          next(); expr(Shl); typecheck(Lt, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f < c1->f); *n = Num;
+               c1 = &n[1]; c2 = &b[1];
+               c1->i = (c2->f < c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
             }
             else { *--n = (int) b; *--n = LtF; }
          } else {
-            if (*n == Num && *b == Num) n[1] = b[1] < n[1];
+            if (*n == Num && *b == Num)
+               n[1] = (b[1] < n[1]) ? (btrue ? -1 : 1) : 0;
             else { *--n = (int) b; *--n = Lt; }
          }
          ty = INT;
@@ -950,11 +961,13 @@ resolve_fnproto:
          next(); expr(Shl); typecheck(Gt, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f > c1->f); *n = Num;
+               c1 = &n[1]; c2 = &b[1];
+               c1->i = (c2->f > c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
             }
             else { *--n = (int) b; *--n = GtF; }
          } else {
-            if (*n == Num && *b == Num) n[1] = b[1] > n[1];
+            if (*n == Num && *b == Num)
+               n[1] = (b[1] > n[1]) ? (btrue ? -1 : 1) : 0;
             else { *--n = (int) b; *--n = Gt; }
          }
          ty = INT;
@@ -963,11 +976,13 @@ resolve_fnproto:
          next(); expr(Shl); typecheck(Le, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1]; c1->i = (c2->f <= c1->f); *n = Num;
+               c1 = &n[1]; c2 = &b[1];
+               c1->i = (c2->f <= c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
             }
             else { *--n = (int) b; *--n = LeF; }
          } else {
-            if (*n == Num && *b == Num) n[1] = b[1] <= n[1];
+            if (*n == Num && *b == Num)
+               n[1] = (b[1] <= n[1]) ? (btrue ? -1 : 1) : 0;
             else { *--n = (int) b; *--n = Le; }
          }
          ty = INT;
@@ -2370,11 +2385,16 @@ int *codegen(int *jitmem, int *jitmap)
                *je++ = 0xeef1fa10; i -= (EQF - EQ);    // vmrs APSR_nzcv, fpscr
                if (*pc == FTOI) *pc = PHR0;
             }
-            if (i <= NE) { je[0] = 0x03a00000; je[1] = 0x13a00000; }   // moveq r0, #0; movne r0, #0
-            else if (i <= LT) { je[0] = 0xb3a00000; je[1] = 0xa3a00000; } // movlt r0, #0; movge   r0, #0
-            else { je[0] = 0xc3a00000; je[1] = 0xd3a00000; }           // movgt r0, #0; movle r0, #0
-            if (i == EQ || i == LT || i == GT) je[0] = je[0] | 1;
-            else je[1] = je[1] | 1;
+            // moveq r0, #0; movne r0, #0
+            if (i <= NE) { je[0] = 0x03a00000; je[1] = 0x13a00000; }
+            // movlt r0, #0; movge   r0, #0
+            else if (i <= LT) { je[0] = 0xb3a00000; je[1] = 0xa3a00000; }
+            // movgt r0, #0; movle r0, #0
+            else { je[0] = 0xc3a00000; je[1] = 0xd3a00000; }
+            if (i == EQ || i == LT || i == GT)
+               je[0] = je[0] | (btrue ? 0x400000 : 1); // use mvn if btrue
+            else
+               je[1] = je[1] | (btrue ? 0x400000 : 1);
             je += 2;
             break;
          } else {
@@ -3145,6 +3165,10 @@ int main(int argc, char **argv)
          }
          dd->class = Num; dd->type = INT; dd->val = i;
          --argc; ++argv;
+      }
+      else if (!strcmp(*argv, "-btrue")) {
+         // so that boolean values can be mutiplied by "true"
+         btrue = 1; --argc; ++argv;
       }
       else {
          argc = 0; // bad compiler option. Force exit.

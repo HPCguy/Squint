@@ -644,8 +644,9 @@ static void create_inst_info_f(int *instInfo, int *funcBegin, int *funcEnd)
       else if (*scan == 0xeef40ac0) // vcmpe Fd, Fm0
          *rInfo = RI_RdAct | RI_RmAct |
                              ((*scan & RI_Rd) * 2) | ((*scan & (1<<22)) >> 10);
-      else if ((*scan & 0xffbf0fc0) == 0xeeb00ac0 || // vabs  Fd, Fm
-               (*scan & 0xffbf0fc0) == 0xeeb10ac0)   // vsqrt Fd, Fm
+      else if ((*scan & 0xffbf0fc0) == 0xeeb10ac0 || // vsqrt Fd, Fm
+               (*scan & 0xffbf0fc0) == 0xeeb10a40 || // vneg  Fd, Fm
+               (*scan & 0xffbf0fc0) == 0xeeb00ac0)   // vabs  Fd, Fm
          *rInfo = RI_RdAct | RI_RdDest | RI_RmAct |
                     ((*scan & 0x400000) ? 0x1000 : 0) | ((*scan & RI_Rd) * 2) |
                     ((*scan & 0x20) ? 1 : 0) | ((*scan & RI_Rm) * 2);
@@ -1143,11 +1144,12 @@ static void apply_peepholes3_5(int *funcBegin, int *funcEnd)
                }
             }
             else {
-               int match =
-                  ((*scanp4 & 0xf0000000) == 0) ? 0 /* eq */ : 1 /* ne */;
+               int btype =
+                  ((*scanp4 & 0xf0000000) == 0) ? 0 /* beq */ : 1 /* bne */;
+               int match0 = ((*scanp1 & 0x0ff000ff) == 0x03a00000) ? 0 : 1;
                scanp1 = active_inst(scan  ,1);
                scanp2 = active_inst(scanp1,1);
-               if ((*scanp1 & 1) == match) {
+               if (match0 == btype) {
                   *scanp4 = (*scanp4 & 0x0fffffff) | (*scanp1 & 0xf0000000);
                }
                else {
@@ -2296,8 +2298,9 @@ static void simplify_branch4(int *funcBegin, int *funcEnd)
          scanm3 = active_inst(scanm2, -1);
          if ((*scanm3 & 0xf3f0f000) == 0xe1500000)  { /* cmp rX, r0 */
             scanp1 = active_inst(scan, 1);
-            int match = ((*scanp1 & 0xf0000000) == 0) ? 0 /* eq */ : 1 /* ne */;
-            if ((*scanm1 & 1) == match) {
+            int btype = ((*scanp1 & 0xf0000000) == 0) ? 0 /* eq */ : 1 /* ne */;
+            int match0 = ((*scanm1 & 0x0ff000ff) == 0x03a00000) ? 0 : 1;
+            if (match0 == btype) {
                *scanp1 = (*scanp1 & 0x0fffffff) | (*scanm1 & 0xf0000000);
             }
             else {
