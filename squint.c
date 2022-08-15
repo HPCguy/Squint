@@ -2569,7 +2569,7 @@ static struct { int *push, *pop; int lev; } pair[2000];
 
 static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
 {
-   int i, lev = 0;
+   int i, cassign, lev = 0;
    int maxlev = 0;
    int *scanm1, *scanm2, *scanp1;
    int *stack[10];
@@ -2612,17 +2612,17 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
       scanp1 = active_inst(pair[i].pop,   1);
       if (*scanp1 == 0xe5810000 || *scanp1 == 0xe5c10000 || // str[b] r0, [r1]
           *scanp1 == 0xed810a00) { // vstr s0, [r1]
+         cassign = (*(pair[i].push+1) == 0xed900a00);  // vldr s0, [r0]
          int *pushp1 = &instInfo[(pair[i].push-funcBegin)+1];
-         int *r0d = find_def(instInfo, pushp1, 0, S_FWD);
+         int *r0d = cassign ? pushp1 : find_def(instInfo, pushp1, 0, S_FWD);
          int *r0u = find_use(instInfo, pushp1, 0, S_FWD);
+         if (r0u == 0) r0u = r0d+1;
          if (r0d <= r0u &&
              ((*scanm1 & 0xffffff00) == 0xe28b0000 ||  // add r0, fp, #X
               (*scanm1 & 0xffffff00) == 0xe24b0000 )) { // sub r0, fp, #X
             int off = *scanm1 & 0xff;
-            int addOffsetBit = 1<<23;
-            if ((*scanm1 & 0xffffff00) == 0xe24b0000) { // sub r0, fp, #X
-               addOffsetBit = 0;
-            }
+            int addOffsetBit =
+               ((*scanm1 & 0xffffff00) == 0xe28b0000) ? (1<<23) : 0;
             if (r0u == r0d) {
                if (funcBegin[r0d-instInfo] == 0xe5900000 || //  ldr r0, [r0]
                    funcBegin[r0d-instInfo] == 0xed900a00) { // vldr s0, [r0]
@@ -3677,6 +3677,7 @@ int squint_opt(int *begin, int *end)
          apply_peepholes7_5(tmpbuf, funcBegin, retAddr);
          apply_peepholes7_7(funcBegin, retAddr);
          apply_ptr_cleanup(tmpbuf, funcBegin, retAddr);
+
          rename_nop(funcBegin, retAddr);
 
          apply_peepholes8(tmpbuf, funcBegin, retAddr, flow, fhigh);
