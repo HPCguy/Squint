@@ -1660,6 +1660,7 @@ void stmt(int ctx)
    case Struct:
    case Union:
    case TypeId:
+      ;
 do_typedef:
       dd = id; td = 0;
       switch (tk) {
