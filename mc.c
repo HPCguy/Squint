@@ -122,8 +122,11 @@ struct member_s {
 enum {
    Func=128, Syscall, Main, ClearCache, Fneg, Fabs, Sqrt,
    Glo, Par, Loc, Keyword, Id, Load,
-   Enter, Num, NumF, Enum, Char, Int, Float, Struct, Union, Sizeof, Return, Goto,
-   Break, Continue, If, DoWhile, While, For, Switch, Case, Default, Else, Label,
+   Enter, Num, NumF, TypeId,
+   Typedef, Enum, Char, Int, Float, Struct, Union,
+   Sizeof, Return, Goto,
+   Break, Continue, If, DoWhile, While, For,
+   Switch, Case, Default, Else, Label,
    Assign, // operator =, keep Assign as highest priority operator
    OrAssign, XorAssign, AndAssign, ShlAssign, ShrAssign, // |=, ^=, &=, <<=, >>=
    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, // +=, -=, *=, /=, %=
@@ -566,6 +569,21 @@ void bitopcheck(int tl, int tr)
       fatal("bit operation on non-int types");
 }
 
+int tensor_size(int dim, int etype)
+{
+   int retVal;
+   switch (dim) {
+   case 1: retVal = (etype+1);
+           break;
+   case 2: retVal = ((etype & 0xffff) + 1) * ((etype >> 16) + 1);
+           break;
+   case 3: retVal = ((etype & 0x7ff) + 1) *
+                    (((etype >> 11) & 0x3ff) + 1) *
+                    ((etype >> 21) + 1);
+           break;
+   }
+   return retVal;
+}
 
 /* expression parsing
  * lev represents an operator.
@@ -682,9 +700,11 @@ resolve_fnproto:
    case Sizeof:
       next();
       if (tk != '(') fatal("open parenthesis expected in sizeof");
-      next(); d = 0;
-      if (tk == Id) {
-         d = id; ty = d->type; next();
+      next(); d = 0; t = 1;
+      if (tk == Id || tk == TypeId) {
+         d = id; ty = d->type;
+         if (ty & 3) t *= tensor_size(ty & 3, d->etype);
+         next();
       }
       else {
          ty = INT; // Enum
@@ -709,14 +729,18 @@ resolve_fnproto:
              (((ty - PTR) >= PTR) ? sizeof(int) : tsize[(ty - PTR) >> 2]) :
              ((ty >= PTR) ? sizeof(int) : tsize[ty >> 2]); *--n = Num;
       // just one dimension supported at the moment
-      if (d != 0 && (ty & 3)) n[1] *= (id->etype + 1);
+      if (d != 0 && (ty & 3)) n[1] *= t;
       ty = INT;
       break;
    // Type cast or parenthesis
    case '(':
       next();
-      if (tk >= Char && tk <= Union) {
+      if ((tk >= Char && tk <= Union) || tk == TypeId) {
          switch (tk) {
+         case TypeId:
+            if (id->type & 3) fatal("can't cast to tensor type... yet");
+            else t = id->type;
+            next(); break;
          case Char:
          case Int:
          case Float:
@@ -1576,16 +1600,30 @@ void loc_array_decl(int ct, int extent[3], int *dims, int *et, int *size)
 // statement parsing (syntax analysis, except for declarations)
 void stmt(int ctx)
 {
-   struct ident_s *dd;
+   struct ident_s *dd, *td;
    int *a, *b, *c, *d;
    int i, j, nf, atk, sz;
    int nd[3];
-   int bt;
+   int bt, tdef = 0;
 
-   if (ctx == Glo && (tk < Enum || tk > Union))
+   if (ctx == Glo && (tk < TypeId || tk > Union))
       fatal("syntax: statement used outside function");
 
    switch (tk) {
+   case Typedef:
+      next();
+      switch (tk) {
+      case Char:
+      case Int:
+      case Float:
+      case Struct:
+      case Union:
+      case TypeId:
+         tdef = 1; goto do_typedef;
+      case Enum:
+         printf("Enum not supported for typedef");
+      default: fatal("bad typedef declaration");
+      }
    case Enum:
       next();
       // If current token is not "{", it means having enum type name.
@@ -1621,8 +1659,12 @@ void stmt(int ctx)
    case Float:
    case Struct:
    case Union:
-      dd = id;
+   case TypeId:
+do_typedef:
+      dd = id; td = 0;
       switch (tk) {
+      case TypeId:
+         td = id; bt = td->type; next(); break;
       case Char:
       case Int:
       case Float:
@@ -1645,6 +1687,8 @@ void stmt(int ctx)
             while (tk != '}') {
                int mbt = INT; // Enum
                switch (tk) {
+               case TypeId:
+                  mbt = id->type; next(); break;
                case Char:
                case Int:
                case Float:
@@ -1698,6 +1742,8 @@ void stmt(int ctx)
          ty = bt;
          // if the beginning of * is a pointer type, then type plus `PTR`
          // indicates what kind of pointer
+         if (tk == Mul && td && (td->type & 3))
+            fatal("typedef'd tensor ptr decls not supported... yet");
          while (tk == Mul) { next(); ty += PTR; }
          switch (ctx) { // check non-callable identifiers
          case Glo:
@@ -1715,6 +1761,7 @@ void stmt(int ctx)
          }
          dd = id; dd->type = ty;
          if (tk == '(') { // function
+            if (tdef) fatal("typedef can't be function");
             if (b != 0) fatal("func decl can't be mixed with var decl(s)");
             if (ctx != Glo) fatal("nested function");
             if (ty > ATOM_TYPE && ty < PTR)
@@ -1834,12 +1881,21 @@ unwind_func: id = sym;
                fatal("struct forward decl not supported... yet");
             dd->hclass = dd->class; dd->class = ctx;
             dd->htype = dd->type; dd->type = ty;
-            dd->hval = dd->val;
+            dd->hval = dd->val; if (tdef) dd->val = ty; //save fundamental type
             dd->hetype = dd->etype;
             sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
             if (tk == Bracket) {
+               if (td && (td->type & 3))
+                  fatal("can't stack typedef subscripts...yet");
                i = ty; loc_array_decl(ctx, nd, &j, &dd->etype, &sz);
                ty = (i + PTR) | j; dd->type = ty;
+            }
+            else if (td && (td->type & 3)) {
+               dd->etype = td->etype;
+               sz *= tensor_size(td->type & 3, td->etype);
+            }
+            if (tdef) {
+               dd->tk = TypeId; goto next_type;
             }
             sz = (sz + 3) & -4;
             if (ctx == Loc && sz > osize) {
@@ -1894,6 +1950,7 @@ unwind_func: id = sym;
                }
             }
          }
+next_type:
          if (ctx != Par && tk == ',') next();
       }
       return;
@@ -3096,13 +3153,14 @@ int main(int argc, char **argv)
    memset(sym, 0, poolsz);
 
    // Register keywords in symbol stack. Must match the sequence of enum
-   p = "enum char int float struct union sizeof return goto break continue "
+   p = "typedef enum char int float struct union "
+       "sizeof return goto break continue "
        "if do while for switch case default else "
        "__clear_cache fnegf fabsf sqrtf void main";
 
    // call "next" to create symbol table entry.
    // store the keyword's token type in the symbol table entry's "tk" field.
-   for (i = Enum; i <= Else; ++i) {
+   for (i = Typedef; i <= Else; ++i) {
       next(); id->tk = i; id->class = Keyword; // add keywords to symbol table
    }
 
