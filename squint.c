@@ -564,6 +564,10 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
               (inst & 0x10) == 0x10) {
             info |= RI_RdAct | ((inst & (1<<20)) ? (RI_RdDest) : 0);
          }
+         else if ((inst & 0xfff00f7f) == 0xee100a10)   // fmrs
+            *rInfo = RI_RdAct | RI_RdDest;
+         else if ((inst & 0xfff00f7f) == 0xee000a10)   // fmsr
+            *rInfo = RI_RdAct;
       }
 
       /* Mask out any registers outside of rename range */
@@ -616,15 +620,13 @@ static void create_inst_info_f(int *instInfo, int *funcBegin, int *funcEnd)
             ++scan;
          }
       }
-
-      if ((*scan & 0xffbf0fff) == 0xecbd0a01) // vpop Fd
+      // order is important
+      if ((*scan & 0xffbf0fff) == 0xecbd0a01 || // vpop Fd
+          (*scan & 0xff300f00) == 0xed100a00)   // vldr
          *rInfo = RI_RdAct | RI_RdDest | ((*scan & 0x7000) * 2) |
                   ((*scan & RI_Sd) >> 10) | ((*scan & 0x8000) << 7);
       else if (*scan == 0xed2d0a01) // vpush s0
          *rInfo = RI_RdAct;
-      else if ((*scan & 0xff300f00) == 0xed100a00) // vldr
-         *rInfo = RI_RdAct | RI_RdDest | ((*scan & 0x7000) * 2) |
-                  ((*scan & RI_Sd) >> 10) | ((*scan & 0x8000) << 7);
       else if ((*scan & 0xff300f00) == 0xed000a00) // vstr
          *rInfo = RI_RdAct | ((*scan & 0x7000) * 2) |
                   ((*scan & RI_Sd) >> 10) | ((*scan & 0x8000) << 7);
@@ -650,13 +652,19 @@ static void create_inst_info_f(int *instInfo, int *funcBegin, int *funcEnd)
                     ((*scan & 0x7000) * 2) | ((*scan & 0x8000) << 7) |
                     ((*scan & 0x20) >> 5) | ((*scan & 0x07) * 2) |
                     ((*scan & 0x08) << 17);
-#ifdef SQUINT_TODO
-      else if ((*scan & 0xffff0fd0) == 0xeeb70ac0) /* ignore fcvtds */ ;
-      else if ((*scan & 0xfff00f7f) == 0xee100a10 || // fmrs
-               (*scan & 0xfff00f7f) == 0xee000a10 || // fmsr
-               (*scan & 0xffbf0fd0) == 0xeeb80ac0 || // fsitos
-               (*scan & 0xffbf0f50) == 0xeebd0a40) /* ignore */ ; // ftosis
-#endif
+      else if ((*scan & 0xffff0fd0) == 0xeeb70ac0) *rInfo = 0 ; // ignore
+      else if ((*scan & 0xfff00f7f) == 0xee100a10)   // fmrs
+         *rInfo = RI_RnAct | ((*scan & 0x70000) * 2) |
+                    ((*scan & 0x80000) << 2) | ((*scan & 0x80) << 9);
+      else if ((*scan & 0xfff00f7f) == 0xee000a10)   // fmsr
+         *rInfo = RI_RnAct | RI_RnDest | ((*scan & 0x70000) * 2) |
+                    ((*scan & 0x80000) << 2) | ((*scan & 0x80) << 9);
+      else if ((*scan & 0xffbf0fd0) == 0xeeb80ac0 || // fsitos
+               (*scan & 0xffbf0f50) == 0xeebd0a40)   // ftosis
+         *rInfo = RI_RdAct | RI_RdDest | RI_RmAct | ((*scan & 0x20) >> 5) |
+                    ((*scan & 0x07) * 2) | ((*scan & 0x08) << 17) |
+                    ((*scan & RI_Sd) >> 10) | ((*scan & 0x7000) * 2) |
+                    ((*scan & 0x8000) << 7);
       else if ((*scan & 0xff000f10) == 0xee000a00) { // Fop Fd, Fn, Fm
          *rInfo = RI_RdAct | RI_RdDest | RI_RnAct | RI_RmAct |
                     ((*scan & RI_Sd) >> 10) | ((*scan & 0x7000) * 2) |
@@ -1318,8 +1326,8 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd,
    int *scan, *scanm1, *scanp1, *scanp2;
    int *info, *rxd, *rxu, *rdd, *rdu, *rdt, *rfinal;
    int rx, rd, rxS, rdm1, cond;
-   int movMask = (dofloat) ? 0xffbf00d0 : 0xffff0ff0;
-   int movInst = (dofloat) ? 0xeeb00040 : 0xe1a00000;
+   int movMask = (dofloat) ? 0xffbf0fd0 : 0xffff0ff0;
+   int movInst = (dofloat) ? 0xeeb00a40 : 0xe1a00000;
 
    if (dofloat)
       create_inst_info_f(instInfo, funcBegin, funcEnd);
@@ -1724,7 +1732,6 @@ static void apply_peepholes7_7(int *funcBegin, int *funcEnd)
    }
 }
 
-
 static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd,
                              int flow, int fhigh)
 {
@@ -1929,13 +1936,14 @@ fallback:
    free(finfo);
 }
 
-static void apply_ptr_cleanup(int *instInfo, int *funcBegin, int *funcEnd)
+static int apply_ptr_cleanup(int *instInfo, int *funcBegin, int *funcEnd,
+                             int base)
 {
    int *scan, *scan2, *scanp1, *scanp1p, inst, i, j, rd;
    int *scanm, *scan2m, mask;
-   int off, num_off, foff[16], jreg;
-   int *last_vstr_ptr[16], *last_vstr[16];
-   int vstr_ptr_inst[16], vstr_inst[16];
+   int off, num_off, foff[32], jreg;
+   int *last_vstr_ptr[32], *last_vstr[32];
+   int vstr_ptr_inst[32], vstr_inst[32];
    int *rdt, *info, *rfinal, *rm, *rn, *ru;
    int *rda, *rdb;
    struct ptr_s {
@@ -1944,7 +1952,7 @@ static void apply_ptr_cleanup(int *instInfo, int *funcBegin, int *funcEnd)
    } ptr[60];
    int np = 0;
    int *finfo;
-   int freg = 16;
+   int freg = base;
    int ren_reg, first_op, first_ptr;
 
    create_inst_info(instInfo, funcBegin, funcEnd);
@@ -2093,7 +2101,7 @@ quick_delete:
 
    for (i=0; i<np; ++i) { // use local vars
       first_op = 0; first_ptr = 0; num_off = 0;
-      for (j=0; j<16; ++j) vstr_ptr_inst[j] = 0;
+      for (j=0; j<32; ++j) vstr_ptr_inst[j] = 0;
       scan = ptr[i].first;
       do {
          info = &instInfo[scan-funcBegin];
@@ -2144,7 +2152,7 @@ quick_delete:
                      vstr_ptr_inst[j] = *scan;
                      vstr_inst[j] = *scan2;
                      *scan2 = NOP;
-                     *ru &= RI_bb;  *rda &= RI_bb;
+                     *ru &= RI_bb; *rda &= RI_bb;
                   }
                } while (rda < rdb);
             }
@@ -2218,6 +2226,8 @@ quick_delete:
    }
 
    if (np != 0) free(finfo);
+
+   return freg;
 }
 
 /**********************************************************/
@@ -3781,8 +3791,7 @@ int squint_opt(int *begin, int *end)
          ibase = create_pushpop_map3(tmpbuf, funcBegin, retAddr, ibase, 0);
          apply_peepholes7_5(tmpbuf, funcBegin, retAddr);
          apply_peepholes7_7(funcBegin, retAddr);
-
-         apply_ptr_cleanup(tmpbuf, funcBegin, retAddr);
+         fbase = apply_ptr_cleanup(tmpbuf, funcBegin, retAddr, fbase);
 
          rename_nop(funcBegin, retAddr);
 
