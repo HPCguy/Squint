@@ -870,11 +870,11 @@ static void reg_rename_f(int newreg, int oldreg, int *use, int *inst)
       }
       if (mask & RI_RnAct) {
          tmp = (tmp & ~(RI_Rn | 0x80)) |
-               ((newreg & 0x1e) << 15) | ((newreg & 1) ? 0x80 : 0);
+               ((newreg & 0x1e) << 15) | ((newreg & 1) << 7);
       }
       if (mask & RI_RmAct) {
          tmp = (tmp & ~(RI_Rm | 0x20)) |
-               ((newreg & 0x1e)>>1) | ((newreg & 1) ? 0x20 : 0);
+               ((newreg & 0x1e)>>1) | ((newreg & 1) << 5);
       }
       *inst = tmp;
 
@@ -1903,7 +1903,7 @@ fallback:
             }
             else if (((*scan & RI_Rd)>>16) == (*scanp1 & RI_Rm) &&
                      ((*scan & 0x00400000)>>17) == (*scanp1 & 0x20)) {
-               rn = ((*scanp1 & RI_Rn)>>15) + ((*scanp1 & 0x80) ? 1 : 0);
+               rn = ((*scanp1 & RI_Rn)>>15) + ((*scanp1 & 0x80) >> 7);
                if (rn < flow || rn >= fhigh) continue;
                rnu = find_use(finfo, &finfo[scanp1-funcBegin+1], rn, S_FWD);
                if (rnu != 0) {
@@ -3030,7 +3030,7 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
       scanp1 = active_inst(pair[i].pop,  1);
 
       if (dofloat && (*scanm1 & 0xfff0f050) == 0xeeb00040) { // vmov s0, Fm
-         rn = (*scanm1 & 0x0f)*2 + ((*scanm1 & 0x20) ? 1 : 0);
+         rn = (*scanm1 & 0x0f)*2 + ((*scanm1 & 0x20) >> 5);
          if (rn >= 2 && rn < base) {
             *scanm1 = NOP;
             *pair[i].push = NOP;
@@ -3046,7 +3046,7 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
       int info = instInfo[scanm1-funcBegin];
       if ((info & RI_hasD) == 0) continue;
 
-      rd = dofloat ? ((info & RI_Rd) >> 12) :
+      rd = dofloat ? (((info & RI_Rd) >> 12) | ((info & RI_Sd) >> 18)) :
            ((info & RI_RdDest) ?
             ((info & RI_Rd) >> 12) : ((info & RI_Rn) >> 16));
 
@@ -3343,12 +3343,12 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
             }
             // ldr r0, [pc, #X]
             *scan = 0xe51f0000 | (((scan + 2) - (funcBegin-(i+j)))*4);
-            scan[1] = 0xed900a00 | (((fbase+i) & 0x0e)<<11) |
+            scan[1] = 0xed900a00 | (((fbase+i) & 0x1e) << 11) |
                       (((fbase+i) & 1)*0x400000); // vldr s(fbase), [r0]
             ++scan;
          }
          else { // local const
-            *scan = 0xed1f0a00 | (((fbase+i) & 0x0e)<<11) | // vldr
+            *scan = 0xed1f0a00 | (((fbase+i) & 0x1e) << 11) | // vldr
                     (((fbase+i) & 1)*0x400000) |
                     ((scan + 2) - (funcBegin-(i+j)));
          }
@@ -3368,14 +3368,14 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
                if (fpcnst[i] == tmp) {
                   scanp1 = active_inst(scan, 1);
                   if ((*scanp1 & 0xff70ff00) == 0xed000a00) { // vstr s0, ...
-                     *scanp1 |= (((fbase+i) & 0x0e)<<11) |
-                                (((fbase+i) & 1)*0x400000);
+                     *scanp1 |= (((fbase+i) & 0x1e) << 11) |
+                                (((fbase+i) & 1) << 22);
                      *scan = NOP;
                   }
                   else {
                      if (*scanp1 == 0xed2d0a01) { // vpush s0
                         *scan = 0xeeb00a40 | (*scan & 0x0040f000) | // vmov
-                                ((fbase+i) >> 1) | (((fbase+i) & 1)*0x20);
+                                ((fbase+i) >> 1) | (((fbase+i) & 1) << 5);
                      }
                      else if (*scanp1 == 0xecfd0a01) { // vpop s1
                         scanp1 = active_inst(scanp1, 1);
@@ -3389,8 +3389,8 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
                         scanp1 = active_inst(scanp1, 1);
                         if ((*scanp1 & 0xffffff00) == 0xed810a00) {
                            // vstr s0, [r1, #x]
-                           *scanp1 |= (((fbase+i) & 0x0e)<<11) |
-                                      (((fbase+i) & 1)*0x400000);
+                           *scanp1 |= (((fbase+i) & 0x1e) << 11) |
+                                      (((fbase+i) & 1) << 22);
                            *scan = NOP;
                         }
                         else {
@@ -3413,15 +3413,15 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
                   if (fpcnst[i] == tmp) {
                      scanp1 = active_inst(scanfp, 1);
                      if ((*scanp1 & 0xff70ff00) == 0xed000a00) { // vstr s0, ...
-                        *scanp1 |= (((fbase+i) & 0x0e)<<11) |
-                                   (((fbase+i) & 1)*0x400000);
+                        *scanp1 |= (((fbase+i) & 0x1e) << 11) |
+                                   (((fbase+i) & 1) << 22);
                         *scan = NOP;
                         *scanfp = NOP;
                      }
                      else {
                         if (*scanp1 == 0xed2d0a01) { // vpush s0
                            *scan = 0xeeb00a40 | (*scan & 0x0040f000) | // vmov
-                                   ((fbase+i) >> 1) | (((fbase+i) & 1)*0x20);
+                                   ((fbase+i) >> 1) | (((fbase+i) & 1) << 5);
                            *scanfp = NOP;
                         }
                         else if (*scanp1 == 0xecfd0a01) { // vpop s1
@@ -3436,8 +3436,8 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
                            scanp1 = active_inst(scanp1, 1);
                            if ((*scanp1 & 0xffffff00) == 0xed810a00) {
                               // vstr s0, [r1, #x]
-                              *scanp1 |= (((fbase+i) & 0x0e)<<11) |
-                                         (((fbase+i) & 1)*0x400000);
+                              *scanp1 |= (((fbase+i) & 0x1e) << 11) |
+                                         (((fbase+i) & 1) << 22);
                               *scan = NOP;
                               *scanfp = NOP;
                            }
@@ -3622,7 +3622,7 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
                            *rscan = NOP;
                         else {
                            if (dofloat)
-                              *rscan = 0xeeb00a40 | (((base+j)&0x0e) << 11) |
+                              *rscan = 0xeeb00a40 | (((base+j) & 0x1e) << 11) |
                                        (((base+j) & 1) << 22) |
                                        ((base+i)>>1) | (((base+i) & 1) << 5);
                            else
@@ -3645,7 +3645,7 @@ nextUse:
          else { // store [fp, #X]
             if (dofloat)
                *scan = 0xeeb00a40 |
-                       (((base+i) & 0x0e) << 11) | (((base+i) & 1) << 22) |
+                       (((base+i) & 0x1e) << 11) | (((base+i) & 1) << 22) |
                        ((*scan & RI_Rd) >> 12) | ((*scan & RI_Sd) >> 17);
             else
                *scan = 0xe1a00000 | ((base+i) << 12) | ((*scan & RI_Rd) >> 12);
@@ -3664,7 +3664,7 @@ nextUse:
       if (offset[i] >= 0) {
          if (dofloat)
             *scan++ = 0xed9b0a00 |
-                      (((base+i) & 0x0e) << 11) | (((base+i) & 1) << 22) |
+                      (((base+i) & 0x1e) << 11) | (((base+i) & 1) << 22) |
                       offset[i] | (1<<23);
          else
             *scan++ = 0xe51b0000 | ((base + i) << 12) | offset[i] | (1<<23);
