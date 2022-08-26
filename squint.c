@@ -866,7 +866,7 @@ static void reg_rename_f(int newreg, int oldreg, int *use, int *inst)
       int tmp = *inst;
       if (mask & RI_RdAct) {
          tmp = (tmp & ~(RI_Rd | RI_Sd)) |
-               ((newreg & 0x1e) << 11) | ((newreg & 1) ? RI_Sd : 0);
+               ((newreg & 0x1e) << 11) | ((newreg & 1) << 22);
       }
       if (mask & RI_RnAct) {
          tmp = (tmp & ~(RI_Rn | 0x80)) |
@@ -1902,23 +1902,23 @@ fallback:
                *scan = NOP;
             }
             else if (((*scan & RI_Rd)>>16) == (*scanp1 & RI_Rm) &&
-                     ((*scan & 0x00400000)>>17) == (*scanp1 & 0x20)) {
-               rn = ((*scanp1 & RI_Rn)>>15) + ((*scanp1 & 0x80) >> 7);
+                     ((*scan & RI_Sd) >> 17) == (*scanp1 & 0x20)) {
+               rn = ((*scanp1 & RI_Rn) >> 15) + ((*scanp1 & 0x80) >> 7);
                if (rn < flow || rn >= fhigh) continue;
                rnu = find_use(finfo, &finfo[scanp1-funcBegin+1], rn, S_FWD);
                if (rnu != 0) {
                   rnd = find_def(finfo, &finfo[scanp1-funcBegin+1], rn, S_FWD);
                   if (rnd == 0 || rnu <= rnd) continue;
                }
-               rd = ((*scan & RI_Rd)>>11) + ((*scan & 0x00400000) ? 1 : 0);
+               rd = ((*scan & RI_Rd) >> 11) + ((*scan & RI_Sd) >> 22);
                rdu = &finfo[scanp1-funcBegin];
                rdd = find_def(finfo, &finfo[scanp1-funcBegin+1], rd, S_FWD);
                if (rdd == 0) rdd = &finfo[funcEnd-funcBegin];
                rdd = find_use(finfo, rdd, rd, S_BACK); // last xform
-               for (rdt = rdu+1; rdt<=rdd; ++rdt)
+               for (rdt = rdu+1; rdt <= rdd; ++rdt)
                   if (*rdt & RI_bb) break;
                if (rdt > rdd) {
-                  *scanp1 = (*scanp1 & mask2) | ((*scanp1 & RI_Rn)>>4) |
+                  *scanp1 = (*scanp1 & mask2) | ((*scanp1 & RI_Rn) >> 4) |
                             ((*scanp1 & 0x80) << 15) | (*scan & 0x000f00af);
                   *scan = NOP;
                   do {
@@ -3030,14 +3030,14 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
       scanp1 = active_inst(pair[i].pop,  1);
 
       if (dofloat && (*scanm1 & 0xfff0f050) == 0xeeb00040) { // vmov s0, Fm
-         rn = (*scanm1 & 0x0f)*2 + ((*scanm1 & 0x20) >> 5);
+         rn = (*scanm1 & RI_Rm)*2 + ((*scanm1 & 0x20) >> 5);
          if (rn >= 2 && rn < base) {
             *scanm1 = NOP;
             *pair[i].push = NOP;
             *pair[i].pop = NOP;
-            instInfo[scanm1-funcBegin] &= ~RI_bb;
-            instInfo[pair[i].push-funcBegin] &= ~RI_bb;
-            instInfo[pair[i].pop-funcBegin]  &= ~RI_bb;
+            instInfo[scanm1-funcBegin] &= RI_bb;
+            instInfo[pair[i].push-funcBegin] &= RI_bb;
+            instInfo[pair[i].pop-funcBegin]  &= RI_bb;
             reg_rename_f(rn, 1, &instInfo[scanp1-funcBegin], scanp1);
             continue;
          }
@@ -3102,7 +3102,8 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
          if (dofloat) {
             *scanm1 = (*scanm1 & ~(RI_Rd | RI_Sd)) |
                       ((reg & 0x1e) << 11) | ((reg & 1) << 22);
-            instInfo[scanm1-funcBegin] = (info & ~RI_Rd) | (reg<<12);
+            instInfo[scanm1-funcBegin] = (info & ~(RI_Rd | RI_Sd)) |
+               ((reg & 0x0f) << 12) | ((reg & 0x10) << 18);
          }
          else {
             if (((*scanm1 & 0x0e0000f0) == 0x90)) {
@@ -3127,8 +3128,8 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
          } while (1);
          *pair[i].push = NOP;
          *pair[i].pop  = NOP;
-         instInfo[pair[i].push-funcBegin] = 0;
-         instInfo[pair[i].pop-funcBegin]  = 0;
+         instInfo[pair[i].push-funcBegin] &= RI_bb;
+         instInfo[pair[i].pop-funcBegin]  &= RI_bb;
 
          break;
       }
@@ -3165,8 +3166,8 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
          }
          *pair[i].push = NOP;
          *pair[i].pop  = NOP;
-         instInfo[pair[i].push-funcBegin] = 0;
-         instInfo[pair[i].pop-funcBegin]  = 0;
+         instInfo[pair[i].push-funcBegin] &= RI_bb;
+         instInfo[pair[i].pop-funcBegin]  &= RI_bb;
       }
    }
 
