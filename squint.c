@@ -3600,14 +3600,25 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
             }
             if (rdu == 0 || rdt <= rfinal || // rdu == 0 means func ret value
                 funcBegin[rdu-instInfo] == 0xe3500000) { // switch stmt
-               if (dofloat)
+               if (dofloat) {
                   *scan = 0xeeb00a40 | (*scan & 0x0040f000) |
                          ((base+i) >> 1) | (((base+i) & 1) << 5);
-               else
-                  *scan = 0xe1a00000 | (*scan & 0x0000f000) | (base+i);
+                  instInfo[scan-funcBegin] = RI_RdDest | RI_RdAct | RI_RmAct |
+                     ((base+i) & 0x0f) | (((base+i) & 0x10) << 16) |
+                     ((*scan & RI_Sd) >> 10) | ((*scan & 0x7000) * 2) |
+                     ((*scan & 0x8000) << 7) |
+                     (instInfo[scan-funcBegin] & RI_bb);
+               }
+               else {
+                  *scan = 0xe1a00000 | (*scan & RI_Rd) | (base+i);
+                  instInfo[scan-funcBegin] = RI_RdDest | RI_RdAct |
+                     RI_RmAct | (*scan & RI_Rd) | (base+i) |
+                     (instInfo[scan-funcBegin] & RI_bb);
+               }
             }
             else {
                *scan = NOP;
+               instInfo[scan-funcBegin] &= RI_bb;
 
                do {
                   int *rscan = &funcBegin[rdu-instInfo];
@@ -3619,15 +3630,29 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
                         if (offset[j] == off2) break;
                      }
                      if (j != numReg) {
-                        if (i == j)
+                        if (i == j) {
                            *rscan = NOP;
+                           instInfo[rscan-funcBegin] &= RI_bb;
+                        }
                         else {
-                           if (dofloat)
-                              *rscan = 0xeeb00a40 | (((base+j) & 0x1e) << 11) |
+                           if (dofloat) {
+                              *rscan = 0xeeb00a40 | (((base+j)&0x1e) << 11) |
                                        (((base+j) & 1) << 22) |
                                        ((base+i)>>1) | (((base+i) & 1) << 5);
-                           else
+                              instInfo[rscan-funcBegin] =
+                                 RI_RdDest | RI_RdAct | RI_RmAct |
+                                 (((base+j)&0x0f) << 12) |
+                                 (((base+j)&0x10) << 18) |
+                                 ((base+i) & 0x0f) | (((base+i) & 0x10)<< 16) |
+                                 (instInfo[rscan-funcBegin] & RI_bb);
+                           }
+                           else {
                               *rscan = 0xe1a00000 | ((base+j)<<12) | (base+i);
+                              instInfo[rscan-funcBegin] =
+                                 RI_RdDest | RI_RdAct | RI_RmAct |
+                                 ((base+j) << 12) | (base+i) |
+                                 (instInfo[rscan-funcBegin] & RI_bb);
+                           }
                         }
                         goto nextUse;
                      }
@@ -3644,12 +3669,22 @@ nextUse:
             }
          }
          else { // store [fp, #X]
-            if (dofloat)
+            if (dofloat) {
                *scan = 0xeeb00a40 |
                        (((base+i) & 0x1e) << 11) | (((base+i) & 1) << 22) |
                        ((*scan & RI_Rd) >> 12) | ((*scan & RI_Sd) >> 17);
-            else
+               instInfo[scan-funcBegin] = RI_RdDest | RI_RdAct | RI_RmAct |
+                  (((base+i)&0x0f) << 12) | (((base+i)&0x10) << 18) |
+                  ((instInfo[scan-funcBegin] & RI_Rd) >> 12) |
+                  ((instInfo[scan-funcBegin] & RI_Sd) >> 2) |
+                  (instInfo[scan-funcBegin] & RI_bb);
+            }
+            else {
                *scan = 0xe1a00000 | ((base+i) << 12) | ((*scan & RI_Rd) >> 12);
+               instInfo[scan-funcBegin] = RI_RdDest | RI_RdAct | RI_RmAct |
+                  ((base+i) << 12) | ((*scan & RI_Rd) >> 12) |
+                  (instInfo[scan-funcBegin] & RI_bb);
+            }
          }
       }
    }
