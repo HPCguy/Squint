@@ -1799,7 +1799,7 @@ do_typedef:
             }
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
             *--n = ld - loc; *--n = Enter;
-            if (oid && n[1] >= 64)
+            if (oid && n[1] >= 64 && osize >= 64)
                printf("--> %d: move %.*s to global scope for performance.\n",
                       oline, (oid->hash & 0x3f), oid->name);
             cas = 0;
@@ -2206,7 +2206,7 @@ int *codegen(int *jitmem, int *jitmap)
          } // sub  sp, sp, #tmp (scaled)
          if (tmp) *je++ = 0xe24dd000 | (((16-ii) & 0xf) << 8) | tmp;
          if (peephole) { // reserve space for frame registers
-            for (ii=0; ii<16; ++ii) *je++ = 0xe1a00000; // mov r0, r0
+            for (ii=0; ii<48; ++ii) *je++ = 0xe1a00000; // mov r0, r0
          }
          break;
       case ADJ:
