@@ -400,7 +400,7 @@ void next()
          return;
       }
       /* Calculate the constant */
-      // first byte is a number, and it is considered a numerical value
+      // first byte is a digit, and it is considered a numerical value
       else if (tk >= '0' && tk <= '9') {
          tk = Num; // token is char or int
          tkv.i = strtoul((pp = p - 1), &p, 0); // octal, decimal, hex parsing
@@ -439,8 +439,11 @@ void next()
             if (tk == Id) {
                next();
                while (tk == Sub) { t *= -1; next(); }
-               if (tk == Num) {
-                  id->class = Num; id->type = INT; id->val = t*tkv.i;
+               if (tk == Num || tk == NumF) {
+                  id->class = tk;
+                  id->val = (tk == Num) ? t*tkv.i :
+                            ((t == 1) ? tkv.i : (tkv.i | (1<<31)));
+                  id->type = (tk == Num) ? INT : FLOAT;
                }
             }
          }
@@ -667,7 +670,9 @@ resolve_fnproto:
          ty = d->type;
       }
       // enumeration, only enums have ->class == Num
-      else if (d->class == Num) { *--n = d->val; *--n = Num; ty = INT; }
+      else if (d->class == Num || d->class == NumF) {
+         *--n = d->val; *--n = d->class; ty = d->type;
+      }
       else {
          // Variable get offset
          switch (d->class) {
@@ -3146,7 +3151,7 @@ int main(int argc, char **argv)
 {
    int *freed_ast, *ast;
    int elf_fd;
-   int fd, i;
+   int fd, i, otk;
    int poolsz = 4 * 1024 * 1024; // arbitrary size
 
    if (!(sym = (struct ident_s *) malloc(poolsz)))
@@ -3215,14 +3220,16 @@ int main(int argc, char **argv)
       else if ((*argv)[1] == 'D') {
          p = &(*argv)[2]; next();
          if (tk != Id) fatal("bad -D identifier");
-         struct ident_s *dd = id; next(); i = 0;
+         struct ident_s *dd = id; next(); i = 0; otk = Num;
          if (tk == Assign) {
             next();
             expr(Cond);
-            if (*n != Num) fatal("bad -D initializer");
-            i = n[1]; n += 2;
+            if (*n != Num && *n != NumF)
+               fatal("bad -D initializer");
+            otk = *n; i = n[1]; n += 2;
          }
-         dd->class = Num; dd->type = INT; dd->val = i;
+         dd->class = otk; dd->val = i;
+         dd->type = (otk == Num) ? INT : FLOAT;
          --argc; ++argv;
       }
       else if (!strcmp(*argv, "-btrue")) {
