@@ -40,6 +40,7 @@ char *freep, *p, *lp; // current position in source code
 char *freedata, *data, *_data;   // data/bss pointer
 
 int *e, *le, *text; // current position in emitted code
+char *idn, *idp;    // decouples ids from program source code
 int *cas;           // case statement patch-up pointer
 int *def;           // default statement patch-up pointer
 int *brks;          // break statement patch-up pointer
@@ -394,7 +395,10 @@ void next()
          /* At this point, existing symbol name is not found.
           * "id" points to the first unused symbol table entry.
           */
-         id->name = pp;
+         id->name = idp;
+         memcpy(idp, pp, p-pp); idp[p-pp] = 0;
+         idp = (char *) (((int) idp + (p - pp) + 1 + sizeof(int)) &
+                         (-sizeof(int)));
          id->hash = tk;
          tk = id->tk = Id;  // token type identifier
          return;
@@ -636,15 +640,9 @@ void expr(int lev)
             if (d->class != 0) fatal("bad function call");
             d->type = INT;
             d->etype = 0;
-            // printf("%d: %.*s(): assuming any/all args are type int\n",
-            //        line, d->hash & 0x3f, d->name);
 resolve_fnproto:
             d->class = Syscall;
-            int namelen = d->hash & 0x3f;
-            char ch = d->name[namelen];
-            d->name[namelen] = 0;
             d->val = ef_getidx(d->name) ;
-            d->name[namelen] = ch;
          }
          next();
          t = 0; b = c = 0; tt = 0; nf = 0; // argument count
@@ -1805,8 +1803,8 @@ do_typedef:
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
             *--n = ld - loc; *--n = Enter;
             if (oid && n[1] >= 64 && osize >= 64)
-               printf("--> %d: move %.*s to global scope for performance.\n",
-                      oline, (oid->hash & 0x3f), oid->name);
+               printf("--> %d: move %s to global scope for performance.\n",
+                      oline, oid->name);
             cas = 0;
             gen(n);
             if (src) {
@@ -1831,8 +1829,7 @@ do_typedef:
                         int ii = 0;
                         for (scan = ir_var[ii];  scan; scan = ir_var[++ii])
                            if (loc - scan->val == *le) {
-                              printf(" %.*s (%d)\n",
-                                     scan->hash & 0x3f, scan->name, *le);
+                              printf(" %s (%d)\n", scan->name, *le);
                               break;
                            }
                      }
@@ -1842,7 +1839,7 @@ do_typedef:
                               (*le > 0 || -*le > 0x1000000)) {
                         for (scan = sym; scan->tk; ++scan)
                            if (scan->val == *le) {
-                              printf(" &%.*s", scan->hash & 0x3f, scan->name);
+                              printf(" &%s", scan->name);
                               if (src == 2) printf(" (0x%08x)", *le);
                               printf("\n");
                               break;
@@ -1875,8 +1872,7 @@ unwind_func: id = sym;
                   id->class = 0; id->val = 0; id->type = 0;
                }
                else if (id->class == 0 && id->type == -1) {
-                  printf("%d: label %.*s not defined\n",
-                         line, id->hash & 0x3f, id->name);
+                  printf("%d: label %s not defined\n", line, id->name);
                   exit(-1);
                }
                id++;
@@ -3157,6 +3153,7 @@ int main(int argc, char **argv)
    if (!(sym = (struct ident_s *) malloc(poolsz)))
       die("could not allocate symbol area");
    memset(sym, 0, poolsz);
+   idp = idn = (char *) malloc(64 * 1024); // max space for id names
 
    // Register keywords in symbol stack. Must match the sequence of enum
    p = "typedef enum char int float struct union "
@@ -3283,11 +3280,12 @@ int main(int argc, char **argv)
    int ret = elf ? elf32(poolsz, (int *) idmain->val, elf_fd) :
                    jit(poolsz,   (int *) idmain->val, argc, argv);
    free(freep);
+   free(text);
    free(freed_ast);
    free(tsize);
    free(freedata);
+   free(idn);
    free(sym);
-   free(text);
 
    return ret;
 }
