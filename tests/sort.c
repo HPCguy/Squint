@@ -26,7 +26,7 @@ int main()
    float val[20];
 
    for (i=0; i<20; ++i)
-      val[i] = (float) rand(0);
+      val[i] = (float) rand();
 
    bubblesort(val, 20);
 

@@ -81,6 +81,9 @@ int pplev, pplevt;  // preprocessor conditional level
 int oline, osize;   // for optimization suggestion
 int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
 
+// max function arguments
+#define MAX_FARG 52
+
 // identifier
 #define MAX_IR 256
 struct ident_s {
@@ -95,7 +98,8 @@ struct ident_s {
    int class, hclass; // FUNC, GLO (global var), LOC (local var), Syscall
    int type, htype;   // data type such as char and int
    int val, hval;
-   int etype, hetype; // extended type info. different meaning for funcs.
+   int etype, hetype; // extended type info for tensors
+   int ftype[2];      // extended type info for funcs
 } *id,  // currently parsed identifier
   *sym, // symbol table (simple list of identifiers)
   *oid, // for array optimization suggestion
@@ -624,7 +628,7 @@ int tensor_size(int dim, int etype)
  */
 void expr(int lev)
 {
-   int t, tc, tt, nf, *b, sz, *c;
+   int t, tc, tt[2], nf, *b, sz, *c;
    int otk, memsub = 0;
    union conv *c1, *c2;
    struct ident_s *d;
@@ -639,13 +643,13 @@ void expr(int lev)
          if (d->class < Func || d->class > Sqrt) {
             if (d->class != 0) fatal("bad function call");
             d->type = INT;
-            d->etype = 0;
+            d->ftype[0] = d->ftype[1] = 0;
 resolve_fnproto:
             d->class = Syscall;
             d->val = ef_getidx(d->name) ;
          }
          next();
-         t = 0; b = c = 0; tt = 0; nf = 0; // argument count
+         t = 0; b = c = 0; tt[0] = tt[1] = 0; nf = 0; // FP argument count
          if (peephole && (d->class < Fneg || d->class > Sqrt)) {
             *--n = Phf; c = n;
          }
@@ -653,18 +657,20 @@ resolve_fnproto:
             expr(Assign);
             if (c != 0) { *--n = (int) c; *--n = '{'; c = 0; } // peephole
             *--n = (int) b; b = n; ++t;
-            tt = tt * 2; if (ty == FLOAT) { ++nf; ++tt; }
+            if (ty == FLOAT) { ++nf; tt[(t+11)/32] |= 1 << ((t+11) % 32); }
             if (tk == ',') {
                next();
                if (tk == ')') fatal("unexpected comma in function call");
             } else if (tk != ')') fatal("missing comma in function call");
          }
-         if (t > 22) fatal("maximum of 22 function parameters");
-         tt = (tt << 10) + (nf << 5) + t; // func etype not like other etype
-         if (d->etype && (d->etype != tt) ) fatal("argument type mismatch");
+         if (t > MAX_FARG) fatal("maximum of 52 function parameters");
+         tt[0] += (nf << 6) + t;
+         if (d->ftype[0] && (d->ftype[0] != tt[0] || d->ftype[1] != tt[1]) )
+            fatal("argument type mismatch");
          next();
          // function or system call id
-         *--n = tt; *--n = t; *--n = d->val; *--n = (int) b; *--n = d->class;
+         *--n = tt[1]; *--n = tt[0]; *--n = t;
+         *--n = d->val; *--n = (int) b; *--n = d->class;
          ty = d->type;
       }
       // enumeration, only enums have ->class == Num
@@ -817,8 +823,8 @@ resolve_fnproto:
       if (*n == Num) n[1] = -n[1];
       else if (*n == NumF) { n[1] ^= 0x80000000; }
       else if (ty == FLOAT) {
-         *--n = 0; *--n = 1057; *--n = 1;
-         *--n = FNEG; --n; *n = (int) (n+4); *--n = Fneg;
+         *--n = 0; *--n = 0; *--n = 0x1041; *--n = 1;
+         *--n = FNEG; --n; *n = (int) (n+5); *--n = Fneg;
       }
       else {
          *--n = -1; *--n = Num; --n; *n = (int) (n + 3); *--n = Mul;
@@ -1446,26 +1452,32 @@ void gen(int *n)
       b = (int *) n[1]; k = b ? n[3] : 0;
       if (k) {
          if (i == Syscall) {
-            isPrtf = (n[4] & 0x3e0) && !strcmp(ef_cache[n[2]]->name,"printf");
+            isPrtf = (n[4] & 0xfc0) && !strcmp(ef_cache[n[2]]->name,"printf");
             if (isPrtf) {
                *++e = PHD; *++e = IMM; *++e = (k & 1)*4; *++e = VENT;
             }
          }
-         l = (i != ClearCache) ? (n[4] >> 10) : 0;
          a = (int *) malloc(sizeof(int) * k);
          for (j = 0; *b ; b = (int *) *b) a[j++] = (int) b;
          a[j] = (int) b;
          while (j >= 0) { // push arguments
             gen(b + 1);
             if (peephole && i != ClearCache) *++e = PHD;
-            *++e = (l & (1 << j)) ? PSHF : PSH; --j; b = (int *) a[j];
+            if (i == ClearCache)
+               *++e = PSH;
+            else
+               *++e = (n[4 + (k-1-j+12)/32] & (1 << ((k-1-j+12)%32))) ?
+                      PSHF : PSH;
+            --j; b = (int *) a[j];
          }
          free(a);
       }
       if (i == Syscall) *++e = SYSC;
       if (i == Func) *++e = JSR;
       *++e = n[2];
-      if (n[3]) { *++e = ADJ; *++e = (i == Syscall) ? n[4] : n[3]; }
+      if (n[3] || i == Syscall) {
+         *++e = ADJ; *++e = (i == Syscall) ? n[4] : n[3];
+      }
       if (k && i == Syscall && isPrtf) *++e = VLEV;
       if (peephole && i != ClearCache) *++e = PHR0;
       break;
@@ -1749,15 +1761,13 @@ do_typedef:
          if (tk == Mul && td && (td->type & 3))
             fatal("typedef'd tensor ptr decls not supported... yet");
          while (tk == Mul) { next(); ty += PTR; }
-         switch (ctx) { // check non-callable identifiers
-         case Glo:
-            if (tk != Id) fatal("bad global declaration");
-            if (id->class >= ctx) fatal("duplicate global definition");
-            break;
-         case Loc:
-            if (tk != Id) fatal("bad local declaration");
-            if (id->class >= ctx) fatal("duplicate local definition");
-            break;
+         if (tk != Id || id->class >= ctx) {
+            char errmsg[64];
+            strcpy(errmsg, "bad/duplicate ");
+            strcat(errmsg, (ctx == Glo) ? "global" :
+                          ((ctx == Loc) ? "local" : "parameter"));
+            strcat(errmsg, " declaration/definition");
+            fatal(errmsg);
          }
          next();
          if (tk == '(') {
@@ -1775,18 +1785,18 @@ do_typedef:
             if (id->class == Func &&
                id->val > (int) text && id->val < (int) e)
                fatal("duplicate global definition");
-            dd->etype = 0; dd->class = Func; // type is function
+            dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = (int) (e + 1); // function Pointer? offset/address
             next(); nf = ir_count = ld = 0; // "ld" is parameter's index.
             while (tk != ')') {
                stmt(Par);
-               dd->etype = dd->etype * 2;
-               if (ty == FLOAT) { ++nf; ++(dd->etype); }
+               if (ty == FLOAT) {
+                  ++nf; dd->ftype[(ld+11)/32] |= 1 << ((ld+11) % 32);
+               }
                if (tk == ',') next();
             }
-            if (ld > 22) fatal("maximum of 22 function parameters");
-            // function etype is not like other etypes
-            next(); dd->etype = (dd->etype << 10) + (nf << 5) + ld; // prm info
+            if (ld > MAX_FARG) fatal("maximum of 52 function parameters");
+            next(); dd->ftype[0] += (nf << 6) + ld;
             if (tk == ';') { dd->val = 0; goto unwind_func; } // fn proto
             if (tk != '{') fatal("bad function definition");
             loc = ++ld;
@@ -2211,7 +2221,8 @@ int *codegen(int *jitmem, int *jitmap)
          }
          break;
       case ADJ:
-         *je++ = 0xe28dd000 + ( *pc++ & 0x1f) * 4; // add sp, sp, #(tmp * 4)
+         if (*pc & 0x3f)
+            *je++ = 0xe28dd000 + ( *pc++ & 0x3f) * 4; // add sp, sp, #(tmp * 4)
          break;
       case LEV:
          *je++ = 0xe28bd000; *je++ = 0xe8bd8800; // add sp, fp, #0; pop {fp, pc}
@@ -2304,8 +2315,9 @@ int *codegen(int *jitmem, int *jitmap)
          break;
       case SYSC:
          if (pc[1] != ADJ) die("codegen: no ADJ after native proc");
-         if ((pc[2] & 0x1f) > 10) die("codegen: no support for 11+ arguments");
-         c = pc[2]; ii = c & 0x1f; c >>= 5; nf = c & 0x1f; ni = ii - nf; c >>= 5;
+         if ((pc[2] & 0x3f) > 10) die("codegen: no support for 11+ arguments");
+         c = pc[2]; ii = c & 0x3f; c >>= 6;
+         nf = c & 0x3f; ni = ii - nf; c >>= 6;
          tmp = ef_getaddr(*pc);  // look up address from ef index
 
          // Handle ridiculous printf() varargs ABI inline
@@ -2314,7 +2326,7 @@ int *codegen(int *jitmem, int *jitmap)
             if (ii == 0) die("printf() has no arguments");
             jj = ii - 1; sz = 0; rMap = (int *) malloc(ii*sizeof(int));
             do {
-               if (c & (1 << jj)) { // float (adjust as though a double)
+               if (c & (1 << (ii-1-jj))) { // float (adjust as though double)
                   sz = sz + (sz & 1);
                   rMap[jj] = sz;
                   sz = sz + 2;
@@ -2337,7 +2349,7 @@ int *codegen(int *jitmem, int *jitmap)
                } while (jj >= 0);
                kk = jj + 1; // number of arguments to copy
                for (jj = 0; jj < kk; ++jj) {
-                  if (c & (1 << jj)) { // float
+                  if (c & (1 << (ii-1-jj))) { // float
                      // vldr s1, [sp, #(sz + jj*4)]
                      // fcvtds d0, s1
                      // vstr d0,[sp, #rMap[jj]-4]
@@ -2354,7 +2366,7 @@ int *codegen(int *jitmem, int *jitmap)
                }
             }
             for(; jj < ii; ++jj) { // handle values in regs
-               if (c & (1 << jj)) { // float
+               if (c & (1 << (ii-1-jj))) { // float
                   // vldr s"rMap[jj]+1", [sp, #(sz + jj*4)]
                   // fcvtds d"rMap[jj]/2", s"rMap[jj]+1"
                   // vmov r"rMap[jj]", r"rMap[jj]+1", d"rMap[jj]/2"
@@ -2376,7 +2388,7 @@ int *codegen(int *jitmem, int *jitmap)
             pc = pc + 3; kk = ni; // skip ADJ instruction
             for (jj = 0; jj < ii; ++jj) {
                if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
-               if (c & (1 << jj)) { // vpop {nf}
+               if (c & (1 << (ii-1-jj))) { // vpop {nf}
                   --nf;
                   *je++ = 0xecbd0a01 | ((nf & 1) << 22) | ((nf & 0xe) << 11);
                }
@@ -3169,9 +3181,12 @@ int main(int argc, char **argv)
 
    // add __clear_cache to symbol table
    next(); id->class = ClearCache; id->type = INT; id->val = CLCA;
-   next(); id->class = Fneg; id->type = FLOAT; id->val = FNEG; id->etype = 1057;
-   next(); id->class = Fabs; id->type = FLOAT; id->val = FABS; id->etype = 1057;
-   next(); id->class = Sqrt; id->type = FLOAT; id->val = SQRT; id->etype = 1057;
+   next(); id->class = Fneg; id->type = FLOAT;
+           id->val = FNEG; id->ftype[0] = 0x1041;
+   next(); id->class = Fabs; id->type = FLOAT;
+           id->val = FABS; id->ftype[0] = 0x1041;
+   next(); id->class = Sqrt; id->type = FLOAT;
+           id->val = SQRT; id->ftype[0] = 0x1041;
 
    next(); id->tk = Char; id->class = Keyword; // handle void type
    next();
