@@ -1064,7 +1064,7 @@ static void apply_peepholes3(int *instInfo, int *funcBegin, int *funcEnd)
       if (info & RI_hasD) {
          int *next, *nextDef, *nextUse;
          int destR =
-            ((info & RI_RdDest) ? (info&RI_Rd)>>12 : (info&RI_Rn)>>16) & 0xf;
+            ((info & RI_RdDest) ? (info&RI_Rd)>>12 : (info & RI_Rn)>>16) & 0xf;
          if (destR < 8) {
             next = active_inst(scan, 1);
             // if not a branch and not conditional execution...
@@ -2694,7 +2694,8 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
          else if (*scan != NOP) {
             if ((*scan & 0xffff0000) == 0xe59f0000 || // ldr  rN, [pc, #X]
                 (*scan & 0xffbf0f00) == 0xed9f0a00) { // vldr sN, [pc, #X]
-               if (scan != packed) {
+               if (((*scan & (1<<23))) && scan != packed) {
+                  // don't remap FP consts moved by func rename_register1()
                   int is_vldr = ((*scan & 0xffbf0f00) == 0xed9f0a00); // vldr
                   int offset = is_vldr ? (*scan & 0xff) : ((*scan & 0xfff) / 4);
                   tmp = find_const(((scan + 2 + offset) - cbegin)*4);
@@ -3326,15 +3327,17 @@ void simplify_frame(int *funcBegin, int *funcEnd)
 static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
                             int fbase)
 {
+   int i, done, tmp, numReg = 0;
    int *scan, *scanp1, *scanfp;
    int fpcnst[REN_BUF];
    int count[REN_BUF];
-   int i, j, done, tmp, numReg = 0;
+
+   // avoid tricky logic surrounding stack frame optimizations
+   if (funcBegin[2] == NOP) return fbase;
 
    for (i=0; i<REN_BUF; ++i) count[i] = 0;
 
    /* Extend this to support globals that are read but never written */
-
 
    /* record frame variable in this context */
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
@@ -3413,8 +3416,6 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
    if (numReg > 6)
       numReg = 6;
 
-   j = (funcBegin[2] == NOP) ? 0 : 1; // adjust for new NOP slot
-
    if (numReg > 0) {
       for (scan = funcBegin; *scan != NOP; ++scan);
       for (i=0; i<numReg; ++i) {
@@ -3428,15 +3429,15 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
                exit(-1);
             }
             // ldr r0, [pc, #X]
-            *scan = 0xe51f0000 | (((scan + 2) - (funcBegin-(i+j)))*4);
+            *scan = 0xe51f0000 | (((scan + 2) - (funcBegin-(i+1)))*4);
             scan[1] = 0xed900a00 | (((fbase+i) & 0x1e) << 11) |
-                      (((fbase+i) & 1)*0x400000); // vldr s(fbase), [r0]
+                      (((fbase+i) & 1) << 22); // vldr s(fbase), [r0]
             ++scan;
          }
          else { // local const
             *scan = 0xed1f0a00 | (((fbase+i) & 0x1e) << 11) | // vldr
-                    (((fbase+i) & 1)*0x400000) |
-                    ((scan + 2) - (funcBegin-(i+j)));
+                    (((fbase+i) & 1) << 22) |
+                    ((scan + 2) - (funcBegin-(i+1)));
          }
          *(funcBegin - (i+1)) = fpcnst[i];
          ++scan;
