@@ -51,6 +51,8 @@ int  cntc;          // !0 -> in a continue-stmt context
 int *tsize;         // array (indexed by type) of type sizes
 int tnew;           // next available type
 int tk;             // current token
+int tokloc;         // 0 = global scope, 1 = function scope
+                    // 2 = function scope, declaration in progress
 union conv {
    int i;
    float f;
@@ -76,34 +78,46 @@ int *n;             // current position in emitted abstract syntax tree
                     // This capability allows function parameter code to be
                     // emitted and pushed on the stack in the proper
                     // right-to-left order.
-int ld;             // local variable depth
+int ld, maxld;      // local variable depth
 int pplev, pplevt;  // preprocessor conditional level
 int oline, osize;   // for optimization suggestion
 int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
 
 // max function arguments
-#define MAX_FARG 52
+#define MAX_FARG  52
 
-// identifier
-#define MAX_IR 256
+// keywords and global ids grow upward in memory
+// Function parameters and (nested) local id scopes grow downward
+// When a local block scope terminates, it relinquishes stack space
+// Carefully creating declarations with block scopes improves optimization
+#define MAX_LABEL 32
 struct ident_s {
    int tk;         // type-id or keyword
    int hash;
    char *name;     // name of this identifier
    int pad;        // pad to multiple of 8 bytes
-   /* fields starting with 'h' were designed to save and restore
-    * the global class/type/val in order to handle the case if a
-    * function declares a local with the same name as a global.
-    */
-   int class, hclass; // FUNC, GLO (global var), LOC (local var), Syscall
-   int type, htype;   // data type such as char and int
-   int val, hval;
-   int etype, hetype; // extended type info for tensors
-   int ftype[2];      // extended type info for funcs
+   int class;    // FUNC, GLO (global var), LOC (local var), Syscall
+   int type;     // data type such as char and int
+   int val;
+   int etype;    // extended type info for tensors
+   int ftype[2]; // extended type info for funcs
 } *id,  // currently parsed identifier
   *sym, // symbol table (simple list of identifiers)
+  *symk, // tail for keywords
+  *symgt, // tail for global symbols
+  *syms,  // struct/union member parsing
+  *symlh, // head for local symbols
+  *symlt, // tail for loacal symbols
   *oid, // for array optimization suggestion
-  *ir_var[MAX_IR]; // IR information for local vars and parameters
+  *labt, // tail ptr for label Ids
+  lab[MAX_LABEL];
+
+// IR information for local vars and parameters
+#define MAX_IR   256
+struct ir_s {
+  int loc;
+  char *name;
+} ir_var[MAX_IR];
 int ir_count;
 
 // (library) external functions
@@ -115,11 +129,11 @@ int ef_count;
 
 struct member_s {
    struct member_s *next;
-   struct ident_s *id;
+   int hash;
+   char *id;
    int offset;
    int type;
    int etype;
-   int pad;
 } **members; // array (indexed by type) of struct member lists
 
 // tokens and classes (operators last and in precedence order)
@@ -389,22 +403,48 @@ void next()
          tk = (tk << 6) + (p - pp);  // hash plus symbol length
          // hash value is used for fast comparison. Since it is inaccurate,
          // we have to validate the memory content as well.
-         for (id = sym; id->tk; ++id) { // find one free slot in table
-            if (tk == id->hash && // if token is found (hash match), overwrite
-               !memcmp(id->name, pp, p - pp)) {
+
+         for (id = sym; id < symk; ++id) { // check for keywords
+            if (tk == id->hash && !memcmp(id->name, pp, p - pp)) {
                tk = id->tk;
                return;
+            }
+         }
+         if (tokloc) {
+            for (id = symlh; id < symlt; ++id) { // local ids
+               if (tk == id->hash && !memcmp(id->name, pp, p - pp)) {
+                  tk = id->tk;
+                  return;
+               }
+            }
+         }
+         if (tokloc < 2) {
+            for (id = symk; id < symgt; ++id) { // global ids
+               if (tk == id->hash && !memcmp(id->name, pp, p - pp)) {
+                  tk = id->tk;
+                  return;
+               }
+            }
+         }
+         if (tokloc) {
+            for (id = lab; id < labt; ++id) { // labels
+               if (!memcmp(id->name, pp, p - pp)) {
+                  tk = id->tk;
+                  return;
+               }
             }
          }
          /* At this point, existing symbol name is not found.
           * "id" points to the first unused symbol table entry.
           */
+         id = tokloc ? --symlh : symgt++;
          id->name = idp;
          memcpy(idp, pp, p-pp); idp[p-pp] = 0;
          idp = (char *) (((int) idp + (p - pp) + 1 + sizeof(int)) &
                          (-sizeof(int)));
          id->hash = tk;
          tk = id->tk = Id;  // token type identifier
+         id->class = id->val = id->type = id->etype = 0;
          return;
       }
       /* Calculate the constant */
@@ -639,6 +679,9 @@ void expr(int lev)
       d = id; next();
       // function call
       if (tk == '(') {
+         if (d == symlh) { // move func Ids to global sym table
+            memcpy(d = symgt++, symlh++, sizeof (struct ident_s));
+         }
          if (d->class == Func && d->val == 0) goto resolve_fnproto;
          if (d->class < Func || d->class > Sqrt) {
             if (d->class != 0) fatal("bad function call");
@@ -1191,9 +1234,13 @@ resolve_fnproto:
          if (n[0] == Load && n[1] > ATOM_TYPE && n[1] < PTR) n += 2; // struct
       case Arrow:
          if (t <= PTR+ATOM_TYPE || t >= PTR2) fatal("structure expected");
-         next();
+         if (tokloc) { otk = tokloc; tokloc = 1; next(); tokloc = otk; }
+         else next();
          if (tk != Id) fatal("structure member expected");
-         m = members[(t - PTR) >> 2]; while (m && m->id != id) m = m->next;
+         m = members[(t - PTR) >> 2];
+         while (m && (m->hash != id->hash || strcmp(m->id, id->name)))
+            m = m->next;
+         if (tokloc && id == symlh && id->val == 0) ++symlh;
          if (!m) fatal("structure member not found");
          if (m->offset) {
             *--n = m->offset; *--n = Num; --n; *n = (int) (n + 3);
@@ -1570,6 +1617,10 @@ void check_label(int **tt)
    if (*ss == ':') {
       if (id->class != 0 || !(id->type == 0 || id->type == -1))
          fatal("invalid label");
+      if (id < lab || id >= labt) { // move labels to separate area
+         if (id != symlh) fatal("label problem");
+         memcpy(id = labt++, symlh++, sizeof (struct ident_s));
+      }
       id->type = -1 ; // hack for id->class deficiency
       *--n = (int) id; *--n = Label;
       *--n = (int) *tt; *--n = '{'; *tt = n;
@@ -1615,9 +1666,9 @@ void loc_array_decl(int ct, int extent[3], int *dims, int *et, int *size)
 // statement parsing (syntax analysis, except for declarations)
 void stmt(int ctx)
 {
-   struct ident_s *dd, *td;
+   struct ident_s *dd, *td, *osymh, *osymt;
    int *a, *b, *c, *d;
-   int i, j, nf, atk, sz;
+   int i, j, nf, atk, sz, old, toksav;
    int nd[3];
    int bt, tdef = 0;
 
@@ -1625,6 +1676,11 @@ void stmt(int ctx)
       fatal("syntax: statement used outside function");
 
    switch (tk) {
+   // stmt -> ';'
+   case ';':
+      next();
+      *--n = ';';
+      return;
    case Typedef:
       next();
       switch (tk) {
@@ -1644,10 +1700,12 @@ void stmt(int ctx)
       // If current token is not "{", it means having enum type name.
       // Skip the enum type name.
       if (tk == Id) next();
+      if (tokloc) ++tokloc;
       if (tk == '{') {
          next();
          i = 0; // Enum value starts from 0
          while (tk != '}') {
+            if (tokloc) --tokloc;
             // Current token should be enum name.
             // If current token is not identifier, stop parsing.
             if (tk != Id) fatal("bad enum identifier");
@@ -1659,13 +1717,15 @@ void stmt(int ctx)
                i = n[1]; n += 2; // Set enum value
             }
             dd->class = Num; dd->type = INT; dd->val = i++;
-            if (tk == ',') next(); // If current token is ",", skip.
+            if (tk == ',') { if (tokloc) ++tokloc; next(); }
          }
          next(); // Skip "}"
       } else if (tk == Id) {
          if (ctx != Par) fatal("enum can only be declared as parameter");
-         id->type = INT; id->class = ctx; id->val = ld++;
-         ir_var[ir_count++] = id;
+         id->type = INT; id->class = ctx;
+         ir_var[ir_count].loc = id->val = ld++;
+         ir_var[ir_count++].name = id->name;
+         if (tokloc) --tokloc;
          next();
       }
       return;
@@ -1680,14 +1740,19 @@ do_typedef:
       dd = id; td = 0;
       switch (tk) {
       case TypeId:
-         td = id; bt = td->type; next(); break;
+         td = id; bt = td->type;
+         if (tokloc) tokloc = 2;
+         next(); break;
       case Char:
       case Int:
       case Float:
-         bt = (tk - Char) << 2; next(); break;
+         bt = (tk - Char) << 2;
+         if (tokloc) tokloc = 2;
+         next(); break;
       case Struct:
       case Union:
          atk = tk; next();
+         if (tokloc) tokloc = 2;
          if (tk == Id) {
             if (!id->type) id->type = tnew++ << 2;
             bt = id->type;
@@ -1696,8 +1761,10 @@ do_typedef:
             bt = tnew++ << 2;
          }
          if (tk == '{') {
-            next();
             if (members[bt >> 2]) fatal("duplicate structure definition");
+            next();
+            osymh = symlh; osymt = symlt; symlh = symlt = syms;
+            toksav = tokloc; tokloc = 2;
             tsize[bt >> 2] = 0; // for unions
             i = 0;
             while (tk != '}') {
@@ -1711,7 +1778,7 @@ do_typedef:
                   mbt = (tk - Char) << 2; next(); break;
                case Struct:
                case Union:
-                  next();
+                  tokloc = 1; next(); tokloc = 2;
                   if (tk != Id || id->type <= ATOM_TYPE || id->type >= PTR)
                      fatal("bad struct/union declaration");
                   mbt = id->type;
@@ -1726,10 +1793,12 @@ do_typedef:
                   sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
                   struct member_s *m = (struct member_s *)
                                        malloc(sizeof(struct member_s));
-                  m->id = id; m->etype = 0; next();
+                  m->hash = id->hash; m->id = id->name; m->etype = 0; next();
                   if (tk == Bracket) {
+                     --tokloc;
                      j = ty; loc_array_decl(0, nd, &nf, &m->etype, &sz);
                      ty = (j + PTR) | nf;
+                     ++tokloc;
                   }
                   sz = (sz + 3) & -4;
                   m->offset = i;
@@ -1744,6 +1813,7 @@ do_typedef:
                }
                next();
             }
+            tokloc = toksav; symlh = osymh; symlt = osymt;
             next();
             if (atk != Union) tsize[bt >> 2] = i;
          }
@@ -1787,7 +1857,8 @@ do_typedef:
                fatal("duplicate global definition");
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = (int) (e + 1); // function Pointer? offset/address
-            next(); nf = ir_count = ld = 0; // "ld" is parameter's index.
+            symlh = symlt; tokloc = 1;
+            next(); nf = ir_count = ld = maxld = 0; // "ld" is param index.
             while (tk != ')') {
                stmt(Par);
                if (ty == FLOAT) {
@@ -1811,7 +1882,8 @@ do_typedef:
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
-            *--n = ld - loc; *--n = Enter;
+            if (ld > maxld) maxld = ld;
+            *--n = maxld - loc; *--n = Enter;
             if (oid && n[1] >= 64 && osize >= 64)
                printf("--> %d: move %s to global scope for performance.\n",
                       oline, oid->name);
@@ -1836,12 +1908,13 @@ do_typedef:
                      if (*le > (int) base && *le <= (int) e)
                         printf(" %04d\n", off + ((*le - (int) le) >> 2) + 1);
                      else if (*(le - 1) == LEA && src == 2) {
-                        int ii = 0;
-                        for (scan = ir_var[ii];  scan; scan = ir_var[++ii])
-                           if (loc - scan->val == *le) {
-                              printf(" %s (%d)\n", scan->name, *le);
-                              break;
+                        int ii, irf = 0;
+                        for (ii = 0; ii < ir_count; ++ii)
+                           if (loc - ir_var[ii].loc == *le) {
+                              printf(" %s", ir_var[ii].name);
+                              irf = 1;
                            }
+                        if (irf) printf(" (%d)\n", *le);
                      }
                      else if (*(le - 1) == IMMF)
                         printf(" %f\n", *((float *) le));
@@ -1869,38 +1942,29 @@ do_typedef:
                   else printf("\n");
                }
             }
-unwind_func: id = sym;
-            if (src) memset(ir_var, 0, sizeof(struct ident_s *)*MAX_IR);
-            while (id->tk) { // unwind symbol table locals
-               if (id->class == Loc || id->class == Par) {
-                  id->class = id->hclass;
-                  id->type = id->htype;
-                  id->val = id->hval;
-                  id->etype = id->hetype;
-               }
-               else if (id->class == Label) { // clear id for next func
-                  id->class = 0; id->val = 0; id->type = 0;
-               }
-               else if (id->class == 0 && id->type == -1) {
-                  printf("%d: label %s not defined\n", line, id->name);
+unwind_func:
+            while (--labt >= lab) {
+               if (labt->class == 0 && labt->type == -1) {
+                  printf("%d: label %s not defined\n", line, labt->name);
                   exit(-1);
                }
-               id++;
             }
+            labt = lab; tokloc = 0;
          }
          else {
             if (ty > ATOM_TYPE && ty < PTR && tsize[bt >> 2] == 0)
                fatal("struct forward decl not supported... yet");
-            dd->hclass = dd->class; dd->class = ctx;
-            dd->htype = dd->type; dd->type = ty;
-            dd->hval = dd->val; if (tdef) dd->val = ty; //save fundamental type
-            dd->hetype = dd->etype;
+            dd->class = ctx;
+            dd->type = ty;
+            if (tdef) dd->val = ty; //save fundamental type
             sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
             if (tk == Bracket) {
                if (td && (td->type & 3))
                   fatal("can't stack typedef subscripts...yet");
+               if (tokloc) --tokloc;
                i = ty; loc_array_decl(ctx, nd, &j, &dd->etype, &sz);
                ty = (i + PTR) | j; dd->type = ty;
+               if (tokloc) ++tokloc;
             }
             else if (td && (td->type & 3)) {
                dd->etype = td->etype;
@@ -1915,16 +1979,19 @@ unwind_func: id = sym;
             }
             if (ctx == Glo) { dd->val = (int) data; data += sz; }
             else if (ctx == Loc) {
-               dd->val = (ld += sz / sizeof(int)); ir_var[ir_count++] = dd;
+               ir_var[ir_count].loc = dd->val = (ld += sz / sizeof(int));
+               ir_var[ir_count++].name = dd->name;
             }
             else if (ctx == Par) {
                if (ty > ATOM_TYPE && ty < PTR) // local struct decl
                   fatal("struct parameters must be pointers");
-               dd->val = ld++; ir_var[ir_count++] = dd;
+               ir_var[ir_count].loc = dd->val = ld++;
+               ir_var[ir_count++].name = dd->name;
             }
             if (tk == Assign) {
-               next();
                if (ctx == Par) fatal("default arguments not supported");
+               if (tokloc) --tokloc;
+               next();
                if (tk == '{' && (dd->type & 3)) init_array(dd, nd, j);
                else {
                   if (ctx == Loc) {
@@ -1960,11 +2027,26 @@ unwind_func: id = sym;
                      n += 2;
                   }
                }
+               if (tokloc) ++tokloc;
             }
          }
 next_type:
          if (ctx != Par && tk == ',') next();
       }
+      if (tokloc == 2) tokloc = 1;
+      return;
+   // stmt -> '{' stmt '}'
+   case '{':
+      next();
+      old = ld; osymh = symlh;
+      *--n = ';';
+      while (tk != '}') {
+         a = n; check_label(&a); stmt(ctx);
+         if (a != n) { *--n = (int) a; *--n = '{'; }
+      }
+      if (ld > maxld) maxld = ld;
+      ld = old; symlh = osymh;
+      next();
       return;
    case If:
       next();
@@ -2004,6 +2086,36 @@ next_type:
       if (tk != ')') fatal("close parenthesis expected");
       next();
       *--n = (int) b; *--n = (int) a; *--n = DoWhile;
+      return;
+   case For:
+      next();
+      if (tk != '(') fatal("open parenthesis expected");
+      next();
+      *--n = ';';
+      if (tk != ';') expr(Assign);
+      while (tk == ',') {
+         int *f = n; next(); expr(Assign); *--n = (int) f; *--n = '{';
+      }
+      d = n;
+      if (tk != ';') fatal("semicolon expected");
+      next();
+      *--n = ';';
+      expr(Assign); a = n; // Point to entry of for cond
+      if (tk != ';') fatal("semicolon expected");
+      next();
+      *--n = ';';
+      if (tk != ')') expr(Assign);
+      while (tk == ',') {
+         int *g = n; next(); expr(Assign); *--n = (int) g; *--n = '{';
+      }
+      b = n;
+      if (tk != ')') fatal("close parenthesis expected");
+      next();
+      ++brkc; ++cntc;
+      stmt(ctx); c = n;
+      --brkc; --cntc;
+      *--n = (int) d; *--n = (int) c; *--n = (int) b; *--n = (int) a;
+      *--n = For;
       return;
    case Switch:
       i = 0; j = 0;
@@ -2076,64 +2188,19 @@ next_type:
       if (tk != ';') fatal("semicolon expected");
       next();
       return;
-   /* For iteration is implemented as:
-    * Init -> Cond -> Bz to end -> Jmp to Body
-    * After -> Jmp to Cond -> Body -> Jmp to After
-    */
-   case For:
-      next();
-      if (tk != '(') fatal("open parenthesis expected");
-      next();
-      *--n = ';';
-      if (tk != ';') expr(Assign);
-      while (tk == ',') {
-         int *f = n; next(); expr(Assign); *--n = (int) f; *--n = '{';
-      }
-      d = n;
-      if (tk != ';') fatal("semicolon expected");
-      next();
-      *--n = ';';
-      expr(Assign); a = n; // Point to entry of for cond
-      if (tk != ';') fatal("semicolon expected");
-      next();
-      *--n = ';';
-      if (tk != ')') expr(Assign);
-      while (tk == ',') {
-         int *g = n; next(); expr(Assign); *--n = (int) g; *--n = '{';
-      }
-      b = n;
-      if (tk != ')') fatal("close parenthesis expected");
-      next();
-      ++brkc; ++cntc;
-      stmt(ctx); c = n;
-      --brkc; --cntc;
-      *--n = (int) d; *--n = (int) c; *--n = (int) b; *--n = (int) a;
-      *--n = For;
-      return;
    case Goto:
       next();
       if (tk != Id || (id->type != 0 && id->type != -1)
                 || (id->class != Label && id->class != 0))
          fatal("goto expects label");
+      if (id < lab || id >= labt) { // move labels to separate area
+         if (id != symlh) fatal("label problem");
+         memcpy(id = labt++, symlh++, sizeof (struct ident_s));
+      }
       id->type = -1; // hack for id->class deficiency
       *--n = (int) id; *--n = Goto; next();
       if (tk != ';') fatal("semicolon expected");
       next();
-      return;
-   // stmt -> '{' stmt '}'
-   case '{':
-      next();
-      *--n = ';';
-      while (tk != '}') {
-         a = n; check_label(&a); stmt(ctx);
-         if (a != n) { *--n = (int) a; *--n = '{'; }
-      }
-      next();
-      return;
-   // stmt -> ';'
-   case ';':
-      next();
-      *--n = ';';
       return;
    default:
       expr(Assign);
@@ -2776,8 +2843,8 @@ int elf32(int poolsz, int *main, int elf_fd)
    char *code = freecode = (char *) malloc(poolsz);
    char *buf = freebuf;
    int *jitmap = (int *) (code + (poolsz >> 1));
-   memset(buf, 0, poolsz);
-   char *o = buf = (char *) (((int) buf + PAGE_SIZE - 1)  & -PAGE_SIZE);
+   // memset(buf, 0, poolsz); // not strictly necessary
+   char *o = buf = (char *) (((int) buf + PAGE_SIZE - 1) & -PAGE_SIZE);
    code = (char *) (((int) code + PAGE_SIZE - 1) & -PAGE_SIZE);
 
    phdr_idx = 0;
@@ -3162,16 +3229,19 @@ int main(int argc, char **argv)
    int fd, i, otk;
    int poolsz = 4 * 1024 * 1024; // arbitrary size
 
-   if (!(sym = (struct ident_s *) malloc(poolsz)))
+   labt = lab; // initialize label Ids
+
+   if (!(sym = symk = symgt = (struct ident_s *) malloc(poolsz)))
       die("could not allocate symbol area");
-   memset(sym, 0, poolsz);
-   idp = idn = (char *) malloc(64 * 1024); // max space for id names
+   symlh = symlt = (struct ident_s *) ((int)sym + poolsz);
+   syms = (struct ident_s *) ((int)sym + poolsz/2);
+   idp = idn = (char *) malloc(96 * 1024); // max space for id names
 
    // Register keywords in symbol stack. Must match the sequence of enum
    p = "typedef enum char int float struct union "
        "sizeof return goto break continue "
        "if do while for switch case default else "
-       "__clear_cache fnegf fabsf sqrtf void main";
+       "void main __clear_cache fnegf fabsf sqrtf";
 
    // call "next" to create symbol table entry.
    // store the keyword's token type in the symbol table entry's "tk" field.
@@ -3179,7 +3249,11 @@ int main(int argc, char **argv)
       next(); id->tk = i; id->class = Keyword; // add keywords to symbol table
    }
 
-   // add __clear_cache to symbol table
+   next(); id->tk = Char; id->class = Keyword; // handle void type
+   symk = symgt; // mark keyword section
+   next();
+   struct ident_s *idmain = id; id->class = Main; // keep track of main
+                                id->ftype[0] = 0;
    next(); id->class = ClearCache; id->type = INT; id->val = CLCA;
    next(); id->class = Fneg; id->type = FLOAT;
            id->val = FNEG; id->ftype[0] = 0x1041;
@@ -3187,10 +3261,6 @@ int main(int argc, char **argv)
            id->val = FABS; id->ftype[0] = 0x1041;
    next(); id->class = Sqrt; id->type = FLOAT;
            id->val = SQRT; id->ftype[0] = 0x1041;
-
-   next(); id->tk = Char; id->class = Keyword; // handle void type
-   next();
-   struct ident_s *idmain = id; id->class = Main; // keep track of main
 
    if (!(freedata = _data = data = (char *) malloc(poolsz)))
       printf("could not allocat data area");
@@ -3200,7 +3270,7 @@ int main(int argc, char **argv)
    memset(tsize,   0, SMALL_TBL_SZ * sizeof(int)); // not strictly necessary
    if (!(freed_ast = ast = (int *) malloc(poolsz)))
       die("could not allocate abstract syntax tree area");
-   memset(ast, 0, poolsz); // not strictly necessary
+   // memset(ast, 0, poolsz); // not strictly necessary
    ast = (int *) ((int) ast + poolsz); // AST is built as a stack
    n = ast;
 
@@ -3268,7 +3338,7 @@ int main(int argc, char **argv)
                     malloc(SMALL_TBL_SZ * sizeof(struct ef_s *))))
       die("could not malloc() external function cache");
 
-   memset(e, 0, poolsz);
+   // memset(e, 0, poolsz); // not strictly necessary
 
    memset(members, 0, SMALL_TBL_SZ * sizeof(struct member_s *));
 
