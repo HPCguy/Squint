@@ -51,6 +51,7 @@ int  cntc;          // !0 -> in a continue-stmt context
 int *tsize;         // array (indexed by type) of type sizes
 int tnew;           // next available type
 int tk;             // current token
+int sbegin;         // statement begin state.
 int tokloc;         // 0 = global scope, 1 = function scope
                     // 2 = function scope, declaration in progress
 union conv {
@@ -79,8 +80,10 @@ int *n;             // current position in emitted abstract syntax tree
                     // emitted and pushed on the stack in the proper
                     // right-to-left order.
 int ld, maxld;      // local variable depth
+int lds[32], ldn;   // used to track scope level for duplicate var defs
 int pplev, pplevt;  // preprocessor conditional level
 int oline, osize;   // for optimization suggestion
+char *oname;
 int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
 
 // max function arguments
@@ -108,7 +111,6 @@ struct ident_s {
   *syms,  // struct/union member parsing
   *symlh, // head for local symbols
   *symlt, // tail for loacal symbols
-  *oid, // for array optimization suggestion
   *labt, // tail ptr for label Ids
   lab[MAX_LABEL];
 
@@ -413,6 +415,15 @@ void next()
          if (tokloc) {
             for (id = symlh; id < symlt; ++id) { // local ids
                if (tk == id->hash && !memcmp(id->name, pp, p - pp)) {
+                  if (tokloc == 2) {
+                     if (id->val > lds[ldn])
+                        fatal("redefinition of var within scope");
+                     else {
+                        printf("%d: var %s decl hides previous decl\n",
+                               line, id->name);
+                        goto new_block_def;
+                     }
+                  }
                   tk = id->tk;
                   return;
                }
@@ -437,6 +448,7 @@ void next()
          /* At this point, existing symbol name is not found.
           * "id" points to the first unused symbol table entry.
           */
+new_block_def:
          id = tokloc ? --symlh : symgt++;
          id->name = idp;
          memcpy(idp, pp, p-pp); idp[p-pp] = 0;
@@ -677,6 +689,18 @@ void expr(int lev)
    switch (tk) {
    case Id:
       d = id; next();
+      if (tokloc && sbegin && tk == ':') {
+         if (d->class != 0 || !(d->type == 0 || d->type == -1))
+            fatal("invalid label");
+         if (d < lab || d >= labt) { // move labels to separate area
+            if (d != symlh) fatal("label problem");
+            memcpy(d = labt++, symlh++, sizeof (struct ident_s));
+         }
+         d->type = -1 ; // hack for d->class deficiency
+         *--n = (int) d; *--n = Label;
+         next(); return;
+      }
+      sbegin = 0;
       // function call
       if (tk == '(') {
          if (d == symlh) { // move func Ids to global sym table
@@ -1609,25 +1633,6 @@ void gen(int *n)
    }
 }
 
-void check_label(int **tt)
-{
-   if (tk != Id) return;
-   char *ss = p;
-   while (*ss == ' ' || *ss == '\t') ++ss;
-   if (*ss == ':') {
-      if (id->class != 0 || !(id->type == 0 || id->type == -1))
-         fatal("invalid label");
-      if (id < lab || id >= labt) { // move labels to separate area
-         if (id != symlh) fatal("label problem");
-         memcpy(id = labt++, symlh++, sizeof (struct ident_s));
-      }
-      id->type = -1 ; // hack for id->class deficiency
-      *--n = (int) id; *--n = Label;
-      *--n = (int) *tt; *--n = '{'; *tt = n;
-      next(); next();
-   }
-}
-
 void loc_array_decl(int ct, int extent[3], int *dims, int *et, int *size)
 {
    int ii = ii; // keep this to disable frame optimization for now.
@@ -1680,6 +1685,19 @@ void stmt(int ctx)
    case ';':
       next();
       *--n = ';';
+      return;
+   case Id:
+      sbegin = 1; expr(Assign);
+      if (!sbegin) {
+         while (tk == ',' && ctx == Loc) {
+            int *t;
+            next(); t = n;  expr(Assign);
+            if (t != n) { *--n = (int) t; *--n = '{'; }
+         }
+         if (tk != ';' && tk != ',') fatal("semicolon expected");
+         next();
+      }
+      sbegin = 0;
       return;
    case Typedef:
       next();
@@ -1735,7 +1753,6 @@ void stmt(int ctx)
    case Struct:
    case Union:
    case TypeId:
-      ;
 do_typedef:
       dd = id; td = 0;
       switch (tk) {
@@ -1857,8 +1874,8 @@ do_typedef:
                fatal("duplicate global definition");
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = (int) (e + 1); // function Pointer? offset/address
-            symlh = symlt; tokloc = 1;
-            next(); nf = ir_count = ld = maxld = 0; // "ld" is param index.
+            symlh = symlt; tokloc = 1; next();
+            nf = ir_count = ld = maxld = ldn = lds[0] = 0; // ld is param index
             while (tk != ')') {
                stmt(Par);
                if (ty == FLOAT) {
@@ -1872,21 +1889,21 @@ do_typedef:
             if (tk != '{') fatal("bad function definition");
             loc = ++ld;
             next();
-            oline = -1; osize = -1; oid = 0; // optimization hint
+            oline = -1; osize = -1; oname = 0; // optimization hint
             // Not declaration and must not be function, analyze inner block.
             // e represents the address which will store pc
             // (ld - loc) indicates memory size to allocate
             *--n = ';';
             while (tk != '}') {
-               int *t = n; check_label(&t); stmt(Loc);
+               int *t = n; stmt(Loc);
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
             if (ld > maxld) maxld = ld;
             *--n = maxld - loc; *--n = Enter;
-            if (oid && n[1] >= 64 && osize >= 64)
+            if (oname && n[1] > 64 && osize > 64)
                printf("--> %d: move %s to global scope for performance.\n",
-                      oline, oid->name);
+                      oline, oname);
             cas = 0;
             gen(n);
             if (src) {
@@ -1975,7 +1992,7 @@ unwind_func:
             }
             sz = (sz + 3) & -4;
             if (ctx == Loc && sz > osize) {
-               osize = sz; oline = line; oid = dd;
+               osize = sz; oline = line; oname = dd->name;
             }
             if (ctx == Glo) { dd->val = (int) data; data += sz; }
             else if (ctx == Loc) {
@@ -2038,14 +2055,14 @@ next_type:
    // stmt -> '{' stmt '}'
    case '{':
       next();
-      old = ld; osymh = symlh;
+      lds[++ldn] = old = ld; osymh = symlh;
       *--n = ';';
       while (tk != '}') {
-         a = n; check_label(&a); stmt(ctx);
+         a = n; stmt(ctx);
          if (a != n) { *--n = (int) a; *--n = '{'; }
       }
       if (ld > maxld) maxld = ld;
-      ld = old; symlh = osymh;
+      --ldn; ld = old; symlh = osymh;
       next();
       return;
    case If:
@@ -2090,15 +2107,14 @@ next_type:
    case For:
       next();
       if (tk != '(') fatal("open parenthesis expected");
+      lds[++ldn] = old = ld; osymh = symlh;
       next();
       *--n = ';';
-      if (tk != ';') expr(Assign);
-      while (tk == ',') {
-         int *f = n; next(); expr(Assign); *--n = (int) f; *--n = '{';
+      if (tk != ';') {
+         stmt(ctx); if (tk == ';') next();
       }
+      else next();
       d = n;
-      if (tk != ';') fatal("semicolon expected");
-      next();
       *--n = ';';
       expr(Assign); a = n; // Point to entry of for cond
       if (tk != ';') fatal("semicolon expected");
@@ -2116,6 +2132,8 @@ next_type:
       --brkc; --cntc;
       *--n = (int) d; *--n = (int) c; *--n = (int) b; *--n = (int) a;
       *--n = For;
+      if (ld > maxld) maxld = ld;
+      --ldn; ld = old; symlh = osymh;
       return;
    case Switch:
       i = 0; j = 0;
@@ -2204,6 +2222,11 @@ next_type:
       return;
    default:
       expr(Assign);
+      while (tk == ',' && ctx == Loc) {
+         int *t;
+         next(); t = n;  expr(Assign);
+         if (t != n) { *--n = (int) t; *--n = '{'; }
+      }
       if (tk != ';' && tk != ',') fatal("semicolon expected");
       next();
    }
