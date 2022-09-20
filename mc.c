@@ -51,6 +51,7 @@ int  cntc;          // !0 -> in a continue-stmt context
 int *tsize;         // array (indexed by type) of type sizes
 int tnew;           // next available type
 int tk;             // current token
+int sbegin;         // statement begin state.
 int tokloc;         // 0 = global scope, 1 = function scope
                     // 2 = function scope, declaration in progress
 union conv {
@@ -685,6 +686,18 @@ void expr(int lev)
    switch (tk) {
    case Id:
       d = id; next();
+      if (tokloc && sbegin && tk == ':') {
+         if (d->class != 0 || !(d->type == 0 || d->type == -1))
+            fatal("invalid label");
+         if (d < lab || d >= labt) { // move labels to separate area
+            if (d != symlh) fatal("label problem");
+            memcpy(d = labt++, symlh++, sizeof (struct ident_s));
+         }
+         d->type = -1 ; // hack for d->class deficiency
+         *--n = (int) d; *--n = Label;
+         next(); return;
+      }
+      sbegin = 0;
       // function call
       if (tk == '(') {
          if (d == symlh) { // move func Ids to global sym table
@@ -1617,25 +1630,6 @@ void gen(int *n)
    }
 }
 
-void check_label(int **tt)
-{
-   if (tk != Id) return;
-   char *ss = p;
-   while (*ss == ' ' || *ss == '\t') ++ss;
-   if (*ss == ':') {
-      if (id->class != 0 || !(id->type == 0 || id->type == -1))
-         fatal("invalid label");
-      if (id < lab || id >= labt) { // move labels to separate area
-         if (id != symlh) fatal("label problem");
-         memcpy(id = labt++, symlh++, sizeof (struct ident_s));
-      }
-      id->type = -1 ; // hack for id->class deficiency
-      *--n = (int) id; *--n = Label;
-      *--n = (int) *tt; *--n = '{'; *tt = n;
-      next(); next();
-   }
-}
-
 void loc_array_decl(int ct, int extent[3], int *dims, int *et, int *size)
 {
    int ii = ii; // keep this to disable frame optimization for now.
@@ -1688,6 +1682,14 @@ void stmt(int ctx)
    case ';':
       next();
       *--n = ';';
+      return;
+   case Id:
+      sbegin = 1; expr(Assign);
+      if (!sbegin) {
+         if (tk != ';' && tk != ',') fatal("semicolon expected");
+         next();
+      }
+      sbegin = 0;
       return;
    case Typedef:
       next();
@@ -1743,7 +1745,6 @@ void stmt(int ctx)
    case Struct:
    case Union:
    case TypeId:
-      ;
 do_typedef:
       dd = id; td = 0;
       switch (tk) {
@@ -1886,7 +1887,7 @@ do_typedef:
             // (ld - loc) indicates memory size to allocate
             *--n = ';';
             while (tk != '}') {
-               int *t = n; check_label(&t); stmt(Loc);
+               int *t = n; stmt(Loc);
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
@@ -2049,7 +2050,7 @@ next_type:
       lds[++ldn] = old = ld; osymh = symlh;
       *--n = ';';
       while (tk != '}') {
-         a = n; check_label(&a); stmt(ctx);
+         a = n; stmt(ctx);
          if (a != n) { *--n = (int) a; *--n = '{'; }
       }
       if (ld > maxld) maxld = ld;
