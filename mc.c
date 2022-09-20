@@ -81,6 +81,7 @@ int *n;             // current position in emitted abstract syntax tree
 int ld, maxld;      // local variable depth
 int pplev, pplevt;  // preprocessor conditional level
 int oline, osize;   // for optimization suggestion
+char *oname;
 int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
 
 // max function arguments
@@ -108,7 +109,6 @@ struct ident_s {
   *syms,  // struct/union member parsing
   *symlh, // head for local symbols
   *symlt, // tail for loacal symbols
-  *oid, // for array optimization suggestion
   *labt, // tail ptr for label Ids
   lab[MAX_LABEL];
 
@@ -1872,7 +1872,7 @@ do_typedef:
             if (tk != '{') fatal("bad function definition");
             loc = ++ld;
             next();
-            oline = -1; osize = -1; oid = 0; // optimization hint
+            oline = -1; osize = -1; oname = 0; // optimization hint
             // Not declaration and must not be function, analyze inner block.
             // e represents the address which will store pc
             // (ld - loc) indicates memory size to allocate
@@ -1884,9 +1884,9 @@ do_typedef:
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
             if (ld > maxld) maxld = ld;
             *--n = maxld - loc; *--n = Enter;
-            if (oid && n[1] >= 64 && osize >= 64)
+            if (oname && n[1] > 64 && osize > 64)
                printf("--> %d: move %s to global scope for performance.\n",
-                      oline, oid->name);
+                      oline, oname);
             cas = 0;
             gen(n);
             if (src) {
@@ -1975,7 +1975,7 @@ unwind_func:
             }
             sz = (sz + 3) & -4;
             if (ctx == Loc && sz > osize) {
-               osize = sz; oline = line; oid = dd;
+               osize = sz; oline = line; oname = dd->name;
             }
             if (ctx == Glo) { dd->val = (int) data; data += sz; }
             else if (ctx == Loc) {
