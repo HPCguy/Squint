@@ -79,6 +79,7 @@ int *n;             // current position in emitted abstract syntax tree
                     // emitted and pushed on the stack in the proper
                     // right-to-left order.
 int ld, maxld;      // local variable depth
+int lds[32], ldn;   // used to track scope level for duplicate var defs
 int pplev, pplevt;  // preprocessor conditional level
 int oline, osize;   // for optimization suggestion
 char *oname;
@@ -413,6 +414,12 @@ void next()
          if (tokloc) {
             for (id = symlh; id < symlt; ++id) { // local ids
                if (tk == id->hash && !memcmp(id->name, pp, p - pp)) {
+                  if (tokloc == 2) {
+                     if (id->val > lds[ldn])
+                        fatal("redefinition of var within scope");
+                     else
+                        goto new_block_def;
+                  }
                   tk = id->tk;
                   return;
                }
@@ -437,6 +444,7 @@ void next()
          /* At this point, existing symbol name is not found.
           * "id" points to the first unused symbol table entry.
           */
+new_block_def:
          id = tokloc ? --symlh : symgt++;
          id->name = idp;
          memcpy(idp, pp, p-pp); idp[p-pp] = 0;
@@ -1857,8 +1865,8 @@ do_typedef:
                fatal("duplicate global definition");
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = (int) (e + 1); // function Pointer? offset/address
-            symlh = symlt; tokloc = 1;
-            next(); nf = ir_count = ld = maxld = 0; // "ld" is param index.
+            symlh = symlt; tokloc = 1; next();
+            nf = ir_count = ld = maxld = ldn = lds[0] = 0; // ld is param index
             while (tk != ')') {
                stmt(Par);
                if (ty == FLOAT) {
@@ -2038,14 +2046,14 @@ next_type:
    // stmt -> '{' stmt '}'
    case '{':
       next();
-      old = ld; osymh = symlh;
+      lds[++ldn] = old = ld; osymh = symlh;
       *--n = ';';
       while (tk != '}') {
          a = n; check_label(&a); stmt(ctx);
          if (a != n) { *--n = (int) a; *--n = '{'; }
       }
       if (ld > maxld) maxld = ld;
-      ld = old; symlh = osymh;
+      --ldn; ld = old; symlh = osymh;
       next();
       return;
    case If:
