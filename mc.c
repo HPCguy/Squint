@@ -418,8 +418,11 @@ void next()
                   if (tokloc == 2) {
                      if (id->val > lds[ldn])
                         fatal("redefinition of var within scope");
-                     else
+                     else {
+                        printf("%d: var %s decl hides previous decl\n",
+                               line, id->name);
                         goto new_block_def;
+                     }
                   }
                   tk = id->tk;
                   return;
@@ -1686,6 +1689,11 @@ void stmt(int ctx)
    case Id:
       sbegin = 1; expr(Assign);
       if (!sbegin) {
+         while (tk == ',' && ctx == Loc) {
+            int *t;
+            next(); t = n;  expr(Assign);
+            if (t != n) { *--n = (int) t; *--n = '{'; }
+         }
          if (tk != ';' && tk != ',') fatal("semicolon expected");
          next();
       }
@@ -2099,15 +2107,14 @@ next_type:
    case For:
       next();
       if (tk != '(') fatal("open parenthesis expected");
+      lds[++ldn] = old = ld; osymh = symlh;
       next();
       *--n = ';';
-      if (tk != ';') expr(Assign);
-      while (tk == ',') {
-         int *f = n; next(); expr(Assign); *--n = (int) f; *--n = '{';
+      if (tk != ';') {
+         stmt(ctx); if (tk == ';') next();
       }
+      else next();
       d = n;
-      if (tk != ';') fatal("semicolon expected");
-      next();
       *--n = ';';
       expr(Assign); a = n; // Point to entry of for cond
       if (tk != ';') fatal("semicolon expected");
@@ -2125,6 +2132,8 @@ next_type:
       --brkc; --cntc;
       *--n = (int) d; *--n = (int) c; *--n = (int) b; *--n = (int) a;
       *--n = For;
+      if (ld > maxld) maxld = ld;
+      --ldn; ld = old; symlh = osymh;
       return;
    case Switch:
       i = 0; j = 0;
@@ -2213,6 +2222,11 @@ next_type:
       return;
    default:
       expr(Assign);
+      while (tk == ',' && ctx == Loc) {
+         int *t;
+         next(); t = n;  expr(Assign);
+         if (t != n) { *--n = (int) t; *--n = '{'; }
+      }
       if (tk != ';' && tk != ',') fatal("semicolon expected");
       next();
    }
