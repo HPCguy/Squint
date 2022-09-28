@@ -1001,6 +1001,8 @@ static void apply_peepholes2(int *instInfo, int *funcBegin, int *funcEnd)
                int lev=1;
                int *pscan = scanm2;
                while (lev != 0 && pscan > funcBegin) {
+                  if ((*pscan & RI_Rn) == 0x20000 || (*pscan & RI_Rm) == 2)
+                     goto avoid_nest;
                   pscan = skip_nop(--pscan, S_BACK);
                   if (*pscan == 0xe49d1004) { /* pop  {r1} */
                      ++lev;
@@ -1044,6 +1046,7 @@ static void apply_peepholes2(int *instInfo, int *funcBegin, int *funcEnd)
             }
          }
       }
+avoid_nest: ;
    }
    funcEnd += 6;
 }
@@ -1143,39 +1146,41 @@ static void apply_peepholes3_5(int *funcBegin, int *funcEnd)
          scanp3 = active_inst(scan, 3);
          if (*scanp3 == 0xe3500000) {      //  cmp   r0, #0
             scanp4 = active_inst(scanp3, 1);
-            scanp6 = active_inst(scanp4, 2);
-            if ((*scanp4 & 0x0f000000) == 0x0a000000 && // beq
-                (*scanp6 & 0xff000000) == 0xea000000) { // b
-               scanp5 = active_inst(scanp4, 1);
-               scanp7 = active_inst(scanp6, 1);
-               if ((*scanp5 & RI_Rd) == (*scanp7 & RI_Rd) &&
-                   (*scanp5 & RI_Rd) == 0) {
-                  scanp1 = active_inst(scan, 1);
-                  *scanp6 = ((*scanp6 & 0x0fffffff) | (*scanp1 & 0xf0000000))
-                               ^ (((*scanp1 & 0xff) == 0) ? 0x10000000 : 0);
-                  *scanp1 = NOP;
-                  scanp1[1] = NOP; // scanp2
-                  *scanp3 = NOP;
-                  *scanp4 = NOP;
-                  scan = scanp6;
-               }
-            }
-            else {
-               int btype =
-                  ((*scanp4 & 0xf0000000) == 0) ? 0 /* beq */ : 1 /* bne */;
-               int match0 = ((*scanp1 & 0x0ff000ff) == 0x03a00000) ? 0 : 1;
-               scanp1 = active_inst(scan  ,1);
-               scanp2 = active_inst(scanp1,1);
-               if (match0 == btype) {
-                  *scanp4 = (*scanp4 & 0x0fffffff) | (*scanp1 & 0xf0000000);
+            if ((*scanp4 & 0x0f000000) == 0x0a000000) { // branch
+               scanp6 = active_inst(scanp4, 2);
+               if ((*scanp4 & 0xf0000000) == 0 &&          // beq
+                   (*scanp6 & 0xff000000) == 0xea000000) { // b
+                  scanp5 = active_inst(scanp4, 1);
+                  scanp7 = active_inst(scanp6, 1);
+                  if ((*scanp5 & RI_Rd) == (*scanp7 & RI_Rd) &&
+                      (*scanp5 & RI_Rd) == 0) {
+                     scanp1 = active_inst(scan, 1);
+                     *scanp6= ((*scanp6 & 0x0fffffff) | (*scanp1 & 0xf0000000))
+                                  ^ (((*scanp1 & 0xff) == 0) ? 0x10000000 : 0);
+                     *scanp1 = NOP;
+                     scanp1[1] = NOP; // scanp2
+                     *scanp3 = NOP;
+                     *scanp4 = NOP;
+                     scan = scanp6;
+                  }
                }
                else {
-                  *scanp4 = (*scanp4 & 0x0fffffff) | (*scanp2 & 0xf0000000);
+                  int btype =
+                     ((*scanp4 & 0xf0000000) == 0) ? 0 /* beq */ : 1 /* bne */;
+                  scanp1 = active_inst(scan  ,1);
+                  scanp2 = active_inst(scanp1,1);
+                  int match0 = ((*scanp1 & 0x0ff000ff) == 0x03a00000) ? 0 : 1;
+                  if (match0 == btype) {
+                     *scanp4 = (*scanp4 & 0x0fffffff) | (*scanp1 & 0xf0000000);
+                  }
+                  else {
+                     *scanp4 = (*scanp4 & 0x0fffffff) | (*scanp2 & 0xf0000000);
+                  }
+                  *scanp1 = NOP;
+                  *scanp2 = NOP;
+                  *scanp3 = NOP;
+                  scan = scanp4;
                }
-               *scanp1 = NOP;
-               *scanp2 = NOP;
-               *scanp3 = NOP;
-               scan = scanp4;
             }
          }
       }
@@ -2931,6 +2936,7 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
                int *r0md = find_def(instInfo, m1, 0, S_FWD);
                int *r0push1u = find_use(instInfo, pushp1, 0, S_FWD);
                int *r0push1d = find_def(instInfo, pushp1, 0, S_FWD);
+               if (r0push1d == 0) r0push1d = pop;
                int m1modifiable =
                   (*(pair[i].push - 1) != NOP13) && (r0md == m1);
 
