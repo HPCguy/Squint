@@ -967,33 +967,35 @@ resolve_fnproto:
          break;
       case Lor: // short circuit, the logical or
          next(); expr(Lan);
-         if (*n == Num && *b == Num)
-            n[1] = (b[1] || n[1]) ? (btrue ? -1 : 1) : 0;
+         if (*n == Num && *b == Num) {
+            b[1] = (b[1] || n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
+         }
          else { *--n = (int) b; *--n = Lor; }
          ty = INT;
          break;
       case Lan: // short circuit, logic and
          next(); expr(Or);
-         if (*n == Num && *b == Num)
-            n[1] = (b[1] && n[1]) ? (btrue ? -1 : 1) : 0;
+         if (*n == Num && *b == Num) {
+            b[1] = (b[1] && n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
+         }
          else { *--n = (int) b; *--n = Lan; }
          ty = INT;
          break;
       case Or: // push the current value, calculate the right value
          next(); expr(Xor); bitopcheck(t, ty);
-         if (*n == Num && *b == Num) n[1] = b[1] | n[1];
+         if (*n == Num && *b == Num) { b[1] |= n[1]; n += 2; }
          else { *--n = (int) b; *--n = Or; }
          ty = INT;
          break;
       case Xor:
          next(); expr(And); bitopcheck(t, ty);
-         if (*n == Num && *b == Num) n[1] = b[1] ^ n[1];
+         if (*n == Num && *b == Num) { b[1] ^= n[1]; n += 2; }
          else { *--n = (int) b; *--n = Xor; }
          ty = INT;
          break;
       case And:
          next(); expr(Eq); bitopcheck(t, ty);
-         if (*n == Num && *b == Num) n[1] = b[1] & n[1];
+         if (*n == Num && *b == Num) { b[1] &= n[1]; n += 2; }
          else { *--n = (int) b; *--n = And; }
          ty = INT;
          break;
@@ -1002,12 +1004,14 @@ resolve_fnproto:
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1];
-               c1->i = (c2->f == c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
+               c2->i = (c2->f == c1->f) ? (btrue ? -1 : 1) : 0;
+               n += 2; *b = Num;
             }
             else { *--n = (int) b; *--n = EqF; }
          } else {
-            if (*n == Num && *b == Num)
-               n[1] = (b[1] == n[1]) ? (btrue ? -1 : 1) : 0;
+            if (*n == Num && *b == Num) {
+               b[1] = (b[1] == n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
+            }
             else { *--n = (int) b; *--n = Eq; }
          }
          ty = INT;
@@ -1017,12 +1021,14 @@ resolve_fnproto:
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1];
-               c1->i = (c2->f != c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
+               c2->i = (c2->f != c1->f) ? (btrue ? -1 : 1) : 0;
+               n += 2; *b = Num;
             }
             else { *--n = (int) b; *--n = NeF; }
          } else {
-            if (*n == Num && *b == Num)
-               n[1] = (b[1] != n[1]) ? (btrue ? -1 : 1) : 0;
+            if (*n == Num && *b == Num) {
+               b[1] = (b[1] != n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
+            }
             else { *--n = (int) b; *--n = Ne; }
          }
          ty = INT;
@@ -1032,12 +1038,14 @@ resolve_fnproto:
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1];
-               c1->i = (c2->f >= c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
+               c2->i = (c2->f >= c1->f) ? (btrue ? -1 : 1) : 0;
+               n += 2; *b = Num;
             }
             else { *--n = (int) b; *--n = GeF; }
          } else {
-            if (*n == Num && *b == Num)
-               n[1] = (b[1] >= n[1]) ? (btrue ? -1 : 1) : 0;
+            if (*n == Num && *b == Num) {
+               b[1] = (b[1] >= n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
+            }
             else { *--n = (int) b; *--n = Ge; }
          }
          ty = INT;
@@ -1047,12 +1055,14 @@ resolve_fnproto:
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1];
-               c1->i = (c2->f < c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
+               c2->i = (c2->f < c1->f) ? (btrue ? -1 : 1) : 0;
+               n += 2; *b = Num;
             }
             else { *--n = (int) b; *--n = LtF; }
          } else {
-            if (*n == Num && *b == Num)
-               n[1] = (b[1] < n[1]) ? (btrue ? -1 : 1) : 0;
+            if (*n == Num && *b == Num) {
+               b[1] = (b[1] < n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
+            }
             else { *--n = (int) b; *--n = Lt; }
          }
          ty = INT;
@@ -1062,12 +1072,14 @@ resolve_fnproto:
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1];
-               c1->i = (c2->f > c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
+               c2->i = (c2->f > c1->f) ? (btrue ? -1 : 1) : 0;
+               n += 2; *b = Num;
             }
             else { *--n = (int) b; *--n = GtF; }
          } else {
-            if (*n == Num && *b == Num)
-               n[1] = (b[1] > n[1]) ? (btrue ? -1 : 1) : 0;
+            if (*n == Num && *b == Num) {
+               b[1] = (b[1] > n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
+            }
             else { *--n = (int) b; *--n = Gt; }
          }
          ty = INT;
@@ -1077,12 +1089,14 @@ resolve_fnproto:
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1];
-               c1->i = (c2->f <= c1->f) ? (btrue ? -1 : 1) : 0; *n = Num;
+               c2->i = (c2->f <= c1->f) ? (btrue ? -1 : 1) : 0;
+               n += 2; *b = Num;
             }
             else { *--n = (int) b; *--n = LeF; }
          } else {
-            if (*n == Num && *b == Num)
-               n[1] = (b[1] <= n[1]) ? (btrue ? -1 : 1) : 0;
+            if (*n == Num && *b == Num) {
+               b[1] = (b[1] <= n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
+            }
             else { *--n = (int) b; *--n = Le; }
          }
          ty = INT;
@@ -1090,16 +1104,18 @@ resolve_fnproto:
       case Shl:
          next(); expr(Add); bitopcheck(t, ty);
          if (*n == Num && *b == Num) {
-            if (n[1] < 0) n[1] = b[1] >> -n[1];
-            else n[1] = b[1] << n[1];
+            if (n[1] < 0) b[1] >>= -n[1];
+            else b[1] <<= n[1];
+            n += 2;
          } else { *--n = (int) b; *--n = Shl; }
          ty = INT;
          break;
       case Shr:
          next(); expr(Add); bitopcheck(t, ty);
          if (*n == Num && *b == Num) {
-            if (n[1] < 0) n[1] = b[1] << -n[1];
-            else n[1] = b[1] >> n[1];
+            if (n[1] < 0) b[1] <<= -n[1];
+            else b[1] >>= n[1];
+            n += 2;
          } else { *--n = (int) b; *--n = Shr; }
          ty = INT;
          break;
@@ -1107,7 +1123,7 @@ resolve_fnproto:
          next(); expr(Mul); typecheck(Add, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
-               c1 = &n[1]; c2 = &b[1]; c1->f = c1->f + c2->f;
+               c1 = &n[1]; c2 = &b[1]; c2->f += c1->f; n += 2;
             }
             else { *--n = (int) b; *--n = AddF; }
          }
@@ -1118,7 +1134,7 @@ resolve_fnproto:
                  ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
             if (*n == Num && tc) { n[1] *= sz; sz = 1; }
             else if (*b == Num && !tc) { b[1] *= sz; sz = 1; }
-            if (*n == Num && *b == Num) n[1] += b[1];
+            if (*n == Num && *b == Num) { b[1] += n[1]; n += 2; }
             else if (sz != 1) {
                *--n = sz; *--n = Num;
                *--n = (int) (tc ? c : b); *--n = Mul;
@@ -1131,7 +1147,7 @@ resolve_fnproto:
          next(); expr(Mul); typecheck(Sub, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
-               c1 = &n[1]; c2 = &b[1]; c1->f = c2->f - c1->f;
+               c1 = &n[1]; c2 = &b[1]; c2->f -= c1->f; n += 2;
             }
             else { *--n = (int) b; *--n = SubF; }
          }
@@ -1139,7 +1155,9 @@ resolve_fnproto:
             if (t >= PTR) { // left arg is ptr
                sz = (t >= PTR2) ? sizeof(int) : tsize[(t - PTR) >> 2];
                if (ty >= PTR) { // ptr - ptr
-                  if (*n == Num && *b == Num) n[1] = (b[1] - n[1]) / sz;
+                  if (*n == Num && *b == Num) {
+                     b[1] = (b[1] - n[1]) / sz; n += 2;
+                  }
                   else {
                      *--n = (int) b; *--n = Sub;
                      if (sz > 1) {
@@ -1158,7 +1176,7 @@ resolve_fnproto:
                else { // ptr - int
                   if (*n == Num) {
                      n[1] *= sz;
-                     if (*b == Num) n[1] = b[1] - n[1];
+                     if (*b == Num) { b[1] -= n[1]; n += 2; }
                      else { *--n = (int) b; *--n = Sub; }
                   }
                   else {
@@ -1178,7 +1196,7 @@ resolve_fnproto:
                }
             }
             else { // int - int
-               if (*n == Num && *b == Num) n[1] = b[1] - n[1];
+               if (*n == Num && *b == Num) { b[1] -= n[1]; n += 2; }
                else { *--n = (int) b; *--n = Sub; }
                ty = INT;
             }
@@ -1188,12 +1206,12 @@ resolve_fnproto:
          next(); expr(Inc); typecheck(Mul, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1] ; c1->f = c1->f * c2->f;
+               c1 = &n[1]; c2 = &b[1] ; c2->f *= c1->f; n += 2;
             }
             else { *--n = (int) b; *--n = MulF; }
          }
          else {
-            if (*n == Num && *b == Num) n[1] *= b[1];
+            if (*n == Num && *b == Num) { b[1] *= n[1]; n += 2; }
             else {
                *--n = (int) b;
                if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
@@ -1220,12 +1238,12 @@ resolve_fnproto:
          next(); expr(Inc); typecheck(Div, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1] ; c1->f = c2->f / c1->f;
+               c1 = &n[1]; c2 = &b[1] ; c2->f /= c1->f; n += 2;
             }
             else { *--n = (int) b; *--n = DivF; }
          }
          else {
-            if (*n == Num && *b == Num) n[1] = b[1] / n[1];
+            if (*n == Num && *b == Num) { b[1] /= n[1]; n += 2; }
             else {
                *--n = (int) b;
                if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
@@ -1241,7 +1259,7 @@ resolve_fnproto:
       case Mod:
          next(); expr(Inc); typecheck(Mod, t, ty);
          if (ty == FLOAT) fatal("use fmodf() for float modulo");
-         if (*n == Num && *b == Num) n[1] = b[1] % n[1];
+         if (*n == Num && *b == Num) { b[1] %= n[1]; n += 2; }
          else {
             *--n = (int) b;
             if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
@@ -1325,7 +1343,7 @@ resolve_fnproto:
                *--n = sz; *--n = Num; --n; *n = (int) (n + 3); *--n = Mul;
             }
          }
-         if (*n == Num && *b == Num) n[1] += b[1];
+         if (*n == Num && *b == Num) { b[1] += n[1]; n += 2; }
          else { *--n = (int) b; *--n = Add; }
 add_simple:
          if (doload) { *--n = ((ty = t) >= PTR) ? INT : ty; *--n = Load; }
