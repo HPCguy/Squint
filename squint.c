@@ -3306,7 +3306,7 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
 /* simple functions with no locals do not need a frame */
 static void simplify_frame(int *funcBegin, int *funcEnd)
 {
-   int *scan, *scanp1;
+   int *scan, *scanp1, fp;
 
    if (funcBegin[1] == 0xe28db000 && // add  fp, sp, #0
        ((funcBegin[2] & 0xfffff000) != 0xe24dd000 ||
@@ -3336,23 +3336,32 @@ static void simplify_frame(int *funcBegin, int *funcEnd)
               *scan = NOP;
               *scanp1 = 0xe58d0000; // str r0, [sp]
             }
+            else
+               fo -= 4;
          }
          else if ((*scan & 0xfffff000) == 0xe28dd000) { // add sp, sp, #X
             // rotate field will be >= 4 if present
             fo -= (((*scan & 0xf00) == 0) ? (*scan & 0xff) :
                    ((*scan & 0xff) << (32 - ((*scan & 0xf00) >> 8)*2)));
          }
-         else if ((*scan & 0xffff0004) == 0xe52d0004) { // push {rX}
+         else if ((*scan & 0xffff000f) == 0xe52d0004 || // push {rX}
+                  (*scan & 0xffff0f0f) == 0xed2d0a01) { // vpush {sX}
             fo += 4;
          }
-         else if ((*scan & 0xffff0004) == 0xe49d0004) { // pop {rX}
+         else if ((*scan & 0xffff000f) == 0xe49d0004 || // pop {rX}
+                  (*scan & 0xffff0f0f) == 0xecbd0a01) { // vpop {sX}
             fo -= 4;
          }
-         else if ((*scan & 0xffbf0000) == 0xe59b0000) { // ldr[b] rX, [fp, #Y]
-            *scan += 0x20000 + fo; // ldr[b] rX, [sp, #Y]
-         }
-         else if ((*scan & 0xffbf0000) == 0xe58b0000) { // str[b] rX, [fp, #Y]
-            *scan += 0x20000 + fo; // str[b] rX, [sp, #Y]
+         else if ((fp = (*scan & 0xff2f0f00) == 0xed0b0a00) || // vldr | vstr
+                  (*scan & 0xff2f0000) == 0xe50b0000) {     // str/ldr [fp,#Y]
+            int offmask = fp ? 0xff : 0xfff;
+            int off = (*scan & offmask) * ((*scan & (1<<23)) ? 1 : -1) +
+                      fo / (fp ? 4 : 1);
+            int add = (off < 0) ? 0 : (1 << 23);
+            if (off < 0) off = -off;
+            *scan = (*scan & (0xff7fffff ^ offmask)) +
+                    0x20000 + add + off; // fp -> sp
+            if (off > offmask) { printf("optimizer error\n"); exit(-1); }
          }
       }
    }
