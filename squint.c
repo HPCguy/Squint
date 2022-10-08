@@ -2607,18 +2607,16 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
    int cremap_size = 0;
 
    // Relocate instruction stream consts
-   do {
-      done = 1;
-      lowc  = find_const((funcBegin-cbegin)*4);
-      highc = find_const((funcEnd+1-cbegin)*4); // past end of func
+   lowc  = find_const((funcBegin-cbegin)*4);
+   highc = find_const((funcEnd+1-cbegin)*4); // past end of func
 
-      for (ii=lowc; ii<highc; ++ii) {
-         if (cnst_pool[ii].inst == 0) {
-            pack_const(ii);
-            done = 0;
-         }
+   for (ii=lowc; ii<highc; ++ii) {
+      if (cnst_pool[ii].inst == 0) {
+         pack_const(ii);
+         break;
       }
-   } while (!done);
+   }
+   highc = find_const((funcEnd+1-cbegin)*4); // value can change after pack
 
    if (highc != lowc) {
       if (highc == cnst_pool_size ||
