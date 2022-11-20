@@ -1035,13 +1035,16 @@ static void apply_peepholes2(int *instInfo, int *funcBegin, int *funcEnd)
                         // ldr[b] r0, [r0] -> ldr[b], [r2, r0, lsl #x]
                         *scanp4 = NOP;
                         *scanp5 = 0xe7920000 | (imm << 7);
+                        scan = scanp5;
                      }
                      else {
                         // add r0, r2, r0, lsl #X
                         *scanp4 = 0xe0820000 | (imm << 7);
+                        scan = scanp4;
                      }
                   }
-                  scan = active_inst(scanp4, 1);
+                  else
+                     scan = active_inst(scanp4, 1);
                }
             }
          }
@@ -1078,6 +1081,7 @@ static void apply_peepholes3(int *instInfo, int *funcBegin, int *funcEnd)
                nextUse = find_use(instInfo, loc, destR, S_FWD);
                if (nextUse != 0 && nextDef != 0 && nextUse > nextDef) {
                   *scan = NOP;
+                  instInfo[scan-funcBegin] &= RI_bb;
                }
                scan = next-1;
             }
@@ -1209,34 +1213,64 @@ static void apply_peepholes4(int *funcBegin, int *funcEnd)
    }
 }
 
-static void apply_peepholes4_2(int *funcBegin, int *funcEnd)
+static void apply_peepholes4_2(int *instInfo, int *funcBegin, int *funcEnd)
 {
    int *scan, *scanp1, *scanp2, *cnst, off, off2, fp, add;
 
+   create_inst_info(instInfo, funcBegin, funcEnd);
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
-      scanp1 = active_inst(scan, 1);
-      // convert "large" pc-relative constants into offsets
-      if ((*scan   & 0xffff0000) == 0xe59f0000 && // ldr rd, [pc, #X]
-          (*scanp1 & 0xfff00700) == 0xe0800000 && // add rd, rn, rm
-          (*scan & RI_Rd) == ((*scanp1 & RI_Rm) << 12)) {
-         scanp2 = active_inst(scanp1, 1);
-         if (((fp = (*scanp2 & 0xff300f00) == 0xed100a00) || // vldr sd, [rn]
-             (*scanp2 & 0xff700000) == 0xe5100000) &&       // ldr rd, [rn]
-             (*scanp2 & RI_Rn) == ((*scanp1 & RI_Rd) << 4)) {
-            cnst = (scan + 2 + (*scan & 0xfff)/4);
-            off2 = (*scanp2 & (fp ? 0xff : 0xfff)) *
-                   ((*scanp2 & (1<<23)) ? 1 : -1);
-            off = *cnst/(fp ? 4 : 1) + off2;
-            add = 1<<23;
-            if (off < 0) { off = -off; add = 0; }
-            if (off < (fp ? 0x100 : 0x1000)) {
-               *scanp2 = (*scanp2 & (fp ? 0xff70ff00 : 0xff70f000)) |
-                         add | (*scanp1 & RI_Rn) | off;
-               *scanp1 = NOP;
-               delete_const(cnst, scan);
-               *scan = NOP;
-               scan = scanp2;
+      if ((*scan   & 0xffff0000) == 0xe59f0000) { // ldr rd, [pc, #X]
+         scanp1 = active_inst(scan, 1);
+         if ((*scan & RI_Rd) != ((*scanp1 & RI_Rm) << 12)) continue;
+         if ((*scanp1 & 0xfff00700) == 0xe0800000) { // add rd, rn, rm
+            // convert "large" pc-relative constants into offsets
+            scanp2 = active_inst(scanp1, 1);
+            if (((fp = (*scanp2 & 0xff300f00) == 0xed100a00) || // vldr sd, [rn]
+                (*scanp2 & 0xff700000) == 0xe5100000) &&       // ldr rd, [rn]
+                (*scanp2 & RI_Rn) == ((*scanp1 & RI_Rd) << 4)) {
+               cnst = (scan + 2 + (*scan & 0xfff)/4);
+               off2 = (*scanp2 & (fp ? 0xff : 0xfff)) *
+                      ((*scanp2 & (1<<23)) ? 1 : -1);
+               off = *cnst/(fp ? 4 : 1) + off2;
+               add = 1<<23;
+               if (off < 0) { off = -off; add = 0; }
+               if (off < (fp ? 0x100 : 0x1000)) {
+                  *scanp2 = (*scanp2 & (fp ? 0xff70ff00 : 0xff70f000)) |
+                            add | (*scanp1 & RI_Rn) | off;
+                  *scanp1 = NOP;
+                  delete_const(cnst, scan);
+                  *scan = NOP;
+                  scan = scanp2;
+               }
+            }
+         }
+         else if ((*scan & RI_Rd) == 0 &&
+                  *scanp1 == 0xe1a01000) {  // mov r1, r0
+            // useful for later inc/dec optimization
+            scanp2 = active_inst(scanp1, 1);
+            if (*scanp2 == 0xe5900000) {  // ldr r0, [r0]
+               int *scanp4 = active_inst(scanp2, 2);
+               if (*scanp4 == 0xe5810000) { // str r0, [r1]
+                  int *rdd = find_def(instInfo,
+                     &instInfo[scanp4-funcBegin], 2, S_FWD);
+                  if (rdd == 0) rdd = &instInfo[funcEnd-funcBegin];
+                  int *rdu = find_use(instInfo,
+                     &instInfo[scanp4-funcBegin]+1, 2, S_FWD);
+                  if (!rdu || rdu > rdd) {
+                     *scan += 0x2000; // ldr r2, [pc, #X]
+                     instInfo[scan-funcBegin] += 0x2000;
+                     *scanp1 = NOP;
+                     instInfo[scanp1-funcBegin] &= RI_bb;
+                     *scanp2 |= 0x20000; // ldr r0, [r2]
+                     instInfo[scanp2-funcBegin] |= 0x20000;
+                     *scanp4 += 0x10000; // str r0, [r2]
+                     instInfo[scanp4-funcBegin] += 0x10000;
+                     scan = scanp4;
+                  }
+               }
             }
          }
       }
@@ -1491,6 +1525,7 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd,
                                  rd, S_FWD);
                } while (1);
                *scan = NOP;
+               instInfo[scan-funcBegin] &= RI_bb;
                scan  = scanp1;
             }
          }
@@ -1528,11 +1563,13 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
                   *scan = (*scan & 0xff7ff000) |
                           (inst & 0xff) | ((isAdd ? 5 : 1) << 21);
                   funcBegin[rdd-instInfo] = NOP;
+                  *rdd &= RI_bb;
                }
                else if (off * ((*scan & (1 << 23)) ? 1 : -1) +
                         (inst & 0xff) * (isAdd ? 1 : -1) == 0) {
                   *scan ^= 13 << 21;   // post inc/dec
                   funcBegin[rdd-instInfo] = NOP;
+                  *rdd &= RI_bb;
                }
             }
             else if (off == 0) { // post inc/dec
@@ -1551,6 +1588,8 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
                      *scan = (*scan & 0xfe70f000) |
                              (inst & 0x000f00ff) | ((isAdd ? 0 : 1) << 23);
                      funcBegin[rdd-instInfo] = *scanm1 = NOP;
+                     *rdd &= RI_bb;
+                     instInfo[scanm1-funcBegin] &= RI_bb;
                   }
                }
             }
@@ -2903,6 +2942,7 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
                   funcBegin[r0d-instInfo] =
                      (funcBegin[r0d-instInfo] & 0xff70ff00) | addOffsetBit |
                       0x000b0000 | ((*scanp1 == 0xed810a00) ? (off / 4) : off);
+                  *r0d |= 0xb0000; // rn = fp
                }
                else {
                   continue;
@@ -2910,18 +2950,26 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
             }
             // default case: pushed reg not used before pop
             *scanm1 = NOP;
+            instInfo[scanm1-funcBegin] &= RI_bb;
             *pair[i].push = NOP;
+            instInfo[pair[i].push-funcBegin] &= RI_bb;
             *pair[i].pop  = NOP;
+            instInfo[pair[i].pop-funcBegin] &= RI_bb;
             *scanp1 = (*scanp1 & 0xff70ff00) | addOffsetBit |
                       0x000b0000 | ((*scanp1 == 0xed810a00) ? (off / 4) : off);
+            instInfo[scanp1-funcBegin] |= 0xb0000; // rn = 1 | b == b
          }
          else if (r0d < r0u &&
                   (*scanm1 & 0xffff0000) == 0xe59f0000 && // ldr r0, [pc, #X]
                   (scanm1 + 2 + (*scanm1 & 0xfff)/4) > pair[i].pop) {
             rel_pc_ldr(pair[i].pop, scanm1);
-            *pair[i].pop |= 1<<12;
+            *pair[i].pop |= 0x1000;
+            instInfo[pair[i].pop-funcBegin] =
+               instInfo[scanm1-funcBegin] | 0x1000;
             *scanm1 = NOP;
+            instInfo[scanm1-funcBegin] &= RI_bb;
             *pair[i].push = NOP;
+            instInfo[pair[i].push-funcBegin] &= RI_bb;
          }
          else if (r0d < r0u &&
                  ((*scanm1 & 0xffffff00) == 0xe2800000)) { // add r0, r0, #X
@@ -2937,11 +2985,16 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
                if ((r0u == 0 || r0u > pair[i].pop) &&
                    (r0d == 0 || r0d > pair[i].pop)) {
                   *scanm2 = *scanm2 | (2 << 12);
+                  instInfo[scanm2-funcBegin] |= 2<<12;
                   *scanp1 = (*scanp1 & 0xff70ff00) | (1 << 23) |
                        0x00020000 | (*scanm1 & 0xff);
+                  instInfo[scanp1-funcBegin] += 0x10000;
                   *scanm1 = NOP;
+                  instInfo[scanm1-funcBegin] &= RI_bb;
                   *pair[i].push = NOP;
+                  instInfo[pair[i].push-funcBegin] &= RI_bb;
                   *pair[i].pop  = NOP;
+                  instInfo[pair[i].pop-funcBegin] &= RI_bb;
                }
             }
          }
@@ -3969,7 +4022,7 @@ int squint_opt(int *begin, int *end)
          noFloatConst = (fbase == 2);
          create_pushpop_map2(tmpbuf, funcBegin, retAddr);
          apply_peepholes4(funcBegin, retAddr);
-         apply_peepholes4_2(funcBegin, retAddr);
+         apply_peepholes4_2(tmpbuf, funcBegin, retAddr);
 
          /******************************************/
          /***  convert frame VM to register VM   ***/
