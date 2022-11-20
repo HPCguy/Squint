@@ -1352,7 +1352,7 @@ static void apply_peepholes5(int *funcBegin, int *funcEnd)
 }
 
 static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd,
-                             int dofloat)
+                             int low, int high, int dofloat)
 {
    int *scan, *scanm1, *scanp1, *scanp2;
    int *info, *rxd, *rxu, *rdd, *rdu, *rdt, *rfinal;
@@ -1378,6 +1378,9 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd,
          rd = dofloat ?
               (((*scan & RI_Rd) >> 11) + ((*scan & RI_Sd) >> 22)) :
               ((*scan & RI_Rd) >> 12);
+         cond = dofloat ? ((rx >= 2 && rx < low) || rx >= high) :
+                          (rx >= low && rx < high);
+         if (cond) continue;
          if (rd < (dofloat ? 2 : 3)) continue; // extra precaution
          scanm1 = active_inst(scan, -1);
          if ((*scanm1 & movMask) == movInst && // mov rx, ry
@@ -1401,7 +1404,7 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd,
             rxd = find_def(instInfo, &instInfo[scan-funcBegin]+1, rx, S_FWD);
             if (rxd == 0) rxd = &instInfo[funcEnd-funcBegin];
             if (rxu != 0 && rxu <= rxd) {
-               rfinal = find_use_precede_def(instInfo, rxu, rxd, rd, S_FWD);
+               rfinal = find_use(instInfo, rxd, rx, S_BACK);
                for (rdt = &instInfo[(scan-funcBegin)];
                     rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
                if (rdt > rfinal) {
@@ -1423,6 +1426,7 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd,
                else
                   *scanm1 = (*scanm1 & ~(0x0f << rxS)) | (rd << rxS);
                *scan = NOP;
+               instInfo[scan-funcBegin] &= RI_bb;
             }
          }
       }
@@ -1446,6 +1450,9 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd,
          rd = dofloat ?
               (((*scan & RI_Rd) >> 11) + ((*scan & RI_Sd) >> 22)) :
               ((*scan & RI_Rd) >> 12);
+         cond = dofloat ? ((rd >= 2 && rd < low) || rd >= high) :
+                          (rd >= low && rd < high);
+         if (cond) continue;
          scanp1 = active_inst(scan, 1);
          scanp2 = active_inst(scanp1, 1);
          info = &instInfo[scan-funcBegin];
@@ -1484,90 +1491,73 @@ static void apply_peepholes6(int *instInfo, int *funcBegin, int *funcEnd,
                                  rd, S_FWD);
                } while (1);
                *scan = NOP;
+               scan  = scanp1;
             }
          }
       }
    }
 }
 
-// autoincrement pointer for load/str operations
+// autoinc/dec pointer for load/str operations
 static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
 {
-   int *scan, *iscan, *info;
-   int *rdd, *rdu;
-   int rn, inst;
+   int *scan, *scanm1, *rdt, *info;
+   int *rdd, *rdu, *rdd2, *rdu2;
+   int rn, inst, inst2, isAdd, isSub, off;
 
    create_inst_info(instInfo, funcBegin, funcEnd);
    create_bb_info(instInfo, funcBegin, funcEnd);
 
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
-      if ((*scan & 0xff200fff) == 0xe5000000) { // (ldr|str)[b] rd, [rn]
-         rn = (*scan >> 16) & 0x0f;
-         info = &instInfo[scan-funcBegin];
-         rdu = find_use(instInfo, info+1, rn, S_FWD);
-         rdd = find_def(instInfo, info+1, rn, S_FWD);
-         if (rdd == 0) rdd = &instInfo[funcEnd-funcBegin];
-         if (rn < NUM_USABLE_REG && (rdu == 0 || rdu > rdd)) {
-            rdd = find_def(instInfo, info-1, rn, S_BACK);
-            rdu = find_use(instInfo, info-1, rn, S_BACK);
-            if (rdu == 0 || rdu <= rdd) {
-               iscan = rdd+1;
-               while ( iscan <= info && (*iscan & RI_bb) == 0) ++iscan;
-               if (iscan > info) {
-                  inst = funcBegin[rdd-instInfo]; // sub rn, rx, #X
-                  iscan = find_def(instInfo, rdd+1, (inst >> 16) & 0x0f, S_FWD);
-                  if ((inst & 0xfff0ff00) == (0xe2400000 | (rn << 12)) &&
-                      (iscan == 0 || iscan > info)) {
-                     *scan = (*scan & 0xff70ffff) | (inst & 0x000f00ff);
-                     funcBegin[rdd-instInfo] = NOP;
-                  }
-               }
-            }
-         }
-      }
-   }
-
-   create_inst_info(instInfo, funcBegin, funcEnd);
-   create_bb_info(instInfo, funcBegin, funcEnd);
-
-   for (scan = funcBegin; scan < funcEnd; ++scan) {
-      scan = skip_nop(scan, S_FWD);
-      if ((*scan & 0xff200f00) == 0xe5000000) { // (ldr|str)[b] rd, [rn]
+      if ((*scan & 0xff200000) == 0xe5000000) { // (ldr|str)[b] rd, [rn]
          rn = (*scan & RI_Rn) >> 16;
          if (rn >= NUM_USABLE_REG) continue;
          info = &instInfo[scan-funcBegin];
          rdd = find_def(instInfo, info-1, rn, S_BACK);
          rdu = find_use(instInfo, info-1, rn, S_BACK);
-         if (rdu == rdd) {
-            iscan = rdd+1;
-            while ( iscan <= info && (*iscan & RI_bb) == 0) ++iscan;
-            inst = funcBegin[rdd-instInfo];
-            // TODO: allow add or subtract #x inst
-            if (iscan > info && (inst & 0xfff00f00) == 0xe2800000) { // add
-               int off = inst & 0xff;
-               if ((*scan & 0xff) == off &&
-                   ((*scan & RI_Sd) ? (off == 1) : (off == 4)) ) {
-                  // TODO: immediate value should be #X rather than 1 or 4
-                  // add r5, r5, #1
-                  // str rd, [r5, #-1] -> str rd, [r5], #1
-                  if ((*scan & (1<<23)) == 0) {
-                     funcBegin[rdd-instInfo] = NOP;
-                     *scan = (*scan & 0xfedfffff) | (1<<23);
-                  }
-               }
-               else if ((*scan & 0xff) == 0) {
-                  // add r5, r5, #1
-                  // str rd, [r5]   -> str rd, [r5, #1]!
+         if (rdu != 0 && rdu > rdd) continue;
+         for (rdt = rdd+1; rdt <= info; ++rdt) if (*rdt & RI_bb) break;
+         if (rdt <= info) continue;
+         inst = funcBegin[rdd-instInfo];
+         if ((isAdd = (inst & 0xfff00f00) == 0xe2800000) || // add #X
+             (inst & 0xfff00f00) == 0xe2400000) {           // sub #X
+            off = *scan & 0xfff;
+            if ((inst & RI_Rn) == ((inst & RI_Rd) << 4)) { // pre inc/dec
+               if (off == 0) {
+                  *scan = (*scan & 0xff7ff000) |
+                          (inst & 0xff) | ((isAdd ? 5 : 1) << 21);
                   funcBegin[rdd-instInfo] = NOP;
-                  *scan = *scan | (5<<21) | (inst & 0xff);
+               }
+               else if (off * ((*scan & (1 << 23)) ? 1 : -1) +
+                        (inst & 0xff) * (isAdd ? 1 : -1) == 0) {
+                  *scan ^= 13 << 21;   // post inc/dec
+                  funcBegin[rdd-instInfo] = NOP;
+               }
+            }
+            else if (off == 0) { // post inc/dec
+               inst2 = *(scanm1 = active_inst(&funcBegin[rdd-instInfo],-1));
+               if ((isSub = (inst2 & 0xfff00f00) == 0xe2400000) || // sub #X
+                   (inst2 & 0xfff00f00) == 0xe2800000) {           // add #X
+                  if ((inst2 & RI_Rn) == (inst & RI_Rn) &&
+                      (inst2 & RI_Rn) == ((inst2 & RI_Rd) << 4) &&
+                      (inst & 0xff) == (inst2 & 0xff) && isSub == isAdd) {
+                     // make sure rn for ldr|str inst
+                     // is not used before next def
+                     rdu2 = find_use(instInfo, info+1, rn, S_FWD);
+                     rdd2 = find_def(instInfo, info+1, rn, S_FWD);
+                     if (rdd2 == 0) rdd2 = &instInfo[funcEnd-funcBegin];
+                     if (rdu2 != 0 && rdu2 <= rdd2) continue;
+                     *scan = (*scan & 0xfe70f000) |
+                             (inst & 0x000f00ff) | ((isAdd ? 0 : 1) << 23);
+                     funcBegin[rdd-instInfo] = *scanm1 = NOP;
+                  }
                }
             }
          }
       }
    }
 }
-
 
 // struct member access
 static void apply_peepholes7_5(int *instInfo, int *funcBegin, int *funcEnd)
@@ -3939,7 +3929,7 @@ int squint_opt(int *begin, int *end)
          if (funcBegin[3] != NOP) continue;
 
          // registers available to be allocated at or above this value
-         int ibase = 3;
+         int ibase = 3, ilow;
          int fbase = 2, flow, fhigh;
          int hasFuncCall = 0;
 
@@ -3985,6 +3975,7 @@ int squint_opt(int *begin, int *end)
          /***  convert frame VM to register VM   ***/
          /******************************************/
 
+         ilow = ibase;
          if (!hasFuncCall)
             ibase = rename_register2(tmpbuf, funcBegin, retAddr, ibase, 0);
 
@@ -4000,10 +3991,10 @@ int squint_opt(int *begin, int *end)
 
          apply_peepholes4_7(tmpbuf, funcBegin, retAddr);
          apply_peepholes5(funcBegin, retAddr);
-         apply_peepholes6(tmpbuf, funcBegin, retAddr, 0);
+         apply_peepholes6(tmpbuf, funcBegin, retAddr, ilow, ibase, 0);
 
          if (!noFloatConst)
-            apply_peepholes6(tmpbuf, funcBegin, retAddr, 1);
+            apply_peepholes6(tmpbuf, funcBegin, retAddr, flow, fhigh, 1);
 
          apply_peepholes7(tmpbuf, funcBegin, retAddr);
          ibase = create_pushpop_map3(tmpbuf, funcBegin, retAddr, ibase, 0);

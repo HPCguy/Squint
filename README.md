@@ -24,8 +24,8 @@ benchmark provides an optimization example, and runs roughly
 * Greatly improved type checking, error checking, and IR code generation (try -si option).
 
 Source code size:
-* mc C compiler -- 3000 SLOC
-* squint optimizer -- 3325 SLOC
+* mc C compiler -- 3250 SLOC
+* squint optimizer -- 3750 SLOC
 
 The original AMaCC compiler is based on the phenomenal work of the 
 team at https://github.com/jserv/amacc , and I strongly suggest
