@@ -70,10 +70,10 @@ Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
 
 | Benchmark |  AMaCC .text size | Mc+Squint .text | Gcc -O3 .text | Notes |
 | --- | --- | --- | --- | --- |
-| bezier.c | 3672 | 1172 | ***768*** | recursive |
-| duff.c | 3068 | 564 | ***412*** | unusual |
-| maze.c | 6640 | 2632 | ***1752*** | misc |
-| shock.c | 8732 | ***1512*** | 3388 | floating point |
+| bezier.c | 3384 | 980 | ***768*** | recursive |
+| duff.c | 2924 | 500 | ***412*** | unusual |
+| maze.c | 6640 | 2536 | ***1752*** | misc |
+| shock.c | 7852 | ***2220*** | 3388 | floating point |
 | mc.c | 154876 | 70584 | ***44776*** | full compiler |
 
 ## Assembly language quality
