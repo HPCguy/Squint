@@ -103,7 +103,7 @@ I could do ***much*** better!  If you might be interested, let's talk.
    code motion to reduce stalls, or register coloring to reduce register pressure, etc.
    None of these things are hard to do, but all consume time to implement.
 
-Below is a C function followed by a listing og the assembly language for the loop body,
+Below is a C function followed by the assembly language listing for the loop body,
 for all three compilers. The MC compiler produces 3.05 assembly language
 instructions per (complex) line of high level C code:
 
