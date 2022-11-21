@@ -1215,14 +1215,15 @@ static void apply_peepholes4(int *funcBegin, int *funcEnd)
 
 static void apply_peepholes4_2(int *instInfo, int *funcBegin, int *funcEnd)
 {
-   int *scan, *scanp1, *scanp2, *cnst, off, off2, fp, add;
+   int *scan, *scanp1, *scanp2, off, off2, fp, add;
+   int *cnstPtr, *cnstPtrOld = 0;
 
    create_inst_info(instInfo, funcBegin, funcEnd);
    create_bb_info(instInfo, funcBegin, funcEnd);
 
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
-      if ((*scan   & 0xffff0000) == 0xe59f0000) { // ldr rd, [pc, #X]
+      if ((*scan & 0xffff0000) == 0xe59f0000) { // ldr rd, [pc, #X]
          scanp1 = active_inst(scan, 1);
          if ((*scan & RI_Rd) != ((*scanp1 & RI_Rm) << 12)) continue;
          if ((*scanp1 & 0xfff00700) == 0xe0800000) { // add rd, rn, rm
@@ -1231,47 +1232,104 @@ static void apply_peepholes4_2(int *instInfo, int *funcBegin, int *funcEnd)
             if (((fp = (*scanp2 & 0xff300f00) == 0xed100a00) || // vldr sd, [rn]
                 (*scanp2 & 0xff700000) == 0xe5100000) &&       // ldr rd, [rn]
                 (*scanp2 & RI_Rn) == ((*scanp1 & RI_Rd) << 4)) {
-               cnst = (scan + 2 + (*scan & 0xfff)/4);
+               cnstPtr = (scan + 2 + (*scan & 0xfff)/4);
                off2 = (*scanp2 & (fp ? 0xff : 0xfff)) *
                       ((*scanp2 & (1<<23)) ? 1 : -1);
-               off = *cnst/(fp ? 4 : 1) + off2;
+               off = *cnstPtr/(fp ? 4 : 1) + off2;
                add = 1<<23;
                if (off < 0) { off = -off; add = 0; }
                if (off < (fp ? 0x100 : 0x1000)) {
                   *scanp2 = (*scanp2 & (fp ? 0xff70ff00 : 0xff70f000)) |
                             add | (*scanp1 & RI_Rn) | off;
                   *scanp1 = NOP;
-                  delete_const(cnst, scan);
+                  delete_const(cnstPtr, scan);
                   *scan = NOP;
                   scan = scanp2;
                }
             }
          }
+         // precondition code for later ++/-- optimization
          else if ((*scan & RI_Rd) == 0 &&
                   *scanp1 == 0xe1a01000) {  // mov r1, r0
-            // useful for later inc/dec optimization
+            int *scanp0 = scan;
             scanp2 = active_inst(scanp1, 1);
-            if (*scanp2 == 0xe5900000) {  // ldr r0, [r0]
-               int *scanp4 = active_inst(scanp2, 2);
-               if (*scanp4 == 0xe5810000) { // str r0, [r1]
-                  int *rdd = find_def(instInfo,
-                     &instInfo[scanp4-funcBegin], 2, S_FWD);
-                  if (rdd == 0) rdd = &instInfo[funcEnd-funcBegin];
-                  int *rdu = find_use(instInfo,
-                     &instInfo[scanp4-funcBegin]+1, 2, S_FWD);
-                  if (!rdu || rdu > rdd) {
-                     *scan += 0x2000; // ldr r2, [pc, #X]
-                     instInfo[scan-funcBegin] += 0x2000;
-                     *scanp1 = NOP;
-                     instInfo[scanp1-funcBegin] &= RI_bb;
-                     *scanp2 |= 0x20000; // ldr r0, [r2]
-                     instInfo[scanp2-funcBegin] |= 0x20000;
-                     *scanp4 += 0x10000; // str r0, [r2]
-                     instInfo[scanp4-funcBegin] += 0x10000;
-                     scan = scanp4;
-                  }
-               }
+            if (*scanp2 != 0xe5900000) continue; // ldr r0, [r0]
+            int *scanp4 = active_inst(scanp2, 2);
+            if (*scanp4 != 0xe5810000) continue; // str r0, [r1]
+            int *rdd = find_def(instInfo,
+               &instInfo[scanp4-funcBegin], 2, S_FWD);
+            if (rdd == 0) rdd = &instInfo[funcEnd-funcBegin];
+            int *rdu = find_use(instInfo,
+               &instInfo[scanp4-funcBegin]+1, 2, S_FWD);
+            if (rdu && rdu <= rdd) continue;
+            int *scanm1 = active_inst(scan,-1);
+            int *scanp5 = active_inst(scanp4, 1);
+            cnstPtr = (scan + 2 + (*scan & 0xfff)/4);
+            if (*scanm1 == 0xe5821000 && // str r1,[r2]
+                (cnstPtrOld && *cnstPtr == *cnstPtrOld) &&
+                (instInfo[scan-funcBegin] & RI_bb) == 0) {
+               delete_const(cnstPtr, scan);
+               *scan = NOP;
+               instInfo[scan-funcBegin] &= RI_bb;
+            } else {
+               *scan += 0x2000; // ldr r2, [pc, #X]
+               instInfo[scan-funcBegin] += 0x2000;
+               cnstPtrOld = cnstPtr;
             }
+            *scanp1 = NOP;
+            instInfo[scanp1-funcBegin] &= RI_bb;
+            *scanp2 |= 0x20000; // ldr r0, [r2]
+            instInfo[scanp2-funcBegin] |= 0x20000;
+            *scanp4 += 0x10000; // str r0, [r2]
+            instInfo[scanp4-funcBegin] += 0x10000;
+            scan = scanp4;
+            if (*scanp5 != 0xe1a01000) continue; // mov r1, r0
+            rdu = find_def(instInfo, &instInfo[scanp5-funcBegin]+1, 0, S_FWD);
+            if (!rdu || active_inst(&funcBegin[rdu-instInfo],-1) != scanp5)
+               continue;
+            rdd = find_def(instInfo, &instInfo[scanp5-funcBegin]+1, 1, S_FWD);
+            if (rdd == 0) rdd = &instInfo[funcEnd-funcBegin];
+            rdu = find_use(instInfo, rdd, 1, S_BACK);
+            if (funcBegin[rdu-instInfo] != 0xe5810000) continue; // str r0,[r1]
+            rdd = find_use(instInfo, &instInfo[scanp5-funcBegin]+1, 1, S_FWD);
+            if (rdd != rdu) continue;
+            // make sure no funcs or branch targets
+            // between scan and rdd
+            int *inst;
+            for (inst = &instInfo[scanp5-funcBegin]; inst <= rdd; ++inst)
+               if (*inst & RI_bb) break;
+            if (inst <= rdd) continue;
+            int *scanp3 = active_inst(scanp2, 1);
+            if (*scanp0 == NOP && *scanm1 == 0xe5821000 && // str r1,[r2]
+                // cnstPtr == cnstPtrOld) {
+                (cnstPtrOld && *cnstPtr == *cnstPtrOld)) {
+               *scanm1 = NOP;
+               instInfo[scanm1-funcBegin] &= RI_bb;
+               *scanp2 = NOP;
+               instInfo[scanp2-funcBegin] &= RI_bb;
+            }
+            else {
+               *scanp2 |= 0x1000;
+               instInfo[scanp2-funcBegin] |= 0x1000;
+            }
+            *scanp3 |= 0x11000;
+            instInfo[scanp3-funcBegin] |= 0x11000;
+            *scanp4 |= 0x1000;
+            instInfo[scanp4-funcBegin] |= 0x1000;
+            *scanp5 = NOP;
+            instInfo[scanp5-funcBegin] &= RI_bb;
+            // copy up instructions
+            for (inst=scanp4+1; inst <= &funcBegin[rdd-instInfo]; ++inst) {
+               if ((*inst & 0xffff0000) == 0xe59f0000) // ldr r0, [pc, #X]
+                  rel_pc_ldr(inst-1, inst);
+               else
+                  *(inst-1) = *inst;
+            }
+            scan = &funcBegin[rdd-instInfo];
+            *scan = 0xe5821000; // str r1, [r2]
+            // expensive! -- done for bb_info regeneration
+            create_inst_info(instInfo, funcBegin, funcEnd);
+            create_bb_info(instInfo, funcBegin, funcEnd);
          }
       }
    }
