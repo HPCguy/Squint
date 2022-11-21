@@ -103,8 +103,9 @@ I could do ***much*** better!  If you might be interested, let's talk.
    code motion to reduce stalls, or register coloring to reduce register pressure, etc.
    None of these things are hard to do, but all consume time to implement.
 
-Below is the assembly language for the tests/shock.c ComputeFaceInfo() function for
-the loop body for all three compilers:
+Below is the assembly language for the tests/shock.c ComputeFaceInfo() function's
+loop body, for all three compilers. The MC compiler produces about three assembly language
+instructions per (complex) line of high level C code in this function:
 
 ```
 void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
