@@ -74,7 +74,7 @@ Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
 | duff.c | 3068 | 564 | ***412*** | unusual |
 | maze.c | 6640 | 2632 | ***1752*** | misc |
 | shock.c | 8732 | ***1512*** | 3388 | floating point |
-| mc.c | 123264 | 61240 | ***34932*** | full compiler |
+| mc.c | 154876 | 70584 | ***44776*** | full compiler |
 
 ## Assembly language quality
 
