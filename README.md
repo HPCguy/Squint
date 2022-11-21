@@ -105,6 +105,75 @@ I could do ***much*** better!  If you might be interested, let's talk.
 
 Below is the assembly language for the tests/shock.c ComputeFaceInfo() function for all three compilers:
 
+```
+void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
+                                  float *f0, float *f1, float *f2)
+{
+   int i;
+   int contributor;
+   float ev;
+   float cLocal;
+
+   for (i = 0; i < numFace; ++i)
+   {
+      /* each face has an upwind and downwind element. */
+      int upWind   = i;     /* upwind element */
+      int downWind = i + 1; /* downwind element */
+
+      /* calculate face centered quantities */
+      float massf =     0.5 * (mass[upWind]     + mass[downWind]);
+      float momentumf = 0.5 * (momentum[upWind] + momentum[downWind]);
+      float energyf =   0.5 * (energy[upWind]   + energy[downWind]);
+      float pressuref = (gammaa - 1.0) *
+                         (energyf - 0.5*momentumf*momentumf/massf);
+      float c = sqrtf(gammaa*pressuref/massf);
+      float v = momentumf/massf;
+
+      /* Now that we have the wave speeds, we might want to */
+      /* look for the max wave speed here, and update dt */
+      /* appropriately right before leaving this function. */
+      /* ... */
+
+      /* OK, calculate face quantities */
+
+      contributor = ((v >= 0.0) ? upWind : downWind);
+      massf = mass[contributor];
+      momentumf = momentum[contributor];
+      energyf = energy[contributor];
+      pressuref = energyf - 0.5*momentumf*momentumf/massf;
+      ev = v*(gammaa - 1.0);
+
+      f0[i] = ev*massf;
+      f1[i] = ev*momentumf;
+      f2[i] = ev*(energyf - pressuref);
+
+      contributor = ((v + c >= 0.0) ? upWind : downWind);
+      massf = mass[contributor];
+      momentumf = momentum[contributor];
+      energyf = energy[contributor];
+      pressuref = (gammaa - 1.0)*(energyf - 0.5*momentumf*momentumf/massf);
+      ev = 0.5*(v + c);
+      cLocal = sqrtf(gammaa*pressuref/massf);
+
+      f0[i] += ev*massf;
+      f1[i] += ev*(momentumf + massf*cLocal);
+      f2[i] += ev*(energyf + pressuref + momentumf*cLocal);
+
+      contributor = ((v - c >= 0.0) ? upWind : downWind);
+      massf = mass[contributor];
+      momentumf = momentum[contributor];
+      energyf = energy[contributor];
+      pressuref = (gammaa - 1.0)*(energyf - 0.5*momentumf*momentumf/massf);
+      ev = 0.5*(v - c);
+      cLocal = sqrtf(gammaa*pressuref/massf);
+
+      f0[i] += ev*massf;
+      f1[i] += ev*(momentumf - massf*cLocal);
+      f2[i] += ev*(energyf + pressuref - momentumf*cLocal);
+   }
+}
+```
+
 | gcc | Squint | MC (my HPC compiler) |
 | --- | --- | --- |
 | ***186++ instructions*** | ***142 instructions*** | ***113 instructions*** |
