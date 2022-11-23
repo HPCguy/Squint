@@ -954,7 +954,7 @@ resolve_fnproto:
             }
          }
          if (t == FLOAT && (otk >= AddAssign && otk <= DivAssign))
-            *n += 5;
+            *n += (AddF - Add);
          typecheck(*n, t, ty);
          *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
@@ -1127,9 +1127,9 @@ resolve_fnproto:
             }
             else { *--n = (int) b; *--n = AddF; }
          }
-         else { // both terms are either int or "int *"
+         else { // either (1) both int (2) one is ptr, one is int
             tc = ((t | ty) & (PTR | PTR2)) ? (t >= PTR) : (t >= ty);
-            c = n; if (tc) ty = t;
+            c = n; if (tc) ty = t; // set result type
             sz = (ty >= PTR2) ? sizeof(int) :
                  ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
             if (*n == Num && tc) { n[1] *= sz; sz = 1; }
@@ -2255,12 +2255,27 @@ void die(char *msg) { printf("%s\n", msg); exit(-1); }
 int reloc_imm(int offset) { return (((offset) - 8) >> 2) & 0x00ffffff; }
 int reloc_bl(int offset) { return 0xeb000000 | reloc_imm(offset); }
 
+int icnst[512], nicnst;
+
+int addcnst(int val)
+{
+   int i;
+   for (i=0; i<nicnst; ++i) {
+      if (icnst[i] == val) break;
+   }
+   if (i == nicnst) {
+      icnst[nicnst++] = val;
+   }
+   return i; // byte offset
+}
+
 int *codegen(int *jitmem, int *jitmap)
 {
    int i, ii, jj, kk, tmp, c, ni, nf, sz;
    int *je, *tje;    // current position in emitted native code
    int *immloc, *immlocv, *il, *ill, *ivv;
    int *rMap;
+   nicnst = 0;
 
    immloc = il = (int *) malloc(1024 * sizeof(int));
    int *iv = (int *) malloc(1024 * sizeof(int));
@@ -2286,7 +2301,8 @@ int *codegen(int *jitmem, int *jitmap)
       case LEA:
          tmp = *pc++;
          if (tmp >= 64 || tmp <= -64) {
-            if (!imm0) imm0 = je; *il++ = (int) (je++); *iv++ = tmp * 4;
+            if (!imm0) imm0 = je;
+            *il++ = (int) (je++); *iv++ = addcnst(tmp * 4);
             *je++ = 0xe08b0000;   // add r0, fp, r0
          }
          else if (tmp >= 0)
@@ -2298,14 +2314,17 @@ int *codegen(int *jitmem, int *jitmap)
          tmp = *pc++;
          if (0 <= tmp && tmp < 256)
             *je++ = 0xe3a00000 + tmp;         // mov r0, #(tmp)
-         else { if (!imm0) imm0 = je; *il++ = (int) (je++); *iv++ = tmp; }
+         else {
+             if (!imm0) imm0 = je;
+             *il++ = (int) (je++); *iv++ = addcnst(tmp);
+         }
          break;
       case IMMF:
          tmp = (int) *pc++;
          if (tmp == 0) *je++ = 0xee300a40 ; // sub s0, s0, s0
          else {
             if (!imm0) imm0 = je; if (!immf0) immf0 = je;
-            *il++ = (int) je++ + 2; *iv++ = tmp;
+            *il++ = (int) je++ + 2; *iv++ = addcnst(tmp);
          }
          break;
       case JMP:
@@ -2395,7 +2414,7 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0xe49d0004 | (0 << 12);        // pop r0
          if (peephole) *je++ = 0xe1a01001;      // mov r1, r1
          *je++ = 0xe28fe000;                    // add lr, pc, #0
-         if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = tmp;
+         if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = addcnst(tmp);
          // ARM EABI modulo helper function produces quotient in r0
          // and the remainder in r1.
          if (i == MOD) {
@@ -2510,7 +2529,7 @@ int *codegen(int *jitmem, int *jitmap)
          }
          if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
          *je++ = 0xe28fe000;                   // add lr, pc, #0
-         if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = tmp;
+         if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = addcnst(tmp);
          if (isPrtf) {
             if (sz > 4) *je++ = 0xe28dd000 | (sz - 4)*4; // add sp, sp, #off
             free(rMap);
@@ -2585,9 +2604,9 @@ int *codegen(int *jitmem, int *jitmap)
 
       int genpool = 0;
       if (imm0) {
-         if (i == LEV || i == JMP) genpool = 1;
-         else if ( ((int) je > (int) imm0 + 3072) || // pad for optimizer
-                   (immf0 && ((int) je > (int) immf0 + 512)) ) {
+         if (i == LEV || (i == JMP && immf0)) genpool = 1;
+         else if ( je > imm0 + 768 || // pad for optimizer
+                   (immf0 && je > immf0 + 128) ) {
             tje = je - 1;
             if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
                 (*tje & 0x000f0000) != 0x000f0000 && // pc-relative mem op
@@ -2602,31 +2621,39 @@ int *codegen(int *jitmem, int *jitmap)
          ill = immloc;
          ivv = immlocv;
          *iv = 0;
+         // create cnst pool
+         for (ii = 0; ii<nicnst; ++ii) {
+            je[ii] = icnst[ii];
+         }
          while (ill < il) {
             tmp = *ill++;
-            if ((int) je > tmp + 4096 + 8) die("codegen: can't reach the pool");
+            if ((int) (je + *ivv) > tmp + 4096 + 8)
+               die("codegen: can't reach the pool");
             if (tmp & 1) {
+               --tmp;
                // ldr pc, [pc, #..]
-               --tmp; *((int *) tmp) = 0xe59ff000 | ((int) je - tmp - 8);
+               *((int *) tmp) = 0xe59ff000 | ((int) (je + *ivv) - tmp - 8);
             } else if (tmp & 2) {
                tmp -= 2;
-               if ((int) je > (tmp + 255*4 + 8))
+               if ((int) (je + *ivv) > (tmp + 255*4 + 8))
                   die("codegen: float constant too far");
                // vldr s0, [pc, #..]
-               *((int *) tmp) = 0xed9f0a00 | (((int) je - tmp - 8) >> 2);
+               *((int *)tmp) = 0xed9f0a00 | (((int) (je + *ivv) - tmp - 8) >> 2);
             } else {
                // ldr r0, [pc, #..]
-               *(int *) tmp = 0xe59f0000 | ((int) je - tmp - 8);
+               *(int *) tmp = 0xe59f0000 | ((int) (je + *ivv) - tmp - 8);
             }
-            *je++ = *ivv;
-            if (ivv[0] == ivv[1]) --je; ++ivv;
+            ++ivv;
+            // *je++ = icnst[*ivv++];
+            // if (ivv[0] == ivv[1]) --je; ++ivv;
          }
+         je = je + nicnst;
          if (genpool == 2) { // jump past the pool
             tmp = ((int) je - (int) tje - 8) >> 2;
             *tje = 0xea000000 | (tmp & 0x00ffffff); // b #(je)
          }
          imm0 = 0; immf0 = 0; genpool = 0;
-         iv = immlocv; il = immloc;
+         iv = immlocv; il = immloc; nicnst = 0;
       }
    }
    if (il > immloc) die("codegen: not terminated by a LEV");
@@ -2966,19 +2993,19 @@ int elf32(int poolsz, int *main, int elf_fd)
    *o++ =  1; *o++ = 0;
 
    int phdr_size = PHDR_ENT_SIZE * PHDR_NUM;
-   char *phdr = o; o += phdr_size;
+   char *phdr = o; o = o + phdr_size;
 
    // .text
    int code_off = o - buf;
    int code_size = je - code;
    char *code_addr = o;
-   o += code_size;
+   o = o + code_size;
 
    // .rel.plt (embedded in PT_LOAD of text)
    int rel_size = REL_ENT_SIZE * ef_count;
    int rel_off = code_off + code_size;
    char *rel_addr = code_addr + code_size;
-   o += rel_size;
+   o = o + rel_size;
 
    // .plt (embedded in PT_LOAD of text)
    // 20 is the size of .plt entry code to .got
@@ -2996,7 +3023,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    // needs PAGE_SIZE align to do mmap().
    int load_bias = PAGE_SIZE + ((int) _data & (PAGE_SIZE - 1))
                                - ((o - buf) & (PAGE_SIZE - 1));
-   o += load_bias;
+   o = o + load_bias;
    char *dseg = o;
 
    // rwdata (embedded in PT_LOAD of data)
@@ -3004,21 +3031,21 @@ int elf32(int poolsz, int *main, int elf_fd)
    // e.g, the variable with initial value and all the string.
    int rwdata_off = dseg - buf;
    int rwdata_size = _data_end - _data;
-   o += rwdata_size;
+   o = o + rwdata_size;
 
    // .dynamic (embedded in PT_LOAD of data)
    char *pt_dyn = data;
    int pt_dyn_size = DYN_NUM * DYN_ENT_SIZE;
-   int pt_dyn_off = rwdata_off + rwdata_size; data += pt_dyn_size;
-   o += pt_dyn_size;
+   int pt_dyn_off = rwdata_off + rwdata_size; data = data + pt_dyn_size;
+   o = o + pt_dyn_size;
 
    // .interp (embedded in PT_LOAD of data)
    char *interp_str = "/lib/ld-linux-armhf.so.3";
    int interp_str_size = 25; // strlen(interp_str) + 1
    char *interp = data;
    memcpy(interp, interp_str, interp_str_size);
-   int interp_off = pt_dyn_off + pt_dyn_size; data += interp_str_size;
-   o += interp_str_size;
+   int interp_off = pt_dyn_off + pt_dyn_size; data = data + interp_str_size;
+   o = o + interp_str_size;
 
    // .shstrtab (embedded in PT_LOAD of data)
    char *shstrtab_addr = data;
@@ -3040,7 +3067,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    shdr_names[SPLT] = append_strtab(&data, ".plt") - shstrtab_addr;
    shdr_names[SGOT] = append_strtab(&data, ".got") - shstrtab_addr;
    shstrtab_size = data - shstrtab_addr;
-   o += shstrtab_size;
+   o = o + shstrtab_size;
 
    // .dynstr (embedded in PT_LOAD of data)
    char *dynstr_addr = data;
@@ -3058,7 +3085,7 @@ int elf32(int poolsz, int *main, int elf_fd)
       func_entries[i] = append_strtab(&data, ef_cache[i]->name) - dynstr_addr;
 
    int dynstr_size = data - dynstr_addr;
-   o += dynstr_size;
+   o = o + dynstr_size;
 
    // .dynsym (embedded in PT_LOAD of data)
    char *dynsym_addr = data;
@@ -3070,7 +3097,7 @@ int elf32(int poolsz, int *main, int elf_fd)
       append_func_sym(&data, func_entries[i]);
 
    int dynsym_size = SYM_ENT_SIZE * (ef_count + 1);
-   o += dynsym_size;
+   o = o + dynsym_size;
 
    // .got (embedded in PT_LOAD of data)
    char *got_addr = data;
@@ -3088,7 +3115,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    }
    data += 4;  // end with 0x0
    int got_size = (int) data - (int) got_addr;
-   o += got_size;
+   o = o + got_size;
 
    int dseg_size = o - dseg;
 
