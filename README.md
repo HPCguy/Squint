@@ -23,7 +23,7 @@ benchmark provides an optimization example, and runs roughly
 
 * Greatly improved type checking, error checking, and IR code generation (try -si option).
 
-Source code size:
+Source code size (public code version, this repository):
 * mc C compiler -- 3250 SLOC
 * squint optimizer -- 3750 SLOC
 
@@ -74,7 +74,7 @@ Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
 | duff.c | 2924 | 500 | ***412*** | unusual |
 | maze.c | 6640 | 2536 | ***1752*** | misc |
 | shock.c | 7852 | ***2220*** | 3388 | floating point |
-| mc.c | 154876 | 58144 | ***44776*** | full compiler |
+| mc.c | 154876 | 67484 | ***44776*** | full compiler |
 
 ## Assembly language quality
 
@@ -83,10 +83,10 @@ when compiling tests/shock.c.
 
 * GCC, specifically: "gcc -mfloat-abi=hard -mtune=cortex-a72 -O3 tests/shock.c -lm"
 
-* The Squint compiler uses the compiler in this repository with the -Op option,
+* The Squint compiler uses the compiler in ***this repository*** with the -Op option,
 followed by the Squint optimizer.
 
-* The MC compiler is a non-public HPC version of Squint that I am working on offline.
+* The MC compiler is a non-public HPC version of Squint that I am working on ***offline***.
 
 For floating point, my HPC compiler is currently always faster than gcc with the above
 compiler options, by a minimum of 3%.
@@ -176,7 +176,7 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
 }
 ```
 
-| gcc | Squint | MC (my HPC compiler) |
+| gcc | Squint | MC (private repo HPC compiler) |
 | --- | --- | --- |
 | ***186++ instructions*** | ***142 instructions*** | ***113 instructions*** |
 | ***??? inststructions/iter*** | ***142 instructions/iter*** | ***113 instructions/iter*** |
