@@ -70,11 +70,11 @@ Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
 
 | Benchmark |  AMaCC .text size | Mc+Squint .text | Gcc -O3 .text | Notes |
 | --- | --- | --- | --- | --- |
-| bezier.c | 3672 | 1172 | ***768*** | recursive |
-| duff.c | 3068 | 564 | ***412*** | unusual |
-| maze.c | 6640 | 2632 | ***1752*** | misc |
-| shock.c | 8732 | ***1512*** | 3388 | floating point |
-| mc.c | 123264 | 58144 | ***34932*** | full compiler |
+| bezier.c | 3384 | 980 | ***768*** | recursive |
+| duff.c | 2924 | 500 | ***412*** | unusual |
+| maze.c | 6640 | 2536 | ***1752*** | misc |
+| shock.c | 7852 | ***2220*** | 3388 | floating point |
+| mc.c | 154876 | 58144 | ***44776*** | full compiler |
 
 ## Assembly language quality
 
@@ -104,8 +104,8 @@ I could do ***much*** better!  If you might be interested, let's talk.
    None of these things are hard to do, but all consume time to implement.
 
 Below is a C function followed by the assembly language listing for the loop body,
-for all three compilers. The MC compiler produces 3.05 assembly language
-instructions per (complex) line of high level C code:
+for all three compilers. The MC compiler creates only 3.05 assembly language
+instructions to represent each (complex) line of high level C code, on average:
 
 ```
 void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
