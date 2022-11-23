@@ -176,7 +176,7 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
 }
 ```
 
-| gcc | Squint | MC (private repo HPC compiler) |
+| gcc | Squint (this repo) | MC (private repo HPC compiler) |
 | --- | --- | --- |
 | ***186++ instructions*** | ***142 instructions*** | ***113 instructions*** |
 | ***??? inststructions/iter*** | ***142 instructions/iter*** | ***113 instructions/iter*** |
