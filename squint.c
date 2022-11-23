@@ -1295,8 +1295,8 @@ static void apply_peepholes4_2(int *instInfo, int *funcBegin, int *funcEnd)
             if (rdd != rdu) continue;
             // make sure no funcs or branch targets
             // between scan and rdd
-            int *inst;
-            for (inst = &instInfo[scanp5-funcBegin]; inst <= rdd; ++inst)
+            int *inst, *dep;
+            for (inst = &instInfo[scanp4-funcBegin]; inst <= rdd; ++inst)
                if (*inst & RI_bb) break;
             if (inst <= rdd) continue;
             int *scanp3 = active_inst(scanp2, 1);
@@ -1319,17 +1319,17 @@ static void apply_peepholes4_2(int *instInfo, int *funcBegin, int *funcEnd)
             *scanp5 = NOP;
             instInfo[scanp5-funcBegin] &= RI_bb;
             // copy up instructions
-            for (inst=scanp4+1; inst <= &funcBegin[rdd-instInfo]; ++inst) {
+            for (inst=scanp4+1, dep=&instInfo[scanp4-funcBegin]+1;
+                 inst <= &funcBegin[rdd-instInfo]; ++inst, ++dep) {
                if ((*inst & 0xffff0000) == 0xe59f0000) // ldr r0, [pc, #X]
                   rel_pc_ldr(inst-1, inst);
                else
                   *(inst-1) = *inst;
+               *(dep-1) = *dep;
             }
             scan = &funcBegin[rdd-instInfo];
             *scan = 0xe5821000; // str r1, [r2]
-            // expensive! -- done for bb_info regeneration
-            create_inst_info(instInfo, funcBegin, funcEnd);
-            create_bb_info(instInfo, funcBegin, funcEnd);
+            *rdd = RI_RdDest | RI_dataW | RI_RnAct | RI_RdAct | 0x21000;
          }
       }
    }

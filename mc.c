@@ -2604,9 +2604,12 @@ int *codegen(int *jitmem, int *jitmap)
 
       int genpool = 0;
       if (imm0) {
-         if (i == LEV || (i == JMP && immf0)) genpool = 1;
-         else if ( je > imm0 + 768 || // pad for optimizer
-                   (immf0 && je > immf0 + 128) ) {
+         if (i == LEV ||
+            (i == JMP && // start looking for opportunities
+             ((imm0 && je > imm0 + 768) || (immf0 && je > immf0 + 128))))
+            genpool = 1;
+         else if ( je > imm0 + 896 || // pad for optimizer
+                   (immf0 && je > immf0 + 192) ) {
             tje = je - 1;
             if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
                 (*tje & 0x000f0000) != 0x000f0000 && // pc-relative mem op
