@@ -6,6 +6,10 @@ complete, C compiler (mc.c) that supports JIT execution, ELF executable
 generation, and peephole optimization.  mc.c is a follow on to the AMaCC
 compiler.  See the AMaCC documentation referenced below for more information.
 
+This compiler was developed on a Raspberry Pi computer running 32 bit Buster Linux.
+See the "Discussion" tab above for instructions on using this compiler
+with an ARM Chromebook.
+
 The MC C compiler found in this repository is a subset of ***the full MC HPC compiler which is
 being developed offline.  That said, results from the full MC HPC compiler
 are shown [below](#assembly-language-quality)***.
@@ -380,6 +384,7 @@ parallel partitions, unlike the mess created by C standard semantics.
 ## Test environment:
 * Raspberry Pi 4B (SoC: bcm2711, ARMv8-A architecture)
 * Raspbian GNU/Linux, kernel 5.10.17-v7l+, gcc 8.3.0 (armv7l userland)
+* See the "Discussion" tab in this repo to run Squint on your ARM Chromebook.
 
 The architecture support targets armv7hf with Linux ABI, verified on
 Raspberry Pi 2/3/4 with GNU/Linux.
