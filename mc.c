@@ -66,6 +66,7 @@ int ty;             // current expression type
                     //   3d etype -- bit 0:10,11:20,21:30 [1024,1024,2048]
                     // bit 2:9 - type
                     // bit 10:11 - ptr level
+int compound;       // manage precedence of compound assign expressions
 int rtf, rtt;       // return flag and return type for current function
 int loc;            // local variable offset
 int line;           // current line number
@@ -684,7 +685,7 @@ int tensor_size(int dim, int etype)
 void expr(int lev)
 {
    int t, tc, tt[2], nf, *b, sz, *c;
-   int otk, memsub = 0;
+   int memsub = 0;
    union conv *c1, *c2;
    struct ident_s *d;
    struct member_s *m;
@@ -943,14 +944,10 @@ resolve_fnproto:
       case ModAssign:
          if (t & 3) fatal("Cannot assign to array type lvalue");
          if (*n != Load) fatal("bad lvalue in assignment");
-         otk = tk;
          n += 2; b = n; *--n = ';'; *--n = t; *--n = Load;
-         if (otk < ShlAssign) {
-            tk = Or + (otk - OrAssign);
-         } else {
-            tk = Shl + (otk - ShlAssign);
-         }
-         ty = t; tk |= REENTRANT; expr(Assign);
+         if (tk < ShlAssign) tk = Or + (tk - OrAssign);
+         else tk = Shl + (tk - ShlAssign);
+         tk |= REENTRANT; ty = t; compound = 1; expr(Assign);
          *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
          return;
       case Cond: // `x?a:b` is similar to if except that it relies on else
@@ -977,19 +974,28 @@ resolve_fnproto:
          ty = INT;
          break;
       case Or: // push the current value, calculate the right value
-         next(); expr(Xor); bitopcheck(t, ty);
+         next();
+         if (compound) { compound = 0; expr(Assign); }
+         else expr(Xor);
+         bitopcheck(t, ty);
          if (*n == Num && *b == Num) { b[1] |= n[1]; n += 2; }
          else { *--n = (int) b; *--n = Or; }
          ty = INT;
          break;
       case Xor:
-         next(); expr(And); bitopcheck(t, ty);
+         next();
+         if (compound) { compound = 0; expr(Assign); }
+         else expr(And);
+         bitopcheck(t, ty);
          if (*n == Num && *b == Num) { b[1] ^= n[1]; n += 2; }
          else { *--n = (int) b; *--n = Xor; }
          ty = INT;
          break;
       case And:
-         next(); expr(Eq); bitopcheck(t, ty);
+         next();
+         if (compound) { compound = 0; expr(Assign); }
+         else expr(Eq);
+         bitopcheck(t, ty);
          if (*n == Num && *b == Num) { b[1] &= n[1]; n += 2; }
          else { *--n = (int) b; *--n = And; }
          ty = INT;
@@ -1097,7 +1103,10 @@ resolve_fnproto:
          ty = INT;
          break;
       case Shl:
-         next(); expr(Add); bitopcheck(t, ty);
+         next();
+         if (compound) { compound = 0; expr(Assign); }
+         else expr(Add);
+         bitopcheck(t, ty);
          if (*n == Num && *b == Num) {
             if (n[1] < 0) b[1] >>= -n[1];
             else b[1] <<= n[1];
@@ -1106,7 +1115,10 @@ resolve_fnproto:
          ty = INT;
          break;
       case Shr:
-         next(); expr(Add); bitopcheck(t, ty);
+         next();
+         if (compound) { compound = 0; expr(Assign); }
+         else expr(Add);
+         bitopcheck(t, ty);
          if (*n == Num && *b == Num) {
             if (n[1] < 0) b[1] <<= -n[1];
             else b[1] >>= n[1];
@@ -1115,7 +1127,10 @@ resolve_fnproto:
          ty = INT;
          break;
       case Add:
-         next(); expr(Mul); typecheck(Add, t, ty);
+         next();
+         if (compound) { compound = 0; expr(Assign); }
+         else expr(Mul);
+         typecheck(Add, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c2->f += c1->f; n += 2;
@@ -1139,7 +1154,10 @@ resolve_fnproto:
          }
          break;
       case Sub:
-         next(); expr(Mul); typecheck(Sub, t, ty);
+         next();
+         if (compound) { compound = 0; expr(Assign); }
+         else expr(Mul);
+         typecheck(Sub, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c2->f -= c1->f; n += 2;
@@ -1198,7 +1216,10 @@ resolve_fnproto:
          }
          break;
       case Mul:
-         next(); expr(Inc); typecheck(Mul, t, ty);
+         next();
+         if (compound) { compound = 0; expr(Assign); }
+         else expr(Inc);
+         typecheck(Mul, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c2->f *= c1->f; n += 2;
@@ -1230,7 +1251,10 @@ resolve_fnproto:
          next();
          break;
       case Div:
-         next(); expr(Inc); typecheck(Div, t, ty);
+         next();
+         if (compound) { compound = 0; expr(Assign); }
+         else expr(Inc);
+         typecheck(Div, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c2->f /= c1->f; n += 2;
@@ -1252,7 +1276,10 @@ resolve_fnproto:
          }
          break;
       case Mod:
-         next(); expr(Inc); typecheck(Mod, t, ty);
+         next();
+         if (compound) { compound = 0; expr(Assign); }
+         else expr(Inc);
+         typecheck(Mod, t, ty);
          if (ty == FLOAT) fatal("use fmodf() for float modulo");
          if (*n == Num && *b == Num) { b[1] %= n[1]; n += 2; }
          else {
@@ -1271,7 +1298,7 @@ resolve_fnproto:
          if (n[0] == Load && n[1] > ATOM_TYPE && n[1] < PTR) n += 2; // struct
       case Arrow:
          if (t <= PTR+ATOM_TYPE || t >= PTR2) fatal("structure expected");
-         if (tokloc) { otk = tokloc; tokloc = 1; next(); tokloc = otk; }
+         if (tokloc) { int otk = tokloc; tokloc = 1; next(); tokloc = otk; }
          else next();
          if (tk != Id) fatal("structure member expected");
          m = members[(t - PTR) >> 2];
