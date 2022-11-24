@@ -678,6 +678,9 @@ int tensor_size(int dim, int etype)
  * Dec    --
  * Bracket [
  */
+
+#define REENTRANT 0x10000
+
 void expr(int lev)
 {
    int t, tc, tt[2], nf, *b, sz, *c;
@@ -906,7 +909,11 @@ resolve_fnproto:
       *n = t;
       break;
    case 0: fatal("unexpected EOF in expression");
-   default: fatal("bad expression");
+   default:
+      if (tk & REENTRANT)
+         tk ^= REENTRANT;
+      else
+         fatal("bad expression");
    }
 
    // "precedence climbing" or "Top Down Operator Precedence" method
@@ -937,27 +944,15 @@ resolve_fnproto:
          if (t & 3) fatal("Cannot assign to array type lvalue");
          if (*n != Load) fatal("bad lvalue in assignment");
          otk = tk;
-         n += 2; b = n; *--n=';'; *--n = t; *--n = Load;
-         sz = (t >= PTR2) ? sizeof(int) :
-                            ((t >= PTR) ? tsize[(t - PTR) >> 2] : 1);
-         next(); c = n; expr(otk);
-         if (*n == Num) n[1] *= sz;
-         *--n = (int) c;
+         n += 2; b = n; *--n = ';'; *--n = t; *--n = Load;
          if (otk < ShlAssign) {
-            *--n = Or + (otk - OrAssign);
+            tk = Or + (otk - OrAssign);
          } else {
-            *--n = Shl + (otk - ShlAssign);
-            // Compound-op bypasses literal const optimizations
-            if (ty != FLOAT) {
-               if (otk == DivAssign) ef_getidx("__aeabi_idiv");
-               if (otk == ModAssign) ef_getidx("__aeabi_idivmod");
-            }
+            tk = Shl + (otk - ShlAssign);
          }
-         if (t == FLOAT && (otk >= AddAssign && otk <= DivAssign))
-            *n += (AddF - Add);
-         typecheck(*n, t, ty);
+         ty = t; tk |= REENTRANT; expr(Assign);
          *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
-         break;
+         return;
       case Cond: // `x?a:b` is similar to if except that it relies on else
          next(); expr(Assign); tc = ty;
          if (tk != ':') fatal("conditional missing colon");
@@ -2647,15 +2642,13 @@ int *codegen(int *jitmem, int *jitmap)
                *(int *) tmp = 0xe59f0000 | ((int) (je + *ivv) - tmp - 8);
             }
             ++ivv;
-            // *je++ = icnst[*ivv++];
-            // if (ivv[0] == ivv[1]) --je; ++ivv;
          }
-         je = je + nicnst;
+         je += nicnst;
          if (genpool == 2) { // jump past the pool
             tmp = ((int) je - (int) tje - 8) >> 2;
             *tje = 0xea000000 | (tmp & 0x00ffffff); // b #(je)
          }
-         imm0 = 0; immf0 = 0; genpool = 0;
+         imm0 = immf0 = 0; genpool = 0;
          iv = immlocv; il = immloc; nicnst = 0;
       }
    }
@@ -2996,19 +2989,19 @@ int elf32(int poolsz, int *main, int elf_fd)
    *o++ =  1; *o++ = 0;
 
    int phdr_size = PHDR_ENT_SIZE * PHDR_NUM;
-   char *phdr = o; o = o + phdr_size;
+   char *phdr = o; o += phdr_size;
 
    // .text
    int code_off = o - buf;
    int code_size = je - code;
    char *code_addr = o;
-   o = o + code_size;
+   o += code_size;
 
    // .rel.plt (embedded in PT_LOAD of text)
    int rel_size = REL_ENT_SIZE * ef_count;
    int rel_off = code_off + code_size;
    char *rel_addr = code_addr + code_size;
-   o = o + rel_size;
+   o += rel_size;
 
    // .plt (embedded in PT_LOAD of text)
    // 20 is the size of .plt entry code to .got
@@ -3026,7 +3019,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    // needs PAGE_SIZE align to do mmap().
    int load_bias = PAGE_SIZE + ((int) _data & (PAGE_SIZE - 1))
                                - ((o - buf) & (PAGE_SIZE - 1));
-   o = o + load_bias;
+   o += load_bias;
    char *dseg = o;
 
    // rwdata (embedded in PT_LOAD of data)
@@ -3034,13 +3027,13 @@ int elf32(int poolsz, int *main, int elf_fd)
    // e.g, the variable with initial value and all the string.
    int rwdata_off = dseg - buf;
    int rwdata_size = _data_end - _data;
-   o = o + rwdata_size;
+   o += rwdata_size;
 
    // .dynamic (embedded in PT_LOAD of data)
    char *pt_dyn = data;
    int pt_dyn_size = DYN_NUM * DYN_ENT_SIZE;
    int pt_dyn_off = rwdata_off + rwdata_size; data = data + pt_dyn_size;
-   o = o + pt_dyn_size;
+   o += pt_dyn_size;
 
    // .interp (embedded in PT_LOAD of data)
    char *interp_str = "/lib/ld-linux-armhf.so.3";
@@ -3048,7 +3041,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    char *interp = data;
    memcpy(interp, interp_str, interp_str_size);
    int interp_off = pt_dyn_off + pt_dyn_size; data = data + interp_str_size;
-   o = o + interp_str_size;
+   o += interp_str_size;
 
    // .shstrtab (embedded in PT_LOAD of data)
    char *shstrtab_addr = data;
@@ -3070,7 +3063,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    shdr_names[SPLT] = append_strtab(&data, ".plt") - shstrtab_addr;
    shdr_names[SGOT] = append_strtab(&data, ".got") - shstrtab_addr;
    shstrtab_size = data - shstrtab_addr;
-   o = o + shstrtab_size;
+   o += shstrtab_size;
 
    // .dynstr (embedded in PT_LOAD of data)
    char *dynstr_addr = data;
@@ -3088,7 +3081,7 @@ int elf32(int poolsz, int *main, int elf_fd)
       func_entries[i] = append_strtab(&data, ef_cache[i]->name) - dynstr_addr;
 
    int dynstr_size = data - dynstr_addr;
-   o = o + dynstr_size;
+   o += dynstr_size;
 
    // .dynsym (embedded in PT_LOAD of data)
    char *dynsym_addr = data;
@@ -3100,7 +3093,7 @@ int elf32(int poolsz, int *main, int elf_fd)
       append_func_sym(&data, func_entries[i]);
 
    int dynsym_size = SYM_ENT_SIZE * (ef_count + 1);
-   o = o + dynsym_size;
+   o += dynsym_size;
 
    // .got (embedded in PT_LOAD of data)
    char *got_addr = data;
@@ -3118,7 +3111,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    }
    data += 4;  // end with 0x0
    int got_size = (int) data - (int) got_addr;
-   o = o + got_size;
+   o += got_size;
 
    int dseg_size = o - dseg;
 
