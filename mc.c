@@ -26,6 +26,10 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 
+// Replaces local variables that are simple array aliases with
+// text substitution. Better to disable this when not using Squint opt.
+#define MC_TEXT_SUB 1
+
 #define SMALL_TBL_SZ 256
 
 #if 0
@@ -54,6 +58,12 @@ int tk;             // current token
 int sbegin;         // statement begin state.
 int tokloc;         // 0 = global scope, 1 = function scope
                     // 2 = function scope, declaration in progress
+#ifdef MC_TEXT_SUB
+int mns;            // member namespace -- 1 = member lookup in progress
+int masgn;          // This variable is used to skip struct substitutions
+char *pts;          // != 0 means text substitutuion in progress
+#endif
+
 union conv {
    int i;
    float f;
@@ -96,10 +106,10 @@ int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
 // Carefully creating declarations with block scopes improves optimization
 #define MAX_LABEL 32
 struct ident_s {
-   int tk;         // type-id or keyword
+   int tk;       // type-id or keyword
    int hash;
-   char *name;     // name of this identifier
-   int pad;        // pad to multiple of 8 bytes
+   char *name;   // name of this identifier
+   char *tsub;   // != 0 substitutes var usage with tsub text
    int class;    // FUNC, GLO (global var), LOC (local var), Syscall
    int type;     // data type such as char and int
    int val;
@@ -396,6 +406,9 @@ void next()
     * cannot be recognized by the lexical analyzer are considered blank
     * characters, such as '@' and '$'.
     */
+#ifdef MC_TEXT_SUB
+text_sub: t = t; // dummy assignment for goto bug workaround
+#endif
    while ((tk = *p)) {
       ++p;
       if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') || (tk == '_')) {
@@ -425,6 +438,13 @@ void next()
                         goto new_block_def;
                      }
                   }
+#ifdef MC_TEXT_SUB
+                  if (id->tsub && !mns) {
+                     if (pts != 0) fatal("internal compiler error");
+                     pts = p; p = id->tsub;
+                     goto text_sub;
+                  }
+#endif
                   tk = id->tk;
                   return;
                }
@@ -458,6 +478,7 @@ new_block_def:
          id->hash = tk;
          tk = id->tk = Id;  // token type identifier
          id->class = id->val = id->type = id->etype = 0;
+         id->tsub = 0;
          return;
       }
       /* Calculate the constant */
@@ -586,6 +607,13 @@ new_block_def:
       default: return;
       }
    }
+
+#ifdef MC_TEXT_SUB
+   if (pts != 0) {
+      p = pts; pts = 0;
+      goto text_sub;
+   }
+#endif
 }
 
 int popcount32(int i)
@@ -949,7 +977,7 @@ resolve_fnproto:
          else tk = Shl + (tk - ShlAssign);
          tk |= REENTRANT; ty = t; compound = 1; expr(Assign);
          *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
-         return;
+         break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
          next(); expr(Assign); tc = ty;
          if (tk != ':') fatal("conditional missing colon");
@@ -1111,7 +1139,9 @@ resolve_fnproto:
             if (n[1] < 0) b[1] >>= -n[1];
             else b[1] <<= n[1];
             n += 2;
-         } else { *--n = (int) b; *--n = Shl; }
+         }
+         else if (*n == Num && n[1] == 0) n += 2;
+         else { *--n = (int) b; *--n = Shl; }
          ty = INT;
          break;
       case Shr:
@@ -1123,7 +1153,9 @@ resolve_fnproto:
             if (n[1] < 0) b[1] <<= -n[1];
             else b[1] >>= n[1];
             n += 2;
-         } else { *--n = (int) b; *--n = Shr; }
+         }
+         else if (*n == Num && n[1] == 0) n += 2;
+         else { *--n = (int) b; *--n = Shr; }
          ty = INT;
          break;
       case Add:
@@ -1135,8 +1167,10 @@ resolve_fnproto:
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c2->f += c1->f; n += 2;
             }
+            else if (*n == NumF && n[1] == 0) n += 2;
             else { *--n = (int) b; *--n = AddF; }
          }
+         else if (*n == Num && n[1] == 0) n += 2;
          else { // either (1) both int (2) one is ptr, one is int
             tc = ((t | ty) & (PTR | PTR2)) ? (t >= PTR) : (t >= ty);
             c = n; if (tc) ty = t; // set result type
@@ -1162,8 +1196,10 @@ resolve_fnproto:
             if (*n == NumF && *b == NumF) { 
                c1 = &n[1]; c2 = &b[1]; c2->f -= c1->f; n += 2;
             }
+            else if (*n == NumF && n[1] == 0) n += 2;
             else { *--n = (int) b; *--n = SubF; }
          }
+         else if (*n == Num && n[1] == 0) n += 2;
          else { // 4 cases: ptr-ptr, ptr-int, int-ptr (err), int-int
             if (t >= PTR) { // left arg is ptr
                sz = (t >= PTR2) ? sizeof(int) : tsize[(t - PTR) >> 2];
@@ -1224,8 +1260,10 @@ resolve_fnproto:
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c2->f *= c1->f; n += 2;
             }
+            else if (*n == NumF && n[1] == 0x3f800000) n += 2; // 1.0
             else { *--n = (int) b; *--n = MulF; }
          }
+         else if (*n == Num && n[1] == 1) n += 2;
          else {
             if (*n == Num && *b == Num) { b[1] *= n[1]; n += 2; }
             else {
@@ -1259,8 +1297,10 @@ resolve_fnproto:
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c2->f /= c1->f; n += 2;
             }
+            else if (*n == NumF && n[1] == 0x3f800000) n += 2; // 1.0
             else { *--n = (int) b; *--n = DivF; }
          }
+         else if (*n == Num && n[1] == 1) n += 2;
          else {
             if (*n == Num && *b == Num) { b[1] /= n[1]; n += 2; }
             else {
@@ -1298,7 +1338,15 @@ resolve_fnproto:
          if (n[0] == Load && n[1] > ATOM_TYPE && n[1] < PTR) n += 2; // struct
       case Arrow:
          if (t <= PTR+ATOM_TYPE || t >= PTR2) fatal("structure expected");
-         if (tokloc) { int otk = tokloc; tokloc = 1; next(); tokloc = otk; }
+         if (tokloc) {
+#ifdef MC_TEXT_SUB
+            masgn = mns = 1;
+#endif
+            int otk = tokloc; tokloc = 1; next(); tokloc = otk;
+#ifdef MC_TEXT_SUB
+            mns = 0;
+#endif
+         }
          else next();
          if (tk != Id) fatal("structure member expected");
          m = members[(t - PTR) >> 2];
@@ -1675,7 +1723,6 @@ void gen(int *n)
 
 void loc_array_decl(int ct, int extent[3], int *dims, int *et, int *size)
 {
-   int ii = ii; // keep this to disable frame optimization for now.
    *dims = 0;
    do {
       next();
@@ -1731,7 +1778,7 @@ void stmt(int ctx)
       if (!sbegin) {
          while (tk == ',' && ctx == Loc) {
             int *t;
-            next(); t = n;  expr(Assign);
+            next(); t = n; expr(Assign);
             if (t != n) { *--n = (int) t; *--n = '{'; }
          }
          if (tk != ';' && tk != ',') fatal("semicolon expected");
@@ -1750,7 +1797,7 @@ void stmt(int ctx)
       case TypeId:
          tdef = 1; goto do_typedef;
       case Enum:
-         printf("Enum not supported for typedef");
+         printf("Enum not supported for typedef\n");
       default: fatal("bad typedef declaration");
       }
    case Enum:
@@ -2048,6 +2095,10 @@ unwind_func:
             if (tk == Assign) {
                if (ctx == Par) fatal("default arguments not supported");
                if (tokloc) --tokloc;
+#ifdef MC_TEXT_SUB
+               char *psave = p;
+               masgn = 0;
+#endif
                next();
                if (tk == '{' && (dd->type & 3)) init_array(dd, nd, j);
                else {
@@ -2055,8 +2106,27 @@ unwind_func:
                      if (b == 0) *--n = ';';
                      b = n; *--n = loc - dd->val; *--n = Loc;
                      a = n; i = ty; expr(Assign); typecheck(Assign, i, ty);
-                     *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign;
-                     ty = i; *--n = (int) b; *--n = '{';
+#ifdef MC_TEXT_SUB
+                     if (i <= ATOM_TYPE && !masgn &&
+                         (((a == n+4) && *n == Load && n[2] == Loc) ||
+                         ((a == n+10) && *n == Load &&
+                          n[2] == Add && n[4] == Num &&
+                          n[6] == Load && n[8] == Loc))) {
+                        --ir_count; ld -= sz / sizeof(int); dd->val = -1;
+                        dd->tsub = idp;
+                        memcpy(idp, psave, p-psave-1); idp[p-psave-1] = 0;
+                        idp = (char *) (((int) idp +
+                                         (p - psave) + sizeof(int)) &
+                                        (-sizeof(int)));
+                        n = b + 1;
+                     }
+                     else {
+#endif
+                        *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign;
+                        ty = i; *--n = (int) b; *--n = '{';
+#ifdef MC_TEXT_SUB
+                     }
+#endif
                   }
                   else { // ctx == Glo
                      i = ty; expr(Cond); typecheck(Assign, i, ty);
@@ -2626,9 +2696,12 @@ int *codegen(int *jitmem, int *jitmap)
 
       int genpool = 0;
       if (imm0) {
-         if (i == LEV || (i == JMP && immf0)) genpool = 1;
-         else if ( je > imm0 + 768 || // pad for optimizer
-                   (immf0 && je > immf0 + 128) ) {
+         if (i == LEV ||
+            (i == JMP && // start looking for opportunities
+             ((imm0 && je > imm0 + 768) || (immf0 && je > immf0 + 128))))
+            genpool = 1;
+         else if ( je > imm0 + 896 || // pad for optimizer
+                   (immf0 && je > immf0 + 192) ) {
             tje = je - 1;
             if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
                 (*tje & 0x000f0000) != 0x000f0000 && // pc-relative mem op
@@ -3056,7 +3129,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    // .dynamic (embedded in PT_LOAD of data)
    char *pt_dyn = data;
    int pt_dyn_size = DYN_NUM * DYN_ENT_SIZE;
-   int pt_dyn_off = rwdata_off + rwdata_size; data = data + pt_dyn_size;
+   int pt_dyn_off = rwdata_off + rwdata_size; data += pt_dyn_size;
    o += pt_dyn_size;
 
    // .interp (embedded in PT_LOAD of data)
@@ -3064,7 +3137,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    int interp_str_size = 25; // strlen(interp_str) + 1
    char *interp = data;
    memcpy(interp, interp_str, interp_str_size);
-   int interp_off = pt_dyn_off + pt_dyn_size; data = data + interp_str_size;
+   int interp_off = pt_dyn_off + pt_dyn_size; data += interp_str_size;
    o += interp_str_size;
 
    // .shstrtab (embedded in PT_LOAD of data)
