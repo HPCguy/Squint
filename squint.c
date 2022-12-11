@@ -950,9 +950,10 @@ static void apply_peepholes1(int *funcBegin, int *funcEnd)
             *scanp2 = NOP;
             scan = scanp3;
          }
-         else if (*scanp3 == 0xe1a00051) { /* asr r0, r1, r0 */
+         else if (*scanp3 == 0xe1a00051 || /* asr r0, r1, r0 */
+                  *scanp3 == 0xe1a00011) { /* lsl r0, r1, r0 */
             int shift = ((*scanp1 & 0xff) < 0x20) ? (*scanp1 & 0x1f) : 0x1f;
-            *scanp3 = 0xe1a00040 | (shift << 7);
+            *scanp3 = (*scanp3 & 0xffffffe0) | (shift << 7);
             *scan   = NOP;
             *scanp1 = NOP;
             *scanp2 = NOP;
@@ -1625,7 +1626,7 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
                }
                else if (off * ((*scan & (1 << 23)) ? 1 : -1) +
                         (inst & 0xff) * (isAdd ? 1 : -1) == 0) {
-                  *scan ^= 13 << 21;   // post inc/dec
+                  *scan ^= 3 << 23;   // post inc/dec
                   funcBegin[rdd-instInfo] = NOP;
                   *rdd &= RI_bb;
                }
@@ -2223,9 +2224,9 @@ static int apply_ptr_cleanup(int *instInfo, int *funcBegin, int *funcEnd,
    // instructions could be accidentally wiped out.
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
-      if (((*scan & 0xfff00070) == 0xe0800000 && // add rd, rn, rm, lsl #X
+      if (((*scan & 0xfff00070) == 0xe0800000 && // add rd, rn, rm, lsl #2+
            (*scan & 0xf80) >= 0x100) ||          // array (of struct)
-          (*scan & 0xfff000f0) == 0xe0200090) { // mla
+          (*scan & 0xfff000f0) == 0xe0200090) {  // mla
          info = &instInfo[scan-funcBegin];
          if (*info & RI_RnDest) {
             rd = ((*info & RI_Rn) >> 16);
