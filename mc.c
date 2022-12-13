@@ -49,6 +49,7 @@ int *cas;           // case statement patch-up pointer
 int *def;           // default statement patch-up pointer
 int *brks;          // break statement patch-up pointer
 int *cnts;          // continue statement patch-up pointer
+int *rets;          // single function exit model
 int  swtc;          // !0 -> in a switch-stmt context
 int  brkc;          // !0 -> in a break-stmt context
 int  cntc;          // !0 -> in a continue-stmt context
@@ -58,12 +59,6 @@ int tk;             // current token
 int sbegin;         // statement begin state.
 int tokloc;         // 0 = global scope, 1 = function scope
                     // 2 = function scope, declaration in progress
-#ifdef MC_TEXT_SUB
-int mns;            // member namespace -- 1 = member lookup in progress
-int masgn;          // This variable is used to skip struct substitutions
-char *pts;          // != 0 means text substitutuion in progress
-#endif
-
 union conv {
    int i;
    float f;
@@ -125,6 +120,17 @@ struct ident_s {
   *labt, // tail ptr for label Ids
   lab[MAX_LABEL];
 
+int mns;            // member namespace -- 1 = member lookup in progress
+int masgn;          // This variable is used to skip struct substitutions
+char *pts[16];      // != 0 means text substitutuion in progress
+int tsld[16];       // stack marker
+int tsline[16];     // what line is being parsed
+struct ident_s *tssymh[32]; // id marker
+int numpts;         // number of text substitution levels in flight
+int numfspec;       // number of inlinable functions
+int *fspec[256];    // inline function specifications
+char linespec[96];
+
 // IR information for local vars and parameters
 #define MAX_IR   256
 struct ir_s {
@@ -158,7 +164,7 @@ enum {
    Typedef, Enum, Char, Int, Float, Struct, Union,
    Sizeof, Return, Goto,
    Break, Continue, If, DoWhile, While, For,
-   Switch, Case, Default, Else, Label,
+   Switch, Case, Default, Else, Inln, Label,
    Assign, // operator =, keep Assign as highest priority operator
    OrAssign, XorAssign, AndAssign, ShlAssign, ShrAssign, // |=, ^=, &=, <<=, >>=
    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, // +=, -=, *=, /=, %=
@@ -345,10 +351,30 @@ char *append_strtab(char **strtab, char *str)
    return res;
 }
 
+// need this complex function to trace inlining errors
+char *linestr()
+{
+   char *out = linespec;
+   int i, ntmp, tidx=0;
+   char stmp[10];
+   tsline[numpts] = line;
+   if (numpts) { strcpy(linespec, "inline:"); out += 7; }
+   for (i=0; i<=numpts; ++i) {
+      ntmp = tsline[i];
+      while (ntmp>0) { stmp[tidx++] = '0' + ntmp%10; ntmp /= 10; }
+      while (tidx > 0) *out++ = stmp[--tidx];
+      *out++ = ':';
+   }
+   *--out = 0;
+   if (out == linespec) { *out++ = '0'; *out = 0; }
+   return linespec;
+}
+
 void fatal(char *msg)
 {
-   printf("%d: %.*s\n", line, p - lp, lp);
-   printf("%d: %s\n", line, msg); exit(-1);
+   char *base_p = (numpts) ? pts[0] : p;
+   printf("%s: %.*s\n", linestr(), base_p - lp, lp);
+   printf("%s: %s\n", linespec, msg); exit(-1);
 }
 
 void ef_add(char *name, int addr) // add external function
@@ -406,9 +432,7 @@ void next()
     * cannot be recognized by the lexical analyzer are considered blank
     * characters, such as '@' and '$'.
     */
-#ifdef MC_TEXT_SUB
 text_sub: t = t; // dummy assignment for goto bug workaround
-#endif
    while ((tk = *p)) {
       ++p;
       if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') || (tk == '_')) {
@@ -433,18 +457,21 @@ text_sub: t = t; // dummy assignment for goto bug workaround
                      if (id->val > lds[ldn])
                         fatal("redefinition of var within scope");
                      else {
-                        printf("%d: var %s decl hides previous decl\n",
-                               line, id->name);
+                        printf("%s: var %s decl hides previous decl\n",
+                               linestr(), id->name);
                         goto new_block_def;
                      }
                   }
-#ifdef MC_TEXT_SUB
                   if (id->tsub && !mns) {
-                     if (pts != 0) fatal("internal compiler error");
-                     pts = p; p = id->tsub;
+                     if (id->val & 1) { // recursive
+                        // handle recursion
+                        if (id->val == 3) { id->val = 1; continue; }
+                        else id->val = 3;
+                     }
+                     tsline[numpts] = 0;
+                     pts[numpts++] = p; p = id->tsub;
                      goto text_sub;
                   }
-#endif
                   tk = id->tk;
                   return;
                }
@@ -491,7 +518,10 @@ new_block_def:
       }
       switch (tk) {
       case '\n':
-         if (src) { printf("%d: %.*s", line, p - lp, lp); }
+         if (src) {
+            char *base_p = (numpts) ? pts[0] : p;
+            printf("%s: %.*s", linestr(), base_p - lp, lp);
+         }
          lp = p; ++line;
       case ' ':
       case '\t':
@@ -608,12 +638,16 @@ new_block_def:
       }
    }
 
-#ifdef MC_TEXT_SUB
-   if (pts != 0) {
-      p = pts; pts = 0;
+   if (numpts != 0) {
+      p = pts[--numpts];
+      if (tsline[numpts] != 0) line = tsline[numpts];
+      if (tssymh[numpts]) { // only used by inline functions
+         if (ld > maxld) maxld = ld;
+         --ldn; ld = tsld[numpts]; symlh = tssymh[numpts];
+         tssymh[numpts] = 0;
+      }
       goto text_sub;
    }
-#endif
 }
 
 int popcount32(int i)
@@ -717,9 +751,11 @@ void expr(int lev)
    union conv *c1, *c2;
    struct ident_s *d;
    struct member_s *m;
+   int inln_func = 0;
 
    switch (tk) {
    case Id:
+do_inln_func:
       d = id; next();
       if (tokloc && sbegin && tk == ':') {
          if (d->class != 0 || !(d->type == 0 || d->type == -1))
@@ -735,7 +771,9 @@ void expr(int lev)
       sbegin = 0;
       // function call
       if (tk == '(') {
-         if (d == symlh) { // move func Ids to global sym table
+         int fidx, tsi, *saven = 0;
+         char *psave, *ts[52];
+         if (d == symlh) { // move ext func Ids to global sym table
             memcpy(d = symgt++, symlh++, sizeof (struct ident_s));
          }
          if (d->class == Func && d->val == 0) goto resolve_fnproto;
@@ -746,14 +784,35 @@ void expr(int lev)
 resolve_fnproto:
             d->class = Syscall;
             d->val = ef_getidx(d->name) ;
+            if (inln_func) inln_func = 0; // should I warn here?
          }
+         while (*p == ' ' || *p == 0x0a) if (*p++ == 0x0a) ++line;
+         psave = p;
          next();
          t = 0; b = c = 0; tt[0] = tt[1] = 0; nf = 0; // FP argument count
-         if (peephole && (d->class < Fneg || d->class > Sqrt)) {
+         if (inln_func) {
+            for (fidx = 0; fidx < numfspec; ++fidx)
+               if (!strcmp(d->name, (char *)fspec[fidx][0])) break;
+            if (fidx == numfspec) inln_func = 0; // warn?
+            else { tsi = 0; saven = n; }
+         }
+         if (peephole && (d->class < Fneg || d->class > Sqrt) && !inln_func) {
             *--n = Phf; c = n;
          }
          while (tk != ')') {
-            expr(Assign);
+            if (inln_func) {
+               expr(Assign);
+               ts[tsi++] = idp; *idp = '(';
+               memcpy(idp+1, psave, p-psave-1);
+               idp[p-psave] = ')'; idp[p-psave+1] = 0;
+               // printf("#%s#\n", idp);
+               idp = (char *) (((int) idp +
+                                (p - psave) + 2 + sizeof(int)) &
+                               (-sizeof(int)));
+               while (*p == ' ' || *p == 0x0a) if (*p++ == 0x0a) ++line;
+               psave = p;
+            }
+            else expr(Assign);
             if (c != 0) { *--n = (int) c; *--n = '{'; c = 0; } // peephole
             *--n = (int) b; b = n; ++t;
             if (ty == FLOAT) { ++nf; tt[(t+11)/32] |= 1 << ((t+11) % 32); }
@@ -767,10 +826,57 @@ resolve_fnproto:
          if (d->ftype[0] && (d->ftype[0] != tt[0] || d->ftype[1] != tt[1]) )
             fatal("argument type mismatch");
          next();
-         // function or system call id
-         *--n = tt[1]; *--n = tt[0]; *--n = t;
-         *--n = d->val; *--n = (int) b; *--n = d->class;
-         ty = d->type;
+         if (inln_func) {
+            n = saven; // get rid of pushed function arguments
+
+            // set up block scope
+            int i, args;
+            lds[++ldn] = tsld[numpts] = ld; tssymh[numpts] = symlh;
+
+            // create substitution variables
+            args = (int) fspec[fidx][3]; // number of params in func def
+            for (i = 0; i < args; ++i) {
+               int recursive = 0;
+               char *tsn = (char *) fspec[fidx][4+i]; // param names
+               if (*tsn == ts[i][1] ||
+                   (ts[i][1] == '&' && *tsn == ts[i][2])) {
+                  int ilen = strlen(tsn);
+                  int off = (*tsn == ts[i][1]) ? 1 : 2;
+                  if (!strncmp(tsn, ts[i]+off, ilen)) {
+                     if (off == 1) continue;
+                     else recursive = 1; // off == 2
+                  }
+                  // now need to make sure that no local
+                  // variable exists having tsn's name
+                  // and skip inline code generation if
+                  // that happens with an explicit warning.
+               }
+               tk = *tsn++;
+               while (*tsn) tk = tk * 147 + *tsn++;
+               tk = (tk << 6) + (tsn - (char *)fspec[fidx][4+i]);
+               id = --symlh ;
+               id->name = (char *)fspec[fidx][4+i];
+               id->hash = tk;
+               tk = id->tk = Id;  // token type identifier
+               id->class = Loc;
+               id->val = recursive; // recursion flags
+               id->type = id->etype = 0;
+               id->tsub = ts[i];
+               // printf("#%s# = #%s#\n", id->name, id->tsub);
+            }
+            tk = ';';
+
+            // activate inlining
+            tsline[numpts] = line;
+            pts[numpts++] = p; p = (char *)fspec[fidx][1]; // func body source
+            line = (int) fspec[fidx][2] ; // func body line num
+         }
+         else {
+            // function or system call id
+            *--n = tt[1]; *--n = tt[0]; *--n = t;
+            *--n = d->val; *--n = (int) b; *--n = d->class;
+            ty = d->type;
+         }
       }
       // enumeration, only enums have ->class == Num
       else if (d->class == Num || d->class == NumF) {
@@ -843,7 +949,7 @@ resolve_fnproto:
    // Type cast or parenthesis
    case '(':
       next();
-      if ((tk >= Char && tk <= Union) || tk == TypeId) {
+      if ((tk >= Char && tk <= Union) || tk == TypeId || tk == Inln) {
          switch (tk) {
          case TypeId:
             if (id->type & 3) fatal("can't cast to tensor type... yet");
@@ -853,6 +959,10 @@ resolve_fnproto:
          case Int:
          case Float:
             t = (tk - Char) << 2; next(); break;
+         case Inln:
+            next(); if (tk != ')') fatal("bad cast");
+            next(); inln_func = 1;
+            goto do_inln_func;
          default:
             next();
             if (tk != Id || id->type <= ATOM_TYPE || id->type >= PTR)
@@ -1419,7 +1529,7 @@ add_simple:
          if (doload) { *--n = ((ty = t) >= PTR) ? INT : ty; *--n = Load; }
          break;
       default:
-         printf("%d: compiler error tk=%d\n", line, tk); exit(-1);
+         printf("%s: compiler error tk=%d\n", linestr(), tk); exit(-1);
       }
    }
 }
@@ -1472,8 +1582,8 @@ void init_array(struct ident_s *tn, int extent[], int dim)
                off = strlen((char *) n[1]) + 1;
                if (off > inc[0]) {
                   off = inc[0];
-                  printf("%d: string '%s' truncated to %d chars\n",
-                         line, (char *) n[1], off);
+                  printf("%s: string '%s' truncated to %d chars\n",
+                         linestr(), (char *) n[1], off);
                }
                memcpy((char *)vi + i, (char *) n[1], off);
                i += inc[0];
@@ -1716,7 +1826,7 @@ void gen(int *n)
    case Phf: *++e = PHF; break;
    default:
       if (i != ';') {
-         printf("%d: compiler error gen=%08x\n", line, i); exit(-1);
+         printf("%s: compiler error gen=%08x\n", linestr(), i); exit(-1);
       }
    }
 }
@@ -1962,18 +2072,30 @@ do_typedef:
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = (int) (e + 1); // function Pointer? offset/address
             symlh = symlt; tokloc = 1; next();
+            if (rtt == -1) {
+               fspec[numfspec] = (int *) idp;
+               fspec[numfspec][0] = (int) dd->name; // func name
+               idp += 56 * sizeof(int);
+            }
             nf = ir_count = ld = maxld = ldn = lds[0] = 0; // ld is param index
             while (tk != ')') {
                stmt(Par);
                if (ty == FLOAT) {
                   ++nf; dd->ftype[(ld+11)/32] |= 1 << ((ld+11) % 32);
                }
+               if (rtt == -1) fspec[numfspec][3+ld] = (int) id->name;
                if (tk == ',') next();
             }
             if (ld > MAX_FARG) fatal("maximum of 52 function parameters");
             next(); dd->ftype[0] += (nf << 6) + ld;
             if (tk == ';') { dd->val = 0; goto unwind_func; } // fn proto
             if (tk != '{') fatal("bad function definition");
+            if (rtt == -1) {
+               fspec[numfspec][1] = (int) p;  // func body
+               fspec[numfspec][2] = line;     // first source line func body
+               fspec[numfspec++][3] = (int) ld; // number of func param names
+               // param names are in slot 4 onward.
+            }
             loc = ++ld;
             next();
             oline = -1; osize = -1; oname = 0; // optimization hint
@@ -1986,6 +2108,7 @@ do_typedef:
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
+            if (rtt == -1) *(p-1) = 0;
             if (ld > maxld) maxld = ld;
             *--n = maxld - loc; *--n = Enter;
             if (oname && n[1] > 64 && osize > 64)
@@ -1995,7 +2118,8 @@ do_typedef:
             gen(n);
             if (src) {
                int *base = le;
-               printf("%d: %.*s\n", line, p - lp, lp); lp = p;
+               char *base_p = (numpts) ? pts[0] : p;
+               printf("%s: %.*s\n", linestr(), base_p - lp, lp); lp = base_p;
                while (le < e) {
                   int off = le - base; // Func IR instruction memory offset
                   printf("%04d: %8.4s", off,
@@ -2049,7 +2173,7 @@ do_typedef:
 unwind_func:
             while (--labt >= lab) {
                if (labt->class == 0 && labt->type == -1) {
-                  printf("%d: label %s not defined\n", line, labt->name);
+                  printf("%s: label %s not defined\n", linestr(), labt->name);
                   exit(-1);
                }
             }
@@ -2112,7 +2236,8 @@ unwind_func:
                          ((a == n+10) && *n == Load &&
                           n[2] == Add && n[4] == Num &&
                           n[6] == Load && n[8] == Loc))) {
-                        --ir_count; ld -= sz / sizeof(int); dd->val = -1;
+                        --ir_count; ld -= sz / sizeof(int);
+                        dd->val = 0; // recursion flags
                         dd->tsub = idp;
                         memcpy(idp, psave, p-psave-1); idp[p-psave-1] = 0;
                         idp = (char *) (((int) idp +
@@ -2141,7 +2266,8 @@ unwind_func:
                            i = strlen((char *) n[1]) + 1;
                            if (i > (dd->etype + 1)) {
                                i = dd->etype + 1;
-                               printf("%d: string truncated to width\n", line);
+                               printf("%s: string truncated to width\n",
+                                      linestr());
                            }
                            memcpy((char *) dd->val, (char *) n[1], i);
                         }
@@ -3397,17 +3523,17 @@ int main(int argc, char **argv)
       die("could not allocate symbol area");
    symlh = symlt = (struct ident_s *) ((int)sym + poolsz);
    syms = (struct ident_s *) ((int)sym + poolsz/2);
-   idp = idn = (char *) malloc(96 * 1024); // max space for id names
+   idp = idn = (char *) malloc(128 * 1024); // max space for id names
 
    // Register keywords in symbol stack. Must match the sequence of enum
    p = "typedef enum char int float struct union "
        "sizeof return goto break continue "
-       "if do while for switch case default else "
+       "if do while for switch case default else inln "
        "void main __clear_cache fnegf fabsf sqrtf";
 
    // call "next" to create symbol table entry.
    // store the keyword's token type in the symbol table entry's "tk" field.
-   for (i = Typedef; i <= Else; ++i) {
+   for (i = Typedef; i <= Inln; ++i) {
       next(); id->tk = i; id->class = Keyword; // add keywords to symbol table
    }
 
