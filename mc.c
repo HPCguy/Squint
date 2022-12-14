@@ -104,7 +104,7 @@ struct ident_s {
    int tk;       // type-id or keyword
    int hash;
    char *name;   // name of this identifier
-   char *tsub;   // != 0 substitutes var usage with tsub text
+   char *tsub;   // != 0 substitutes var usage with tsub text, or func
    int class;    // FUNC, GLO (global var), LOC (local var), Syscall
    int type;     // data type such as char and int
    int val;
@@ -372,9 +372,8 @@ char *linestr()
 
 void fatal(char *msg)
 {
-   char *base_p = (numpts) ? pts[0] : p;
-   printf("%s: %.*s\n", linestr(), base_p - lp, lp);
-   printf("%s: %s\n", linespec, msg); exit(-1);
+   if (!numpts) printf("%d: %.*s\n", line, p - lp, lp);
+   printf("%s: %s\n", linestr(), msg); exit(-1);
 }
 
 void ef_add(char *name, int addr) // add external function
@@ -518,11 +517,11 @@ new_block_def:
       }
       switch (tk) {
       case '\n':
-         if (src) {
-            char *base_p = (numpts) ? pts[0] : p;
-            printf("%s: %.*s", linestr(), base_p - lp, lp);
+         if (!numpts) {
+            if (src) printf("%d: %.*s", line, p - lp, lp);
+            lp = p;
          }
-         lp = p; ++line;
+         ++line;
       case ' ':
       case '\t':
       case '\v':
@@ -776,7 +775,8 @@ do_inln_func:
          if (d == symlh) { // move ext func Ids to global sym table
             memcpy(d = symgt++, symlh++, sizeof (struct ident_s));
          }
-         if (d->class == Func && d->val == 0) goto resolve_fnproto;
+         if (d->class == Func && d->val == 0 && d->tsub == 0)
+            goto resolve_fnproto;
          if (d->class < Func || d->class > Sqrt) {
             if (d->class != 0) fatal("bad function call");
             d->type = INT;
@@ -785,14 +785,21 @@ resolve_fnproto:
             d->class = Syscall;
             d->val = ef_getidx(d->name) ;
             if (inln_func) inln_func = 0; // should I warn here?
+            if (d->tsub) fatal("internal compiler error");
          }
          while (*p == ' ' || *p == 0x0a) if (*p++ == 0x0a) ++line;
          psave = p;
          next();
          t = 0; b = c = 0; tt[0] = tt[1] = 0; nf = 0; // FP argument count
-         if (inln_func) {
-            for (fidx = 0; fidx < numfspec; ++fidx)
-               if (!strcmp(d->name, (char *)fspec[fidx][0])) break;
+         if (inln_func || d->tsub) {
+            if (d->tsub) {
+               fidx = ((int) d->tsub) - 1;
+               inln_func = 1;
+            }
+            else {
+               for (fidx = 0; fidx < numfspec; ++fidx)
+                  if (!strcmp(d->name, (char *)fspec[fidx][0])) break;
+            }
             if (fidx == numfspec) inln_func = 0; // warn?
             else { tsi = 0; saven = n; }
          }
@@ -949,7 +956,7 @@ resolve_fnproto:
    // Type cast or parenthesis
    case '(':
       next();
-      if ((tk >= Char && tk <= Union) || tk == TypeId || tk == Inln) {
+      if ((tk >= Char && tk <= Union) || tk == TypeId) {
          switch (tk) {
          case TypeId:
             if (id->type & 3) fatal("can't cast to tensor type... yet");
@@ -959,10 +966,6 @@ resolve_fnproto:
          case Int:
          case Float:
             t = (tk - Char) << 2; next(); break;
-         case Inln:
-            next(); if (tk != ')') fatal("bad cast");
-            next(); inln_func = 1;
-            goto do_inln_func;
          default:
             next();
             if (tk != Id || id->type <= ATOM_TYPE || id->type >= PTR)
@@ -1046,6 +1049,13 @@ resolve_fnproto:
       if (ty == FLOAT) fatal("no ++/-- on float");
       if (*n != Load) fatal("bad lvalue in pre-increment");
       *n = t;
+      break;
+   case Inln:
+      next();
+      if (!(tk == Id && id->class == Func))
+         fatal("inline cast only applies to functions");
+      inln_func = 1;
+      goto do_inln_func;
       break;
    case 0: fatal("unexpected EOF in expression");
    default:
@@ -1873,10 +1883,12 @@ void stmt(int ctx)
    int i, j, nf, atk, sz, old, toksav;
    int nd[3];
    int bt, tdef = 0;
+   int inln_func = 0;
 
-   if (ctx == Glo && (tk < TypeId || tk > Union))
+   if (ctx == Glo && (tk < TypeId || tk > Union) && tk != Inln)
       fatal("syntax: statement used outside function");
 
+process_inln:
    switch (tk) {
    // stmt -> ';'
    case ';':
@@ -1884,6 +1896,7 @@ void stmt(int ctx)
       *--n = ';';
       return;
    case Id:
+inln_func_expr:
       sbegin = 1; expr(Assign);
       if (!sbegin) {
          while (tk == ',' && ctx == Loc) {
@@ -2057,8 +2070,12 @@ do_typedef:
          if (tk == '(') {
             rtf = 0; rtt = (ty == 0 && !memcmp(dd->name, "void", 4)) ? -1 : ty;
          }
+         else if (inln_func == 1) {
+            fatal("inline keyword can only be applied to func definition");
+         }
          dd = id; dd->type = ty;
          if (tk == '(') { // function
+            int *saven = 0;
             if (tdef) fatal("typedef can't be function");
             if (b != 0) fatal("func decl can't be mixed with var decl(s)");
             if (ctx != Glo) fatal("nested function");
@@ -2069,14 +2086,16 @@ do_typedef:
             if (id->class == Func &&
                id->val > (int) text && id->val < (int) e)
                fatal("duplicate global definition");
-            dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
-            dd->val = (int) (e + 1); // function Pointer? offset/address
-            symlh = symlt; tokloc = 1; next();
             if (rtt == -1) {
                fspec[numfspec] = (int *) idp;
                fspec[numfspec][0] = (int) dd->name; // func name
                idp += 56 * sizeof(int);
+               saven = n;
             }
+            else if (inln_func == 1) inln_func = 0; // warn?
+            dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
+            dd->val = inln_func ? 0 : (int) (e + 1);
+            symlh = symlt; tokloc = 1; next();
             nf = ir_count = ld = maxld = ldn = lds[0] = 0; // ld is param index
             while (tk != ')') {
                stmt(Par);
@@ -2091,6 +2110,7 @@ do_typedef:
             if (tk == ';') { dd->val = 0; goto unwind_func; } // fn proto
             if (tk != '{') fatal("bad function definition");
             if (rtt == -1) {
+               if (inln_func) dd->tsub = (char *) (numfspec + 1);
                fspec[numfspec][1] = (int) p;  // func body
                fspec[numfspec][2] = line;     // first source line func body
                fspec[numfspec++][3] = (int) ld; // number of func param names
@@ -2115,11 +2135,14 @@ do_typedef:
                printf("--> %d: move %s to global scope for performance.\n",
                       oline, oname);
             cas = 0;
-            gen(n);
-            if (src) {
+            if (!inln_func) gen(n);
+            else {
+               if (src) printf("%d: %.*s\n", line, p - lp, lp); lp = p;
+               n = saven;
+            }
+            if (src && !numpts && !inln_func) {
                int *base = le;
-               char *base_p = (numpts) ? pts[0] : p;
-               printf("%s: %.*s\n", linestr(), base_p - lp, lp); lp = base_p;
+               printf("%d: %.*s\n", line, p - lp, lp); lp = p;
                while (le < e) {
                   int off = le - base; // Func IR instruction memory offset
                   printf("%04d: %8.4s", off,
@@ -2456,6 +2479,12 @@ next_type:
       if (tk != ';') fatal("semicolon expected");
       next();
       return;
+   case Inln:
+      if (ctx == Loc) goto inln_func_expr; // assume void func call
+      next(); inln_func = 1;
+      if (ctx != Glo || ((tk < Char || tk > Union) && tk != TypeId))
+         fatal("bad inline scope"); // func def constraints
+      goto process_inln;
    default:
       expr(Assign);
       while (tk == ',' && ctx == Loc) {
@@ -3528,7 +3557,7 @@ int main(int argc, char **argv)
    // Register keywords in symbol stack. Must match the sequence of enum
    p = "typedef enum char int float struct union "
        "sizeof return goto break continue "
-       "if do while for switch case default else inln "
+       "if do while for switch case default else inline "
        "void main __clear_cache fnegf fabsf sqrtf";
 
    // call "next" to create symbol table entry.
