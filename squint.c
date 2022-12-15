@@ -692,31 +692,27 @@ static void create_inst_info_f(int *instInfo, int *funcBegin, int *funcEnd)
 /* Mark block boundaries (after jump inst, or branch target inst) */
 static void create_bb_info(int *instInfo, int *funcBegin, int *funcEnd)
 {
-   int *scan;
-   int *rInfo = instInfo;
-   int *dst;
-   int off;
+   int *scan, *dst;
 
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
-      if ((*rInfo & RI_branch) == RI_branch) {
+      if (instInfo[scan-funcBegin] & RI_branch) {
          if (((*scan >> 24) & 0x0f) == 0x0a) { // not a pc load
             if (((*scan >> 28) & 0x0f) < 0x0e) { // conditional branch
                // mark fall-through instruction
-               dst = skip_nop(&funcBegin[rInfo-instInfo]+1, S_FWD);
-               off = dst - funcBegin;
-               instInfo[off] |= RI_bb;
+               dst = skip_nop(scan+1, S_FWD);
+               instInfo[dst-funcBegin] |= RI_bb;
             }
-            if (scan == skip_nop(scan, S_FWD)) { // const-block guard
+            // ignore const blocks, but mark other branch destinations
+            // const blocks act as NOP instructions for dep analysis.
+            if (scan == skip_nop(scan, S_FWD)) {
                // mark jump destination instruction
                int tmp = (*scan & 0x00ffffff) |
                          ((*scan & 0x00800000) ? 0xff000000 : 0);
                dst = skip_nop(scan + 2 + tmp, S_FWD);
-               off = dst - funcBegin;
-               instInfo[off] |= RI_bb;
+               instInfo[dst-funcBegin] |= RI_bb;
             }
          }
       }
-      ++rInfo;
    }
 }
 
