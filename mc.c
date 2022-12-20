@@ -130,7 +130,7 @@ struct ident_s *tssymh[32]; // id marker
 int numpts;         // number of text substitution levels in flight
 int numfspec;       // number of inlinable functions
 int *fspec[256];    // inline function specifications
-char linespec[96];
+char linespec[96];  // a string used to capture inlining context
 
 // IR information for local vars and parameters
 #define MAX_IR   256
@@ -835,10 +835,12 @@ resolve_fnproto:
             fatal("argument type mismatch");
          next();
          if (inln_func) {
+            int i, args;
+            struct ident_s *base_sym = symlh;
+
             n = saven; // get rid of pushed function arguments
 
             // set up block scope
-            int i, args;
             lds[++ldn] = tsld[numpts] = ld; tssymh[numpts] = symlh;
 
             // create substitution variables
@@ -846,6 +848,10 @@ resolve_fnproto:
             for (i = 0; i < args; ++i) {
                int recursive = 0;
                char *tsn = (char *) fspec[fidx][4+i]; // param names
+               tk = *tsn++;
+               while (*tsn) tk = tk * 147 + *tsn++;
+               tk = (tk << 6) + (tsn - (char *)fspec[fidx][4+i]);
+               tsn = (char *) fspec[fidx][4+i]; // param names
                if (*tsn == ts[i][1] ||
                    (ts[i][1] == '&' && *tsn == ts[i][2])) {
                   int ilen = strlen(tsn);
@@ -854,16 +860,16 @@ resolve_fnproto:
                      if (off == 1) continue;
                      else recursive = 1; // off == 2
                   }
-                  // now need to make sure that no local
-                  // variable exists having tsn's name
-                  // and skip inline code generation if
-                  // that happens with an explicit warning.
+               } else {
+                  // case where inln func param name matches any local id name
+                  for (id = base_sym; id < symlt; ++id) { // local ids
+                     if (tk == id->hash && !strcmp(id->name, tsn)) {
+                        recursive = 1; break;
+                     }
+                  }
                }
-               tk = *tsn++;
-               while (*tsn) tk = tk * 147 + *tsn++;
-               tk = (tk << 6) + (tsn - (char *)fspec[fidx][4+i]);
                id = --symlh ;
-               id->name = (char *)fspec[fidx][4+i];
+               id->name = tsn;
                id->hash = tk;
                tk = id->tk = Id;  // token type identifier
                id->class = Loc;
@@ -2156,12 +2162,12 @@ do_typedef:
             cas = 0;
             if (!inln_func) gen(n);
             else {
-               if (src) printf("%d: %.*s\n", line, p - lp, lp); lp = p;
+               if (src) printf("%d: %.*s}\n", line, p - lp, lp); lp = p;
                n = saven;
             }
             if (src && !numpts && !inln_func) {
                int *base = le;
-               printf("%d: %.*s\n", line, p - lp, lp); lp = p;
+               printf("%d: %.*s}\n", line, p - lp, lp); lp = p;
                while (le < e) {
                   int off = le - base; // Func IR instruction memory offset
                   printf("%04d: %8.4s", off,
@@ -2340,7 +2346,7 @@ next_type:
          if (a != n) { *--n = (int) a; *--n = '{'; }
       }
       if (ld > maxld) maxld = ld;
-      --ldn; ld = old; symlh = osymh;
+      --ldn; if (old < ld) { ld = old; symlh = osymh; }
       next();
       return;
    case If:
@@ -2411,7 +2417,7 @@ next_type:
       *--n = (int) d; *--n = (int) c; *--n = (int) b; *--n = (int) a;
       *--n = For;
       if (ld > maxld) maxld = ld;
-      --ldn; ld = old; symlh = osymh;
+      --ldn; if (old < ld) { ld = old; symlh = osymh; }
       return;
    case Switch:
       i = 0; j = 0;
