@@ -77,6 +77,7 @@ int loc;            // local variable offset
 int line;           // current line number
 int src;            // print source and assembly flag
 int signed_char;    // use `signed char` for `char`
+int single_exit;    // one function exit point at end
 int elf;            // print ELF format
 int peephole;       // helper for peephole optimization
 int *n;             // current position in emitted abstract syntax tree
@@ -1823,9 +1824,23 @@ void gen(int *n)
       if (label->class == 0) label->val = (int) e; // Define label address later
       break;
    case Default: def = e + 1; gen((int *) n[1]); break;
-   case Return:  if (n[1]) gen((int *) n[1]); *++e = LEV; break;
-   case Enter: *++e = ENT; *++e = n[1]; gen(n + 2);
-            if (*e != LEV) *++e = LEV; break;
+   case Return:
+      if (n[1]) gen((int *) n[1]);
+      if (single_exit) {
+         if (!numpts) { *++e = JMP; *++e = (int) rets; rets = e; }
+      }
+      else *++e = LEV;
+      break;
+   case Enter:
+      *++e = ENT; *++e = n[1];
+      if (single_exit) { b = rets; rets = 0; }
+      gen(n + 2);
+      if (single_exit) {
+         while (rets) { t = (int *) *rets; *rets = (int) (e + 1); rets = t; }
+         rets = b;
+      }
+      if (*e != LEV) *++e = LEV;
+      break;
    case Label: // target of goto
       label = (struct ident_s *) n[1];
       if (label->class != 0) fatal("duplicate label definition");
@@ -2092,7 +2107,11 @@ do_typedef:
                idp += 56 * sizeof(int);
                saven = n;
             }
-            else if (inln_func == 1) inln_func = 0; // warn?
+            else if (inln_func == 1) {
+               printf("%d: Ignoring inline on non-void function %s\n",
+                      line, dd->name);
+               inln_func = 0;
+            }
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = inln_func ? 0 : (int) (e + 1);
             symlh = symlt; tokloc = 1; next();
@@ -3601,6 +3620,9 @@ int main(int argc, char **argv)
    while (argc > 0 && **argv == '-') {
       if ((*argv)[1] == 's') {
          src = ((*argv)[2] == 'i') ? 2 : 1; --argc; ++argv;
+      }
+      else if ((*argv)[1] == 'r') {
+         single_exit = 1; --argc; ++argv;
       }
       else if (!strcmp(*argv, "-fsigned-char")) {
          signed_char = 1; --argc; ++argv;
