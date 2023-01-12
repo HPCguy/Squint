@@ -43,7 +43,7 @@ void squint_opt(int *begin, int *end);
 char *freep, *p, *lp; // current position in source code
 char *freedata, *data, *_data;   // data/bss pointer
 
-int *e, *le, *text; // current position in emitted code
+int *e, *le, *text; // current position in emitted IR code
 char *idn, *idp;    // decouples ids from program source code
 int *cas;           // case statement patch-up pointer
 int *def;           // default statement patch-up pointer
@@ -813,7 +813,6 @@ resolve_fnproto:
                ts[tsi++] = idp; *idp = '(';
                memcpy(idp+1, psave, p-psave-1);
                idp[p-psave] = ')'; idp[p-psave+1] = 0;
-               // printf("#%s#\n", idp);
                idp = (char *) (((int) idp +
                                 (p - psave) + 2 + sizeof(int)) &
                                (-sizeof(int)));
@@ -821,7 +820,6 @@ resolve_fnproto:
                psave = p;
             }
             else expr(Assign);
-            if (c != 0) { *--n = (int) c; *--n = '{'; c = 0; } // peephole
             *--n = (int) b; b = n; ++t;
             if (ty == FLOAT) { ++nf; tt[(t+11)/32] |= 1 << ((t+11) % 32); }
             if (tk == ',') {
@@ -836,7 +834,6 @@ resolve_fnproto:
          next();
          if (inln_func) {
             int i, args;
-            struct ident_s *base_sym = symlh;
 
             n = saven; // get rid of pushed function arguments
 
@@ -860,13 +857,6 @@ resolve_fnproto:
                      if (off == 1) continue;
                      else recursive = 1; // off == 2
                   }
-               } else {
-                  // case where inln func param name matches any local id name
-                  for (id = base_sym; id < symlt; ++id) { // local ids
-                     if (tk == id->hash && !strcmp(id->name, tsn)) {
-                        recursive = 1; break;
-                     }
-                  }
                }
                id = --symlh ;
                id->name = tsn;
@@ -876,7 +866,6 @@ resolve_fnproto:
                id->val = recursive; // recursion flags
                id->type = id->etype = 0;
                id->tsub = ts[i];
-               // printf("#%s# = #%s#\n", id->name, id->tsub);
             }
             tk = ';';
 
@@ -889,6 +878,7 @@ resolve_fnproto:
             // function or system call id
             *--n = tt[1]; *--n = tt[0]; *--n = t;
             *--n = d->val; *--n = (int) b; *--n = d->class;
+            if (c != 0) { *--n = (int) c; *--n = '{'; c = 0; } // peephole
             ty = d->type;
          }
       }
@@ -1711,12 +1701,14 @@ void gen(int *n)
    case Add:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = ADD; break;
    case Sub:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = SUB; break;
    case Mul:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = MUL; break;
-   case Div:  gen((int *) n[1]);
+   case Div:  if (peephole) *++e = PHF;
+              gen((int *) n[1]);
               if (peephole) *++e = PHD;
               *++e = PSH; gen(n + 2); *++e = DIV;
               if (peephole) *++e = PHR0;
               break;
-   case Mod:  gen((int *) n[1]);
+   case Mod:  if (peephole) *++e = PHF;
+              gen((int *) n[1]);
               if (peephole) *++e = PHD;
               *++e = PSH; gen(n + 2); *++e = MOD;
               if (peephole) *++e = PHR0;
@@ -2162,12 +2154,14 @@ do_typedef:
             cas = 0;
             if (!inln_func) gen(n);
             else {
-               if (src) printf("%d: %.*s}\n", line, p - lp, lp); lp = p;
+               if (src) { printf("%d: %.*s}\n", line, p - lp, lp); lp = p; }
                n = saven;
             }
             if (src && !numpts && !inln_func) {
                int *base = le;
-               printf("%d: %.*s}\n", line, p - lp, lp); lp = p;
+               printf("%d: %.*s%s\n", line, p - lp, lp,
+                      ((rtt == -1) ? "}" : "") );
+               lp = p;
                while (le < e) {
                   int off = le - base; // Func IR instruction memory offset
                   printf("%04d: %8.4s", off,
@@ -2193,7 +2187,7 @@ do_typedef:
                         if (irf) printf(" (%d)\n", *le);
                      }
                      else if (*(le - 1) == IMMF)
-                        printf(" %f\n", *((float *) le));
+                        printf(" %#g\n", *((float *) le));
                      else if ((*le & 0xf0000000) &&
                               (*le > 0 || -*le > 0x1000000)) {
                         for (scan = sym; scan->tk; ++scan)
@@ -2255,8 +2249,19 @@ unwind_func:
             }
             if (ctx == Glo) { dd->val = (int) data; data += sz; }
             else if (ctx == Loc) {
-               ir_var[ir_count].loc = dd->val = (ld += sz / sizeof(int));
-               ir_var[ir_count++].name = dd->name;
+               int ii, tmp;
+               tmp = dd->val = (ld += sz / sizeof(int));
+               if (src == 2) {
+                  for (ii=0; ii<ir_count; ++ii) {
+                     if (ir_var[ii].loc == tmp &&
+                         !strcmp(dd->name, ir_var[ii].name))
+                        break;
+                  }
+                  if (ii == ir_count) {
+                     ir_var[ir_count].loc = tmp;
+                     ir_var[ir_count++].name = dd->name;
+                  }
+               }
             }
             else if (ctx == Par) {
                if (ty > ATOM_TYPE && ty < PTR) // local struct decl
@@ -2568,7 +2573,7 @@ int *codegen(int *jitmem, int *jitmap)
          // add space for 16 frame register constants
          for (ii=0; ii<16; ++ii) *je++ = 0xe1a00000; // mov r0, r0
       }
-      jitmap[((int) pc++ - (int) text) >> 2] = (int) je;
+      jitmap[pc++ - text] = (int) je;
       switch (i) {
       case LEA:
          tmp = *pc++;
@@ -2936,7 +2941,7 @@ int *codegen(int *jitmem, int *jitmap)
    pc = text + 1; // Point instruction pointer "pc" to the first instruction.
    while (pc <= e) { // While instruction end is not met.
       // Get the IR's corresponding native instruction buffer address.
-      je = (int *) jitmap[((int) pc - (int) text) >> 2];
+      je = (int *) jitmap[pc - text];
       i = *pc++; // Get current instruction
       // If the instruction is one of the jumps.
       if (i >= JMP && i <= BNZ) {
@@ -2993,7 +2998,7 @@ int jit(int poolsz, int *main, int argc, char **argv)
    *je++ = 0xe8bd9ff0;      // pop     {r4-r12, pc}
    if (!(je = codegen(je, jitmap))) return 1;
    if (je >= jitmap) die("jitmem too small");
-   *tje = reloc_bl(jitmap[((int) main - (int) text) >> 2] - (int) tje);
+   *tje = reloc_bl(jitmap[main - text] - (int) tje);
 
 #ifdef SQUINT_SO
    if (peephole) squint_opt((int *)jitmem, je);
@@ -3488,7 +3493,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    // Relocate __libc_start_main() and main().
    *((int *) (code + 0x28)) = reloc_bl(plt_func_addr[0] - code_addr - 0x28);
    *((int *) (code + 0x44)) =
-      reloc_bl(jitmap[((int) main - (int) text) >> 2] - (int) code - 0x44);
+      reloc_bl(jitmap[main - text] - (int) code - 0x44);
 
    // Copy the generated binary.
    memcpy(code_addr, code,  je - code);
