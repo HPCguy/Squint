@@ -702,8 +702,8 @@ static void create_bb_info(int *instInfo, int *funcBegin, int *funcEnd)
                dst = skip_nop(scan+1, S_FWD);
                instInfo[dst-funcBegin] |= RI_bb;
             }
-            // ignore const blocks, but mark other branch destinations
-            // const blocks act as NOP instructions for dep analysis.
+            // ignore const blocks, but mark other branch destinations.
+            // Note: const blocks act as NOP instructions for dep analysis.
             if (scan == skip_nop(scan, S_FWD)) {
                // mark jump destination instruction
                int tmp = (*scan & 0x00ffffff) |
@@ -1925,11 +1925,10 @@ static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd,
    int *rnu, *rnd, *rdu, *rdd, t, iinfo, rn, rd, mask1, mask2;
    int *finfo = malloc((funcEnd-funcBegin+2)*sizeof(int));
 
-   create_inst_info_f(finfo, funcBegin, funcEnd);
-   create_bb_info(finfo, funcBegin, funcEnd);
-
    create_inst_info(instInfo, funcBegin, funcEnd);
    create_bb_info(instInfo, funcBegin, funcEnd);
+
+   create_inst_info_f(finfo, funcBegin, funcEnd);
 
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
@@ -1963,8 +1962,7 @@ static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd,
                   }
                }
                else { // FP op
-                  iinfo = finfo[scanm1-funcBegin];
-                  if (iinfo & RI_hasD) {
+                  if (finfo[scanm1-funcBegin] & RI_hasD) {
                      if ((*scanm1 & (RI_Rd | RI_Sd)) == 0) {
                         *scanm1 |= ((rd << 11) & RI_Rd) |
                                    ((rd & 1) << 22);
@@ -2002,22 +2000,41 @@ static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd,
             }
          }
       }
-      else if ((*scan & 0xffbf0fd0) == 0xeeb00a40) { // vmov Fd, Fm
-         scanm1 = active_inst(scan,-1);
-         if (((*scanm1 & RI_Rd) >> 12) == (*scan & RI_Rm) &&
-             (((*scanm1 & RI_Sd) >> 18) ^ (*scan & 0x10)) == 0 &&
-             (*scan & RI_Rm) == 0) {
-            *scan = (*scanm1 & ~(RI_Rd | RI_Sd)) |
-                    (*scan & (RI_Rd | RI_Sd));
-            *scanm1 = NOP;
-         }
-      }
       else if (*scan == 0xe3a00000) { // mov r0, #0
          // clean up FP printf prologue
          scanp1 = active_inst(scan, 1);
          if (*scanp1 == 0xe08d0000) { // add r0, sp, r0
             *scanp1 = 0xe1a0000d; // mov r0, sp
             *scan = NOP;
+         }
+      }
+   }
+
+   create_inst_info_f(finfo, funcBegin, funcEnd);
+   create_bb_info(finfo, funcBegin, funcEnd);
+
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+      if ((*scan & 0xffbf0fd0) == 0xeeb00a40 &&
+               !(finfo[scan-funcBegin] & RI_bb)) { // vmov Fd, Fm
+         scanm1 = active_inst(scan,-1); // op Fd2, Fn, Fm
+         if (((*scanm1 & RI_Rd) >> 12) == (*scan & RI_Rm) &&
+             (((*scanm1 & RI_Sd) >> 18) ^ (*scan & 0x10)) == 0 &&
+             (*scan & RI_Rm) == 0 && (finfo[scanm1-funcBegin] & RI_hasD) &&
+             (*scanm1 & 0xff3f0f00) != 0xed1f0a00) { // vldr s0, [pc, #X]
+            // make sure no use of Fd before next def -- extra careful
+            info = &finfo[scan-funcBegin] + 1;
+            rdu = find_use(finfo, info+1, (*scan & 0x10) >> 4, S_FWD);
+            rdd = find_def(finfo, info+1, (*scan & 0x10) >> 4, S_FWD);
+            if (rdu == 0 || rdd < rdu) {
+               *scan = (*scanm1 & ~(RI_Rd | RI_Sd)) |
+                       (*scan & (RI_Rd | RI_Sd));
+               *scanm1 = NOP;
+               finfo[scan-funcBegin] =
+                  (finfo[scan-funcBegin] & (RI_Rd | RI_Sd)) |
+                  (finfo[scanm1-funcBegin] & ~(RI_Rd | RI_Sd));
+               finfo[scanm1-funcBegin] = 0;
+            }
          }
       }
    }
@@ -3032,7 +3049,7 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
             if (*scanm2 == 0xe5900000) {  // ldr r0, [r0]
                int *scan2 = pair[i].push + 1;
                for (; scan2 < pair[i].pop; ++scan2) {
-                  if (*scan2 == NOP13 && !is_const(scan2)) break;
+                  if (*scan2 == NOP11 && !is_const(scan2)) break;
                }
                if (scan2 != pair[i].pop) continue;
                r0d = find_def(instInfo, pushp1, 2, S_FWD);
@@ -3103,7 +3120,7 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
             int *r1push1u = find_use(instInfo, pushp1, 1, S_FWD);
             int *r1push1d = find_def(instInfo, pushp1, 1, S_FWD);
             for (scan = pair[i].push + 1; scan < pair[i].pop; ++scan) {
-               if (*scan == NOP13 && !is_const(scan)) break; // func call
+               if (*scan == NOP11 && !is_const(scan)) break; // func call
             }
             if (scan != pair[i].pop) continue; // skip regions with func call
 
@@ -3184,7 +3201,7 @@ static void create_pushpop_map2(int *instInfo, int *funcBegin, int *funcEnd)
       int *r1push1u = find_use(instInfo, pushp1, 1, S_FWD);
       int *r1push1d = find_def(instInfo, pushp1, 1, S_FWD);
       for (scan = pair[i].push + 1; scan < pair[i].pop; ++scan) {
-         if (*scan == NOP13 && !is_const(scan)) break; // func call
+         if (*scan == NOP11 && !is_const(scan)) break; // func call
       }
       if (scan != pair[i].pop) continue; // skip regions with func call
 
@@ -3292,7 +3309,7 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
 #endif
 
       for (scan = pair[i].push + 1; scan < pair[i].pop; ++scan) {
-         if (*scan == NOP13 && !is_const(scan)) break; // func call
+         if (*scan == NOP11 && !is_const(scan)) break; // func call
       }
       if (scan != pair[i].pop) continue; // skip regions with func call
 
@@ -3331,7 +3348,7 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
       rnd = find_def(instInfo, &instInfo[scanp1-funcBegin], rn, S_FWD);
       if (rnd == 0) rnd = &instInfo[funcEnd-funcBegin];
       rnu = find_use(instInfo, &instInfo[scanp1-funcBegin], rn, S_FWD);
-      rfinal = find_use_precede_def(instInfo, rnu, rnd, rn, S_FWD);
+      rfinal = find_use(instInfo, rnd, rn, S_BACK);
 
       for (scan = &instInfo[scanp1-funcBegin]; scan <= rfinal; ++scan) {
          if (*scan & RI_bb) break;
@@ -3352,7 +3369,7 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
          rdu = find_use(instInfo, pushp1, rd, S_FWD);
          rdd = find_def(instInfo, pushp1, rd, S_FWD);
          if (rdd == 0) rdd = &instInfo[pair[i].pop-funcBegin];
-         if (rdu <= rdd) {
+         if (rdu && rdu <= rdd) {
             int *xfinal = find_use_precede_def(instInfo, rdu, rdd, rd, S_FWD);
             do {
                rscan = &funcBegin[rdu-instInfo];
@@ -3415,7 +3432,7 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
          if (rd < 2 || rd >= base) continue;
 
          for (scan = scan2 + 1; scan < pair[i].pop; ++scan) {
-            if (*scan == NOP13 && !is_const(scan)) break; // func call
+            if (*scan == NOP11 && !is_const(scan)) break; // func call
          }
          if (scan != pair[i].pop) continue; // skip regions with func call
 
@@ -3643,9 +3660,9 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
 
          if ((*scan & 0xffbf0f00) == 0xed9f0a00) { // vldr sN, [pc, #x]
             tmp = *(scan + 2 + (*scan & 0xff));
-            delete_const(scan + 2 + (*scan & 0xff), scan);
             for (i = 0; i < numReg; ++i)  {
                if (fpcnst[i] == tmp) {
+                  delete_const(scan + 2 + (*scan & 0xff), scan);
                   scanp1 = active_inst(scan, 1);
                   if ((*scanp1 & 0xff70ff00) == 0xed000a00) { // vstr s0, ...
                      *scanp1 |= (((fbase+i) & 0x1e) << 11) |
@@ -3688,9 +3705,9 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
             scanfp = active_inst(scan, 1);
             if (*scanfp == 0xed900a00) { // vldr s0, [r0]
                tmp = *(scan + 2 + (*scan & 0xfff)/4);
-               delete_const(scan + 2 + (*scan & 0xfff)/4, scan);
                for (i = 0; i < numReg; ++i)  {
                   if (fpcnst[i] == tmp) {
+                     delete_const(scan + 2 + (*scan & 0xfff)/4, scan);
                      scanp1 = active_inst(scanfp, 1);
                      if ((*scanp1 & 0xff70ff00) == 0xed000a00) { // vstr s0, ...
                         *scanp1 |= (((fbase+i) & 0x1e) << 11) |
@@ -3759,13 +3776,13 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
 
       if ((*scan & memMask) == memInst) { // load/store [fp, #X]
          int off = dofloat ? (*scan & 0xff) : (*scan & 0xfff);
-         if  ((*scan & (1<<23)) == 0) off = -off;
+         if ((*scan & (1<<23)) == 0) off = -off;
          for (i = 0; i < numReg; ++i) {
             if (offset[i] == off) break;
          }
          if (i == numReg) {
-            offset[numReg++] = off;
             if (numReg == REN_BUF) break;
+            offset[numReg++] = off;
          }
          ++count[i];
       }
@@ -3858,7 +3875,7 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
          int rd;
          int *rdu, *rdd, *rdt, *rfinal;
          int off = dofloat ? (*scan & 0xff) : (*scan & 0xfff);
-         if  ((*scan & (1<<23)) == 0) off = -off;
+         if ((*scan & (1<<23)) == 0) off = -off;
 
          for (i = 0; i < numReg; ++i) {
             if (offset[i] == off) break;
@@ -3968,7 +3985,7 @@ nextUse:
       }
    }
 
-   /* load int frame vars into registers at top of function */
+   /* load frame vars into registers at top of function */
    for (scan = funcBegin; *scan != NOP; ++scan);
    j = 0;
    for (i = 0; i < numReg; ++i) {  // ldr rn, [fp, #X]
@@ -4043,7 +4060,7 @@ int squint_opt(int *begin, int *end)
 
          // check for function calls
          for (scan = funcBegin; scan <= funcEnd; ++scan) {
-            if (*scan == NOP13 && !is_const(scan)) {
+            if (*scan == NOP11 && !is_const(scan)) {
                hasFuncCall = 1;
                break;
             }
