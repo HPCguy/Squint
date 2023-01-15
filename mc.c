@@ -44,6 +44,7 @@ char *freep, *p, *lp; // current position in source code
 char *freedata, *data, *_data;   // data/bss pointer
 
 int *e, *le, *text; // current position in emitted IR code
+int *lastLEV;       // needed to close out functions
 char *idn, *idp;    // decouples ids from program source code
 int *cas;           // case statement patch-up pointer
 int *def;           // default statement patch-up pointer
@@ -1669,6 +1670,7 @@ void gen(int *n)
       // Patch the jump address field pointed to by "d" to hold the address
       // past the false branch.
       *b = (int) (e + 1);
+      lastLEV = 0;
       break;
    // operators
    /* If current token is logical OR operator:
@@ -1776,6 +1778,7 @@ void gen(int *n)
       *++e = BNZ; *++e = (int) d;
       while (brks) { t = (int *) *brks; *brks = (int) (e + 1); brks = t; }
       brks = b;
+      lastLEV = 0;
       break;
    case For:
       gen((int *) n[4]);  // init
@@ -1792,6 +1795,7 @@ void gen(int *n)
       *++e = BNZ; *++e = (int) d;
       while (brks) { t = (int *) *brks; *brks = (int) (e + 1); brks = t; }
       brks = b;
+      lastLEV = 0;
       break;
    case Switch:
       gen((int *) n[1]); // condition
@@ -1802,6 +1806,7 @@ void gen(int *n)
       *cas = def ? (int) def : (int) (e + 1); cas = a;
       while (brks) { t = (int *) * brks; *brks = (int) (e + 1); brks = t; }
       brks = b; def = d;
+      lastLEV = 0;
       break;
    case Case:
       *++e = JMP; ++e;
@@ -1827,7 +1832,7 @@ void gen(int *n)
       if (single_exit) {
          if (!numpts) { *++e = JMP; *++e = (int) rets; rets = e; }
       }
-      else *++e = LEV;
+      else { *++e = LEV; lastLEV = e; }
       break;
    case Enter:
       *++e = ENT; *++e = n[1];
@@ -1837,7 +1842,7 @@ void gen(int *n)
          while (rets) { t = (int *) *rets; *rets = (int) (e + 1); rets = t; }
          rets = b;
       }
-      if (*e != LEV) *++e = LEV;
+      if (lastLEV != e) { *++e = LEV; lastLEV = e; }
       break;
    case Label: // target of goto
       label = (struct ident_s *) n[1];
