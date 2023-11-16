@@ -1850,6 +1850,7 @@ void gen(int *n)
       d = e + 1; b = (int *) label->val;
       while (b != 0) { t = (int *) *b; *b = (int) d; b = t; }
       label->val = (int) d; label->class = Label;
+      lastLEV = 0;
       break;
    case Phf: *++e = PHF; break;
    default:
@@ -2595,7 +2596,9 @@ int *codegen(int *jitmem, int *jitmap)
       case IMM:
          tmp = *pc++;
          if (0 <= tmp && tmp < 256)
-            *je++ = 0xe3a00000 + tmp;         // mov r0, #(tmp)
+            *je++ = 0xe3a00000 + tmp;         // mov r0, #tmp
+         else if (-256 <= tmp && tmp < 0)
+            *je++ = 0xe3e00000 + -(tmp+1);    // mvn r0, #tmp
          else {
              if (!imm0) imm0 = je;
              *il++ = (int) (je++); *iv++ = addcnst(tmp);
@@ -2603,11 +2606,9 @@ int *codegen(int *jitmem, int *jitmap)
          break;
       case IMMF:
          tmp = (int) *pc++;
-         if (tmp == 0) *je++ = 0xee300a40 ; // sub s0, s0, s0
-         else {
-            if (!imm0) imm0 = je; if (!immf0) immf0 = je;
-            *il++ = (int) je++ + 2; *iv++ = addcnst(tmp);
-         }
+         if (tmp == 0) tmp = 1; // special handling for FP 0.0
+         if (!imm0) imm0 = je; if (!immf0) immf0 = je;
+         *il++ = (int) je++ + 2; *iv++ = addcnst(tmp);
          break;
       case JMP:
       case JSR:
@@ -2894,6 +2895,7 @@ int *codegen(int *jitmem, int *jitmap)
                    (immf0 && je > immf0 + 192) ) {
             tje = je - 1;
             if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
+                *tje != 0xe1a0b00b &&    // PHR0: mov r13, r13
                 (*tje & 0x000f0000) != 0x000f0000 && // pc-relative mem op
                 (*tje & 0xffb00f00) != 0xed900a00 && // vldr
                 (*tje & 0xfff00ff0) != 0xe0000090 && // mul
@@ -2908,6 +2910,7 @@ int *codegen(int *jitmem, int *jitmap)
          *iv = 0;
          // create cnst pool
          for (ii = 0; ii<nicnst; ++ii) {
+            if (icnst[ii] == 1) icnst[ii] = 0; // FP 0.0
             je[ii] = icnst[ii];
          }
          while (ill < il) {
