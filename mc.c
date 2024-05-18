@@ -112,6 +112,8 @@ struct ident_s {
    int val;
    int etype;    // extended type info for tensors
    int ftype[2]; // extended type info for funcs
+   int flags;    // 1 = fwd decl func
+   int *chain;   // used for forward declaration IR inst ptr
 } *id,  // currently parsed identifier
   *sym, // symbol table (simple list of identifiers)
   *symk, // tail for keywords
@@ -507,6 +509,8 @@ new_block_def:
          tk = id->tk = Id;  // token type identifier
          id->class = id->val = id->type = id->etype = 0;
          id->tsub = 0;
+         id->flags = 0;
+         id->chain = 0;
          return;
       }
       /* Calculate the constant */
@@ -777,8 +781,10 @@ do_inln_func:
          if (d == symlh) { // move ext func Ids to global sym table
             memcpy(d = symgt++, symlh++, sizeof (struct ident_s));
          }
-         if (d->class == Func && d->val == 0 && d->tsub == 0)
+         if (d->class == Func && d->val == 0 &&
+             d->tsub == 0 && (d->flags & 1) == 0) { // lib func prototype
             goto resolve_fnproto;
+         }
          if (d->class < Func || d->class > Sqrt) {
             if (d->class != 0) fatal("bad function call");
             d->type = INT;
@@ -878,7 +884,8 @@ resolve_fnproto:
          else {
             // function or system call id
             *--n = tt[1]; *--n = tt[0]; *--n = t;
-            *--n = d->val; *--n = (int) b; *--n = d->class;
+            *--n = ((d->class == Func) ? ((int) d) : d->val);
+            *--n = (int) b; *--n = d->class;
             if (c != 0) { *--n = (int) c; *--n = '{'; c = 0; } // peephole
             ty = d->type;
          }
@@ -1753,8 +1760,18 @@ void gen(int *n)
          free(a);
       }
       if (i == Syscall) *++e = SYSC;
-      if (i == Func) *++e = JSR;
-      *++e = n[2];
+      if (i == Func) {
+         label = (struct ident_s *) n[2];
+         *++e = JSR;
+         if (label->val == 0) {
+            *++e = (int) label->chain; label->chain = e;
+         }
+         else
+            *++e = n[2];
+      }
+      else {
+         *++e = n[2];
+      }
       if (n[3] || i == Syscall) {
          *++e = ADJ; *++e = (i == Syscall) ? n[4] : n[3];
       }
@@ -2111,13 +2128,8 @@ do_typedef:
                idp += 56 * sizeof(int);
                saven = n;
             }
-            else if (inln_func == 1) {
-               printf("%d: Ignoring inline on non-void function %s\n",
-                      line, dd->name);
-               inln_func = 0;
-            }
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
-            dd->val = inln_func ? 0 : (int) (e + 1);
+            dd->val = (int) (e + 1);
             symlh = symlt; tokloc = 1; next();
             nf = ir_count = ld = maxld = ldn = lds[0] = 0; // ld is param index
             while (tk != ')') {
@@ -2130,14 +2142,35 @@ do_typedef:
             }
             if (ld > MAX_FARG) fatal("maximum of 52 function parameters");
             next(); dd->ftype[0] += (nf << 6) + ld;
-            if (tk == ';') { dd->val = 0; goto unwind_func; } // fn proto
+            if (dd->val != (int) (e + 1))
+               fatal("func def internal compiler error");
+            if (tk == ';') {
+               if (inln_func) dd->flags |= 1; // forward declaration
+               inln_func = 0;
+               dd->val = 0; goto unwind_func;
+            } // fn proto
             if (tk != '{') fatal("bad function definition");
             if (rtt == -1) {
-               if (inln_func) dd->tsub = (char *) (numfspec + 1);
+               if (inln_func) {
+                  dd->tsub = (char *) (numfspec + 1);
+                  dd->val = 0;
+               }
                fspec[numfspec][1] = (int) p;  // func body
                fspec[numfspec][2] = line;     // first source line func body
                fspec[numfspec++][3] = (int) ld; // number of func param names
                // param names are in slot 4 onward.
+            }
+            else if (inln_func == 1) {
+               printf("%d: Ignoring inline on non-void function %s\n",
+                      line, dd->name);
+               inln_func = 0;
+            }
+            if (dd->val && dd->chain) { // backpatch fwd decl func addrs
+               int *patch = dd->chain;
+               while (patch) {
+                  int *t = (int *) *patch; *patch = (int) dd; patch = t;
+               }
+               dd->chain = 0;
             }
             loc = ++ld;
             next();
@@ -2196,14 +2229,16 @@ do_typedef:
                         printf(" %#g\n", *((float *) le));
                      else if ((*le & 0xf0000000) &&
                               (*le > 0 || -*le > 0x1000000)) {
+                        int cval = (*(le-1) != JSR) ? (*le) :
+                           (((struct ident_s *)(*le))->val) ;
                         for (scan = sym; scan->tk; ++scan)
-                           if (scan->val == *le) {
+                           if (scan->val == cval) {
                               printf(" &%s", scan->name);
-                              if (src == 2) printf(" (0x%08x)", *le);
+                              if (src == 2) printf(" (0x%08x)", cval);
                               printf("\n");
                               break;
                            }
-                        if (!scan->tk) printf(" 0x%08x\n", *le);
+                        if (!scan->tk) printf(" 0x%08x\n", cval);
                      }
                      else
                         printf(" %d\n", *le);
@@ -2960,6 +2995,10 @@ int *codegen(int *jitmem, int *jitmap)
          case BNZ: *++je = 0x1a000000; break; // bne #(tmp)
          }
          tmp = *pc++;
+         if (i == JSR) {
+            struct ident_s *t = (struct ident_s *) tmp;
+            tmp = t->val;
+         }
          *je = (*je | reloc_imm(jitmap[(tmp - (int) text) >> 2] - (int) je));
       }
       // If the instruction has operand, increment instruction pointer to
@@ -3720,6 +3759,16 @@ int main(int argc, char **argv)
    }
 
    if (idmain->val == 0) fatal("missing main() function");
+   int fdeferr = 0;
+   for (id = symk; id < symgt; ++id) { // global ids
+      if (id->chain) {
+         printf("forward declared function %s() called but not defined.\n",
+                id->name);
+         fdeferr = 1;
+      }
+   }
+   if (fdeferr) exit(-1);
+
    int ret = elf ? elf32(poolsz, (int *) idmain->val, elf_fd) :
                    jit(poolsz,   (int *) idmain->val, argc, argv);
    free(freep);
