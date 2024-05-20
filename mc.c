@@ -90,6 +90,7 @@ int *n;             // current position in emitted abstract syntax tree
 int ld, maxld;      // local variable depth
 int lds[32], ldn;   // used to track scope level for duplicate var defs
 int pplev, pplevt;  // preprocessor conditional level
+int ppactive;
 int oline, osize;   // for optimization suggestion
 char *oname;
 int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
@@ -422,10 +423,18 @@ int ef_getidx(char *name) // get cache index of external function
    return i;
 }
 
+inline void expr(int lev);
+
 /* parse next token
  * 1. store data into id and then set the id to current lexcial form
  * 2. set tk to appropriate type
  */
+void eol2semi(char *s) // preprocessor support
+{
+   while(*s && *s != '\n') ++s;
+   if (*s) *s = ';';
+}
+
 void next()
 {
    char *pp;
@@ -552,38 +561,75 @@ new_block_def:
          break;
       case '#': // skip include statements, and most preprocessor directives
          if (!strncmp(p, "define", 6)) {
-            p += 6; next(); t = 1;
+            p += 6; next(); if (!ppactive) break;
             if (tk == Id) {
-               next();
-               while (tk == Sub) { t *= -1; next(); }
-               if (tk == Num || tk == NumF) {
-                  id->class = tk;
-                  id->val = (tk == Num) ? t*tkv.i :
-                            ((t == 1) ? tkv.i : (tkv.i | (1<<31)));
-                  id->type = (tk == Num) ? INT : FLOAT;
+               struct ident_s *ndd = id;
+               int *nbase = n;
+               if (ndd->class != 0) fatal("redefining preprocessor symbol");
+               while (*p == ' ') ++p;
+               if (*p == '\n') {    // no value assigned
+                  ndd->class = Num; ndd->type = INT;
+                  break;
                }
+               eol2semi(p);
+               next(); expr(Cond);
+               if ((nbase - n) == 2 && (*n == Num || *n == NumF)) {
+                  ndd->class = *n; ndd->val = n[1];
+                  ndd->type = (*n == Num) ? INT : FLOAT;
+                  n += 2; // remove expr from AST
+                  break;
+               }
+               else
+                  fatal("Bad #define syntax");
+            }
+            else {
+               fatal("Bad #define syntax");
             }
          }
          else if ((t = !strncmp(p, "ifdef", 5)) || !strncmp(p, "ifndef", 6)) {
             p += 6; next();
             if (tk != Id) fatal("No identifier");
             ++pplev;
-            if (( ((id->class != Num) ? 0 : 1) ^ (t ? 1 : 0) ) & 1) {
+            if (ppactive &&
+               (((id->class == Num || id->class == NumF) ^ (t ? 1 : 0)) & 1)) {
+               int *nbase = n; ppactive = 0;
                t = pplevt; pplevt = pplev - 1;
                while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
                do next(); while (pplev != pplevt);
                pplevt = t;
+               n = nbase; ppactive = 1;
             }
          }
          else if (!strncmp(p, "if", 2)) {
-            // ignore side effects of preprocessor if-statements
+            int *nbase = n;
+            p += 2;
             ++pplev;
+            if (!ppactive) break;
+            eol2semi(p);
+            next(); expr(Cond);
+            if ((nbase - n) == 2 && (*n == Num || *n == NumF)) {
+               t = n[1]; n += 2;
+               if (t == 0) { // throw away code inside of #if
+                  t = pplevt; pplevt = pplev - 1; ppactive = 0;
+                  while (*p != 0 && *p != '\n') ++p; // discard until EOL
+                  do next(); while (pplev != pplevt);
+                  pplevt = t;
+                  n = nbase; ppactive = 1;
+               }
+            }
+            else
+               fatal("#if expression does not evaluate to const value");
          }
          else if(!strncmp(p, "endif", 5)) {
+            p += 5;
             if (--pplev < 0) fatal("preprocessor context nesting error");
             if (pplev == pplevt) return;
          }
-         while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
+         else if (!strncmp(p, "else", 4)) {
+            p += 4;
+            if (ppactive)
+               fatal("#else not supported in preprocessor");
+         }
          break;
       case '\'': // quotes start with character (string)
       case '"':
@@ -3751,7 +3797,7 @@ int main(int argc, char **argv)
    // real C parser begins here
    // parse the program
    line = 1;
-   pplevt = -1;
+   pplevt = -1; ppactive = 1;
    next();
    while (tk) {
       stmt(Glo);
