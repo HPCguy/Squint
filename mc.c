@@ -630,6 +630,9 @@ new_block_def:
             if (ppactive)
                fatal("#else not supported in preprocessor");
          }
+         else {
+            while (*p && *p != '\n') ++p;
+         }
          break;
       case '\'': // quotes start with character (string)
       case '"':
