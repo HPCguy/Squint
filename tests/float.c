@@ -2,10 +2,8 @@
 #include <stdlib.h>
 #include <math.h>
 
-#if 0
 float atan2f(float y, float x);
 float acosf(float x);
-#endif
 
 float dot(float *xx, float *yy, int n)
 {

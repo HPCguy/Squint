@@ -2672,6 +2672,7 @@ static void simplify_branch3(int *funcBegin, int *funcEnd) {
 static void simplify_branch4(int *funcBegin, int *funcEnd)
 {
    int *scan;
+
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
@@ -2684,6 +2685,11 @@ static void simplify_branch4(int *funcBegin, int *funcEnd)
          scanm3 = active_inst(scanm2, -1);
          if ((*scanm3 & 0xf3f0f000) == 0xe1500000)  { /* cmp rX, r0 */
             scanp1 = active_inst(scan, 1);
+            int tmp = (*scanp1 & 0x00ffffff) |
+                      ((*scanp1 & 0x00800000) ? 0xff000000 : 0);
+            if (*(scanp1 + 2 + tmp) == 0xe52d0004) // push r0
+               continue; // guard against true/false arithmetic
+
             int btype = ((*scanp1 & 0xf0000000) == 0) ? 0 /* eq */ : 1 /* ne */;
             int match0 = ((*scanm1 & 0x0ff000ff) == 0x03a00000) ? 0 : 1;
             if (match0 == btype) {
@@ -4075,6 +4081,7 @@ int squint_opt(int *begin, int *end)
          skip_const_blk = 0;
          simplify_branch(funcBegin, retAddr);
          skip_const_blk = 1;
+
          apply_peepholes1(funcBegin, retAddr);
          apply_peepholes2(tmpbuf, funcBegin, retAddr);
          apply_peepholes1(funcBegin, retAddr);
