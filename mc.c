@@ -32,7 +32,7 @@
 
 #define SMALL_TBL_SZ 256
 
-#if 0
+#ifdef __MC__
 float strtof(char *s, char **e);
 #endif
 
@@ -532,7 +532,7 @@ new_block_def:
       }
       switch (tk) {
       case '\n':
-         if (!numpts) {
+         if (lp < p && !numpts) {
             if (src) printf("%d: %.*s", line, p - lp, lp);
             lp = p;
          }
@@ -565,14 +565,13 @@ new_block_def:
             if (tk == Id) {
                struct ident_s *ndd = id;
                int *nbase = n;
-               if (ndd->class != 0) fatal("redefining preprocessor symbol");
+               if (ndd->class != 0) fatal("can't redefine preprocessor symbol");
                while (*p == ' ') ++p;
                if (*p == '\n') {    // no value assigned
                   ndd->class = Num; ndd->type = INT;
                   break;
                }
-               eol2semi(p);
-               next(); expr(Cond);
+               eol2semi(p); next(); expr(Cond); *--p = '\n';
                if ((nbase - n) == 2 && (*n == Num || *n == NumF)) {
                   ndd->class = *n; ndd->val = n[1];
                   ndd->type = (*n == Num) ? INT : FLOAT;
@@ -591,10 +590,9 @@ new_block_def:
             if (tk != Id) fatal("No identifier");
             ++pplev;
             if (ppactive &&
-               (((id->class == Num || id->class == NumF) ^ (t ? 1 : 0)) & 1)) {
+               (((id->class == Num || id->class == NumF) ^ t) & 1)) {
                int *nbase = n; ppactive = 0;
                t = pplevt; pplevt = pplev - 1;
-               while (*p != 0 && *p != '\n') ++p; // discard until end-of-line
                do next(); while (pplev != pplevt);
                pplevt = t;
                n = nbase; ppactive = 1;
@@ -605,13 +603,11 @@ new_block_def:
             p += 2;
             ++pplev;
             if (!ppactive) break;
-            eol2semi(p);
-            next(); expr(Cond);
+            eol2semi(p); next(); expr(Cond); *--p = '\n';
             if ((nbase - n) == 2 && (*n == Num || *n == NumF)) {
                t = n[1]; n += 2;
                if (t == 0) { // throw away code inside of #if
                   t = pplevt; pplevt = pplev - 1; ppactive = 0;
-                  while (*p != 0 && *p != '\n') ++p; // discard until EOL
                   do next(); while (pplev != pplevt);
                   pplevt = t;
                   n = nbase; ppactive = 1;
@@ -625,10 +621,13 @@ new_block_def:
             if (--pplev < 0) fatal("preprocessor context nesting error");
             if (pplev == pplevt) return;
          }
-         else if (!strncmp(p, "else", 4)) {
+         else if (!strncmp(p, "else", 4) || !strncmp(p, "elif", 4)) {
             p += 4;
-            if (ppactive)
-               fatal("#else not supported in preprocessor");
+            if (ppactive) fatal("#else/elif not supported in preprocessor");
+         }
+         else if (!strncmp(p, "error", 5)) {
+            p += 5;
+            if (ppactive) fatal ("#error encountered");
          }
          else {
             while (*p && *p != '\n') ++p;
@@ -1156,8 +1155,14 @@ resolve_fnproto:
          next(); expr(Assign); tc = ty;
          if (tk != ':') fatal("conditional missing colon");
          next(); c = n;
-         expr(Cond); --n; if (tc != ty) fatal("both results need same type");
-         *n = (int) (n + 1); *--n = (int) c; *--n = (int) b; *--n = Cond;
+         expr(Cond); if (tc != ty) fatal("both results need same type");
+         if (*b == Num && *n == Num && *c == Num) {
+            b[1] = b[1] ? c[1] : n[1]; n += 4;
+         }
+         else {
+            --n; *n = (int) (n + 1); *--n = (int) c;
+            *--n = (int) b; *--n = Cond;
+         }
          break;
       case Lor: // short circuit, the logical or
          next(); expr(Lan);
@@ -1469,6 +1474,7 @@ resolve_fnproto:
          typecheck(Div, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
+               if (n[1] == 0) fatal("division by zero");
                c1 = &n[1]; c2 = &b[1] ; c2->f /= c1->f; n += 2;
             }
             else if (*n == NumF && n[1] == 0x3f800000) n += 2; // 1.0
@@ -1476,7 +1482,10 @@ resolve_fnproto:
          }
          else if (*n == Num && n[1] == 1) n += 2;
          else {
-            if (*n == Num && *b == Num) { b[1] /= n[1]; n += 2; }
+            if (*n == Num && *b == Num) {
+               if (n[1] == 0) fatal("division by zero");
+               b[1] /= n[1]; n += 2;
+            }
             else {
                *--n = (int) b;
                if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
@@ -1840,8 +1849,10 @@ void gen(int *n)
       if (i == While) *a = (int) (e + 1);
       while (cnts) { t = (int *) *cnts; *cnts = (int) (e + 1); cnts = t; }
       cnts = c;
-      gen((int *) n[2]); // condition
-      *++e = BNZ; *++e = (int) d;
+      if (n[2]) {
+         gen((int *) n[2]); // condition
+         *++e = BNZ; *++e = (int) d;
+      }
       while (brks) { t = (int *) *brks; *brks = (int) (e + 1); brks = t; }
       brks = b;
       lastLEV = 0;
@@ -1969,6 +1980,8 @@ void stmt(int ctx)
    int nd[3];
    int bt, tdef = 0;
    int inln_func = 0;
+   char *psave;
+   int dodeadcode;
 
    if (ctx == Glo && (tk < TypeId || tk > Union) && tk != Inln)
       fatal("syntax: statement used outside function");
@@ -2363,7 +2376,7 @@ unwind_func:
                if (ctx == Par) fatal("default arguments not supported");
                if (tokloc) --tokloc;
 #ifdef MC_TEXT_SUB
-               char *psave = p;
+               psave = p;
                masgn = 0;
 #endif
                next();
@@ -2445,28 +2458,76 @@ next_type:
       next();
       return;
    case If:
+      dodeadcode = 1; psave = p; i = line; dd = labt;
+keepdeadcode_if:
       next();
       if (tk != '(') fatal("open parenthesis expected");
       next();
-      expr(Assign); a = n;
+      c = n; expr(Assign); a = n;
       if (tk != ')') fatal("close parenthesis expected");
       next();
-      stmt(ctx);
-      b = n;
-      if (tk == Else) { next(); stmt(ctx); d = n; } else d = 0;
-      *--n = (int)d; *--n = (int) b; *--n = (int) a; *--n = Cond;
+      // dead code elimination for const if-condition
+      if (dodeadcode && (c-a == 2) && (*a == Num || *a == NumF)) {
+         struct ident_s *labcheck;
+         n += 2;
+         if (a[1]) {
+            stmt(ctx);
+            if (tk == Else) { // discard if no labels created
+               labcheck = labt;
+               next(); c = n; stmt(ctx);
+               if (labt != labcheck) {
+                  dodeadcode = 0; p = psave; line = i; labt = dd; n = a + 2;
+                  goto keepdeadcode_if;
+               }
+               n = c;
+            }
+         }
+         else {
+            labcheck = labt;
+            c = n; stmt(ctx);
+            if (labt != labcheck) {
+               dodeadcode = 0; p = psave; line = i; labt = dd; n = a + 2;
+               goto keepdeadcode_if;
+            }
+            n = c; // discard if no labels created
+            if (tk == Else) { next(); stmt(ctx); }
+         }
+      }
+      else {
+         stmt(ctx); b = n;
+         if (tk == Else) { next(); stmt(ctx); d = n; } else d = 0;
+         *--n = (int)d; *--n = (int) b; *--n = (int) a; *--n = Cond;
+      }
       return;
    case While:
+      dodeadcode = 1; psave = p; i = line; dd = labt;
+keepdeadcode_while:
       next();
       if (tk != '(') fatal("open parenthesis expected");
       next();
-      expr(Assign); b = n; // condition
+      c = n; expr(Assign); b = n; // condition
       if (tk != ')') fatal("close parenthesis expected");
       next();
-      ++brkc; ++cntc;
-      stmt(ctx); a = n; // parse body of "while"
-      --brkc; --cntc;
-      *--n = (int) b; *--n = (int) a; *--n = While;
+      // dead code elimination for const while-condition
+      if (dodeadcode && (c-b == 2) &&
+          (*b == Num || *b == NumF) && (b[1] == 0)) {
+         struct ident_s *labcheck = labt;
+         n += 2;
+         ++brkc; ++cntc;
+         c = n; stmt(ctx);
+         --brkc; --cntc;
+         if (labt != labcheck) {
+            dodeadcode = 0; p = psave; line = i; labt = dd; n = b + 2;
+            goto keepdeadcode_while;
+         }
+         n = c; // discard if no labels created
+      }
+      else {
+         ++brkc; ++cntc;
+         stmt(ctx); a = n; // parse body of "while"
+         --brkc; --cntc;
+         *--n = (int) b; *--n = (int) a; *--n = While;
+      }
       return;
    case DoWhile:
       next();
@@ -2478,10 +2539,17 @@ next_type:
       if (tk != '(') fatal("open parenthesis expected");
       next();
       *--n = ';';
-      expr(Assign); b = n;
+      c = n; expr(Assign); b = n;
       if (tk != ')') fatal("close parenthesis expected");
       next();
-      *--n = (int) b; *--n = (int) a; *--n = DoWhile;
+      // loop elimination for const dowhile-condition
+      if ((c-b == 2) && (*b == Num || *b == NumF) && (b[1] == 0)) {
+         n += 3; *--n = 0;
+      }
+      else {
+         *--n = (int) b;
+      }
+      *--n = (int) a; *--n = DoWhile;
       return;
    case For:
       next();
@@ -3723,6 +3791,10 @@ int main(int argc, char **argv)
    tsize[tnew++] = sizeof(float);
    tsize[tnew++] = 0;  // reserved for another scalar type
 
+   // create an __MC__ identifier
+   p = "__MC__ "; next();
+   id->class = Num; id->val = 1; id->type = INT;
+
    --argc; ++argv;
    while (argc > 0 && **argv == '-') {
       if ((*argv)[1] == 's') {
@@ -3800,7 +3872,7 @@ int main(int argc, char **argv)
    // real C parser begins here
    // parse the program
    line = 1;
-   pplevt = -1; ppactive = 1;
+   pplev = 0; pplevt = -1; ppactive = 1;
    next();
    while (tk) {
       stmt(Glo);
