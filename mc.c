@@ -128,9 +128,7 @@ struct ident_s {
 int mns;            // member namespace -- 1 = member lookup in progress
 int masgn;          // This variable is used to skip struct substitutions
 char *pts[16];      // != 0 means text substitutuion in progress
-int tsld[16];       // stack marker
 int tsline[16];     // what line is being parsed
-struct ident_s *tssymh[32]; // id marker
 int numpts;         // number of text substitution levels in flight
 int numfspec;       // number of inlinable functions
 int *fspec[256];    // inline function specifications
@@ -694,11 +692,6 @@ new_block_def:
    if (numpts != 0) {
       p = pts[--numpts];
       if (tsline[numpts] != 0) line = tsline[numpts];
-      if (tssymh[numpts]) { // only used by inline functions
-         if (ld > maxld) maxld = ld;
-         --ldn; ld = tsld[numpts]; symlh = tssymh[numpts];
-         tssymh[numpts] = 0;
-      }
       goto text_sub;
    }
 }
@@ -797,6 +790,8 @@ int tensor_size(int dim, int etype)
 
 #define REENTRANT 0x10000
 
+inline void stmt(int ctx);
+
 void expr(int lev)
 {
    int t, tc, tt[2], nf, *b, sz, *c;
@@ -886,14 +881,25 @@ resolve_fnproto:
          tt[0] += (nf << 6) + t;
          if (d->ftype[0] && (d->ftype[0] != tt[0] || d->ftype[1] != tt[1]) )
             fatal("argument type mismatch");
-         next();
          if (inln_func) {
             int i, args;
+            int old;
+            struct ident_s *osymh;
 
             n = saven; // get rid of pushed function arguments
 
-            // set up block scope
-            lds[++ldn] = tsld[numpts] = ld; tssymh[numpts] = symlh;
+            // save source code position to return to after function call
+            tsline[numpts] = line;
+            pts[numpts++] = p;
+
+            // point source code at inline function
+            p = (char *)fspec[fidx][1]; // func body source
+            line = (int) fspec[fidx][2] ; // func body line num
+
+            *--n = ';' ;   // Create block scope in AST, '{'
+
+            // create block scope for local variables
+            lds[++ldn] = old = ld; osymh = symlh;
 
             // create substitution variables
             args = (int) fspec[fidx][3]; // number of params in func def
@@ -922,14 +928,20 @@ resolve_fnproto:
                id->type = id->etype = 0;
                id->tsub = ts[i];
             }
-            tk = ';';
 
-            // activate inlining
-            tsline[numpts] = line;
-            pts[numpts++] = p; p = (char *)fspec[fidx][1]; // func body source
-            line = (int) fspec[fidx][2] ; // func body line num
+            next(); // get first token from inline function
+
+            while (tk != '}') {
+               c = n; stmt(Loc);
+               if (c != n) { *--n = (int) c; *--n = '{'; }
+            }
+            if (ld > maxld) maxld = ld;
+            --ldn; ld = old; symlh = osymh;
+
+            next();
          }
          else {
+            next();
             // function or system call id
             *--n = tt[1]; *--n = tt[0]; *--n = t;
             *--n = ((d->class == Func) ? ((int) d) : d->val);
@@ -2217,7 +2229,7 @@ do_typedef:
                   dd->tsub = (char *) (numfspec + 1);
                   dd->val = 0;
                }
-               fspec[numfspec][1] = (int) p;  // func body
+               fspec[numfspec][1] = (int) p;  // func body char* after '{'
                fspec[numfspec][2] = line;     // first source line func body
                fspec[numfspec++][3] = (int) ld; // number of func param names
                // param names are in slot 4 onward.
@@ -2246,18 +2258,25 @@ do_typedef:
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
-            if (rtt == -1) *(p-1) = 0;
+            if (rtt == -1) {
+               if (*p == '\n' || *p == ' ') {
+                  if (lp < p && !numpts) {
+                     if (src) printf("%d: %.*s", line, p - lp + 1, lp);
+                     lp = p + 1;
+                  }
+                  if (*p == '\n') ++line;
+               }
+               else
+                  fatal("char after function body decl must be whitespace");
+               *p++ = 0;
+            }
             if (ld > maxld) maxld = ld;
             *--n = maxld - loc; *--n = Enter;
             if (oname && n[1] > 64 && osize > 64)
                printf("--> %d: move %s to global scope for performance.\n",
                       oline, oname);
             cas = 0;
-            if (!inln_func) gen(n);
-            else {
-               if (src) { printf("%d: %.*s}\n", line, p - lp, lp); lp = p; }
-               n = saven;
-            }
+            if (!inln_func) gen(n); else n = saven;
             if (src && !numpts && !inln_func) {
                int *base = le;
                printf("%d: %.*s%s\n", line, p - lp, lp,
