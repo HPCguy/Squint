@@ -794,7 +794,7 @@ inline void stmt(int ctx);
 
 void expr(int lev)
 {
-   int t, tc, tt[2], nf, *b, sz, *c;
+   int t, tc, tt[2], nf, sz, *a, *b, *c;
    int memsub = 0;
    union conv *c1, *c2;
    struct ident_s *d;
@@ -859,13 +859,21 @@ resolve_fnproto:
          }
          while (tk != ')') {
             if (inln_func) {
-               expr(Assign);
-               ts[tsi++] = idp; *idp = '(';
-               memcpy(idp+1, psave, p-psave-1);
-               idp[p-psave] = ')'; idp[p-psave+1] = 0;
-               idp = (char *) (((int) idp +
-                                (p - psave) + 2 + sizeof(int)) &
-                               (-sizeof(int)));
+               a = n; expr(Assign);
+               ts[tsi++] = idp;
+               if ( (a-n == 2) && (*n == Num || *n == NumF)) { // lit const
+                  a = (int *) idp;
+                  *a++ = n[0]; *a++ = n[1];
+                  idp = (char *) a;
+               }
+               else {
+                  *idp = '(';
+                  memcpy(idp+1, psave, p-psave-1);
+                  idp[p-psave] = ')'; idp[p-psave+1] = 0;
+                  idp = (char *) (((int) idp +
+                                   (p - psave) + 2 + sizeof(int)) &
+                                  (-sizeof(int)));
+               }
                while (*p == ' ' || *p == 0x0a) if (*p++ == 0x0a) ++line;
                psave = p;
             }
@@ -910,23 +918,34 @@ resolve_fnproto:
                while (*tsn) tk = tk * 147 + *tsn++;
                tk = (tk << 6) + (tsn - (char *)fspec[fidx][4+i]);
                tsn = (char *) fspec[fidx][4+i]; // param names
-               if (*tsn == ts[i][1] ||
-                   (ts[i][1] == '&' && *tsn == ts[i][2])) {
-                  int ilen = strlen(tsn);
-                  int off = (*tsn == ts[i][1]) ? 1 : 2;
-                  if (!strncmp(tsn, ts[i]+off, ilen)) {
-                     if (off == 1) continue;
-                     else recursive = 1; // off == 2
+               if (*ts[i] == '(') { // simple alias (e.g. &x, x, x[n])
+                  if (*tsn == ts[i][1] ||
+                      (ts[i][1] == '&' && *tsn == ts[i][2])) {
+                     int ilen = strlen(tsn);
+                     int off = (*tsn == ts[i][1]) ? 1 : 2;
+                     if (!strncmp(tsn, ts[i]+off, ilen)) {
+                        if (off == 1) continue;
+                        else recursive = 1; // off == 2
+                     }
                   }
+                  id = --symlh ;
+                  id->name = tsn; id->hash = tk;
+                  tk = id->tk = Id;  // token type identifier
+                  id->class = Loc;
+                  id->val = recursive; // recursion flags
+                  id->type = id->etype = 0;
+                  id->tsub = ts[i];
                }
-               id = --symlh ;
-               id->name = tsn;
-               id->hash = tk;
-               tk = id->tk = Id;  // token type identifier
-               id->class = Loc;
-               id->val = recursive; // recursion flags
-               id->type = id->etype = 0;
-               id->tsub = ts[i];
+               else { // literal constant
+                  id = --symlh ;
+                  id->name = tsn; id->hash = tk;
+                  tk = id->tk = Id;  // token type identifier
+                  a = (int *) ts[i];
+                  id->class = a[0]; id->val = a[1];
+                  id->type = ((id->class == Num) ? INT : FLOAT);
+                  id->etype = 0;
+                  id->tsub = 0;
+               }
             }
 
             next(); // get first token from inline function
@@ -1691,6 +1710,12 @@ void init_array(struct ident_s *tn, int extent[], int dim)
    } while(1);
 }
 
+int isPrintf(char *s)
+{
+   char *ss = s;
+   while(*ss) ++ss;
+   return ((ss - s) < 6) ? 0 : !strcmp(ss - 6,"printf");
+}
 
 // AST parsing for IR generatiion
 // With a modular code generator, new targets can be easily supported such as
@@ -1809,7 +1834,7 @@ void gen(int *n)
       b = (int *) n[1]; k = b ? n[3] : 0;
       if (k) {
          if (i == Syscall) {
-            isPrtf = (n[4] & 0xfc0) && !strcmp(ef_cache[n[2]]->name,"printf");
+            isPrtf = (n[4] & 0xfc0) && isPrintf(ef_cache[n[2]]->name);
             if (isPrtf) {
                *++e = PHD; *++e = IMM; *++e = (k & 1)*4; *++e = VENT;
             }
@@ -2902,7 +2927,7 @@ int *codegen(int *jitmem, int *jitmap)
          tmp = ef_getaddr(*pc);  // look up address from ef index
 
          // Handle ridiculous printf() varargs ABI inline
-         int isPrtf = nf && !strcmp(ef_cache[*pc]->name, "printf");
+         int isPrtf = nf && isPrintf(ef_cache[*pc]->name);
          if (isPrtf) {
             if (ii == 0) die("printf() has no arguments");
             jj = ii - 1; sz = 0; rMap = (int *) malloc(ii*sizeof(int));
