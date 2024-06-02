@@ -58,6 +58,7 @@ int *tsize;         // array (indexed by type) of type sizes
 int tnew;           // next available type
 int tk;             // current token
 int sbegin;         // statement begin state.
+int deadzone;       // don't do inlining during dead code elimination
 int tokloc;         // 0 = global scope, 1 = function scope
                     // 2 = function scope, declaration in progress
 union conv {
@@ -842,7 +843,7 @@ resolve_fnproto:
          psave = p;
          next();
          t = 0; b = c = 0; tt[0] = tt[1] = 0; nf = 0; // FP argument count
-         if (inln_func || d->tsub) {
+         if (!deadzone && (inln_func || d->tsub)) {
             if (d->tsub) {
                fidx = ((int) d->tsub) - 1;
                inln_func = 1;
@@ -858,7 +859,7 @@ resolve_fnproto:
             *--n = Phf; c = n;
          }
          while (tk != ')') {
-            if (inln_func) {
+            if (inln_func && !deadzone) {
                a = n; expr(Assign);
                ts[tsi++] = idp;
                if ( (a-n == 2) && (*n == Num || *n == NumF)) { // lit const
@@ -889,10 +890,14 @@ resolve_fnproto:
          tt[0] += (nf << 6) + t;
          if (d->ftype[0] && (d->ftype[0] != tt[0] || d->ftype[1] != tt[1]) )
             fatal("argument type mismatch");
-         if (inln_func) {
+         if (inln_func && d->val == 0 && numpts == 16)
+            fatal("nesting limit reached on inline function calls");
+         if (inln_func && !deadzone && numpts < 16) {
             int i, args;
             int old;
             struct ident_s *osymh;
+            char *save_tsub = d->tsub;
+            d->tsub = (char *) (fidx + 1);
 
             n = saven; // get rid of pushed function arguments
 
@@ -954,8 +959,16 @@ resolve_fnproto:
                c = n; stmt(Loc);
                if (c != n) { *--n = (int) c; *--n = '{'; }
             }
+
+            // reduce literal constant expressions
+            if ((saven - n) == 5 && (n[2] == Num || n[2] == NumF)) {
+              *--saven = n[3]; *--saven = n[2]; n = saven;
+            }
+
             if (ld > maxld) maxld = ld;
             --ldn; ld = old; symlh = osymh;
+
+            d->tsub = save_tsub;
 
             next();
          }
@@ -1187,8 +1200,9 @@ resolve_fnproto:
          if (tk != ':') fatal("conditional missing colon");
          next(); c = n;
          expr(Cond); if (tc != ty) fatal("both results need same type");
-         if (*b == Num && *n == Num && *c == Num) {
-            b[1] = b[1] ? c[1] : n[1]; n += 4;
+         if ((*b == Num || *b == NumF) &&
+             ((*n == Num && *c == Num) || (*n == NumF && *c == NumF))) {
+            b[1] = b[1] ? c[1] : n[1]; *b = *n; n += 4;
          }
          else {
             --n; *n = (int) (n + 1); *--n = (int) c;
@@ -2518,7 +2532,7 @@ keepdeadcode_if:
             stmt(ctx);
             if (tk == Else) { // discard if no labels created
                labcheck = labt;
-               next(); c = n; stmt(ctx);
+               next(); c = n; ++deadzone; stmt(ctx); --deadzone;
                if (labt != labcheck) {
                   dodeadcode = 0; p = psave; line = i; labt = dd; n = a + 2;
                   goto keepdeadcode_if;
@@ -2528,7 +2542,7 @@ keepdeadcode_if:
          }
          else {
             labcheck = labt;
-            c = n; stmt(ctx);
+            c = n; ++deadzone; stmt(ctx); --deadzone;
             if (labt != labcheck) {
                dodeadcode = 0; p = psave; line = i; labt = dd; n = a + 2;
                goto keepdeadcode_if;
@@ -2558,7 +2572,7 @@ keepdeadcode_while:
          struct ident_s *labcheck = labt;
          n += 2;
          ++brkc; ++cntc;
-         c = n; stmt(ctx);
+         c = n; ++deadzone; stmt(ctx); --deadzone;
          --brkc; --cntc;
          if (labt != labcheck) {
             dodeadcode = 0; p = psave; line = i; labt = dd; n = b + 2;
