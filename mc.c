@@ -96,6 +96,9 @@ int oline, osize;   // for optimization suggestion
 char *oname;
 int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
 
+// max recursive inline levels
+#define INL_LEV 32
+
 // max function arguments
 #define MAX_FARG  52
 
@@ -103,7 +106,7 @@ int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
 // Function parameters and (nested) local id scopes grow downward
 // When a local block scope terminates, it relinquishes stack space
 // Carefully creating declarations with block scopes improves optimization
-#define MAX_LABEL 32
+#define MAX_LABEL 16384
 struct ident_s {
    int tk;       // type-id or keyword
    int hash;
@@ -116,20 +119,22 @@ struct ident_s {
    int ftype[2]; // extended type info for funcs
    int flags;    // 1 = fwd decl func
    int *chain;   // used for forward declaration IR inst ptr
-} *id,  // currently parsed identifier
-  *sym, // symbol table (simple list of identifiers)
-  *symk, // tail for keywords
-  *symgt, // tail for global symbols
-  *syms,  // struct/union member parsing
-  *symlh, // head for local symbols
-  *symlt, // tail for loacal symbols
-  *labt, // tail ptr for label Ids
+} *id,           // currently parsed identifier
+  *sym,          // symbol table (simple list of identifiers)
+  *symk,         // tail for keywords
+  *symgt,        // tail for global symbols
+  *syms,         // struct/union member parsing
+  *symlh,        // head for local symbols
+  *symlt,        // tail for loacal symbols
+  *labt,         // tail ptr for label Ids
+  *retlabel[INL_LEV], // label for end of inline function
   lab[MAX_LABEL];
 
 int mns;            // member namespace -- 1 = member lookup in progress
 int masgn;          // This variable is used to skip struct substitutions
-char *pts[16];      // != 0 means text substitutuion in progress
-int tsline[16];     // what line is being parsed
+int irl;            // inline label counter
+char *pts[INL_LEV]; // != 0 means text substitutuion in progress
+int tsline[INL_LEV]; // what line is being parsed
 int numpts;         // number of text substitution levels in flight
 int numfspec;       // number of inlinable functions
 int *fspec[256];    // inline function specifications
@@ -441,29 +446,33 @@ void next()
 
    /* using loop to ignore whitespace characters, but characters that
     * cannot be recognized by the lexical analyzer are considered blank
-    * characters, such as '@' and '$'.
+    * characters, such as '@'.
     */
 text_sub: t = t; // dummy assignment for goto bug workaround
    while ((tk = *p)) {
       ++p;
-      if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') || (tk == '_')) {
+      if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') ||
+          (tk == '_') || (tk == '$')) {
          pp = p - 1;
          while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-                (*p >= '0' && *p <= '9') || (*p == '_'))
+                (*p >= '0' && *p <= '9') || (*p == '_') || (*p == '$'))
             tk = tk * 147 + *p++;
          tk = (tk << 6) + (p - pp);  // hash plus symbol length
          // hash value is used for fast comparison. Since it is inaccurate,
          // we have to validate the memory content as well.
+         int nlen = p - pp;
 
          for (id = sym; id < symk; ++id) { // check for keywords
-            if (tk == id->hash && !memcmp(id->name, pp, p - pp)) {
+            if (tk == id->hash && id->name[nlen] == 0 &&
+                !memcmp(id->name, pp, nlen)) {
                tk = id->tk;
                return;
             }
          }
          if (tokloc) {
             for (id = symlh; id < symlt; ++id) { // local ids
-               if (tk == id->hash && !memcmp(id->name, pp, p - pp)) {
+               if (tk == id->hash && id->name[nlen] == 0 &&
+                   !memcmp(id->name, pp, nlen)) {
                   if (tokloc == 2) {
                      if (id->val > lds[ldn])
                         fatal("redefinition of var within scope");
@@ -490,7 +499,8 @@ text_sub: t = t; // dummy assignment for goto bug workaround
          }
          if (tokloc < 2) {
             for (id = symk; id < symgt; ++id) { // global ids
-               if (tk == id->hash && !memcmp(id->name, pp, p - pp)) {
+               if (tk == id->hash && id->name[nlen] == 0 &&
+                   !memcmp(id->name, pp, nlen)) {
                   tk = id->tk;
                   return;
                }
@@ -498,7 +508,8 @@ text_sub: t = t; // dummy assignment for goto bug workaround
          }
          if (tokloc) {
             for (id = lab; id < labt; ++id) { // labels
-               if (!memcmp(id->name, pp, p - pp)) {
+               if (tk == id->hash && id->name[nlen] == 0 &&
+                   !memcmp(id->name, pp, nlen)) {
                   tk = id->tk;
                   return;
                }
@@ -510,8 +521,8 @@ text_sub: t = t; // dummy assignment for goto bug workaround
 new_block_def:
          id = tokloc ? --symlh : symgt++;
          id->name = idp;
-         memcpy(idp, pp, p-pp); idp[p-pp] = 0;
-         idp = (char *) (((int) idp + (p - pp) + 1 + sizeof(int)) &
+         memcpy(idp, pp, nlen); idp[nlen] = 0;
+         idp = (char *) (((int) idp + nlen + 1 + sizeof(int)) &
                          (-sizeof(int)));
          id->hash = tk;
          tk = id->tk = Id;  // token type identifier
@@ -793,6 +804,17 @@ int tensor_size(int dim, int etype)
 
 inline void stmt(int ctx);
 
+int idchar(int n) // 6 bits wide
+{
+   int val;
+   if (n < 10) val = '0' + n;
+   else if (n < 36) val = 'a' + n - 10;
+   else if (n < 62) val = 'A' + n - 36;
+   else val = ((n == 62) ? '_' : '$');
+   return val;
+}
+
+
 void expr(int lev)
 {
    int t, tc, tt[2], nf, sz, *a, *b, *c;
@@ -810,7 +832,8 @@ do_inln_func:
          if (d->class != 0 || !(d->type == 0 || d->type == -1))
             fatal("invalid label");
          if (d < lab || d >= labt) { // move labels to separate area
-            if (d != symlh) fatal("label problem");
+            if (d != symlh || (labt - lab) == MAX_LABEL)
+               fatal("label problem");
             memcpy(d = labt++, symlh++, sizeof (struct ident_s));
          }
          d->type = -1 ; // hack for d->class deficiency
@@ -855,7 +878,8 @@ resolve_fnproto:
             if (fidx == numfspec) inln_func = 0; // warn?
             else { tsi = 0; saven = n; }
          }
-         if (peephole && (d->class < Fneg || d->class > Sqrt) && !inln_func) {
+         if (peephole && (d->class < Fneg || d->class > Sqrt) &&
+             !(inln_func && numpts < INL_LEV)) {
             *--n = Phf; c = n;
          }
          while (tk != ')') {
@@ -890,18 +914,42 @@ resolve_fnproto:
          tt[0] += (nf << 6) + t;
          if (d->ftype[0] && (d->ftype[0] != tt[0] || d->ftype[1] != tt[1]) )
             fatal("argument type mismatch");
-         if (inln_func && d->val == 0 && numpts == 16)
+         if (inln_func && d->val == 0 && numpts == INL_LEV)
             fatal("nesting limit reached on inline function calls");
-         if (inln_func && !deadzone && numpts < 16) {
+         if (inln_func && !deadzone && numpts < INL_LEV) {
             int i, args;
             int old;
+            char *s;
             struct ident_s *osymh;
             char *save_tsub = d->tsub;
             d->tsub = (char *) (fidx + 1);
 
             n = saven; // get rid of pushed function arguments
 
+            // create a label for the end of the inline function
+            if ((labt - lab) == MAX_LABEL) fatal("label overflow");
+            id = labt++;
+            id->name = s = idp;
+            id->name[0] = 'i'; id->name[1] = 'r'; id->name[2] = 'l';
+            id->name[3] = idchar((irl>>18) & 63);
+            id->name[4] = idchar((irl>>12) & 63);
+            id->name[5] = idchar((irl>> 6) & 63);
+            id->name[6] = idchar(irl       & 63);
+            id->name[7] = 0;
+            idp += 8;
+            ++irl;
+            tk = *s++;
+            while (*s) tk = tk * 147 + *s++;
+            id->hash = (tk << 6) + 7;
+            id->type = -1; // hack for id->class deficiency
+            id->tk = Id;  // token type identifier
+            id->class = id->val = id->etype = 0;
+            id->tsub = 0;
+            id->flags = 0;
+            id->chain = 0;
+
             // save source code position to return to after function call
+            retlabel[numpts] = id;
             tsline[numpts] = line;
             pts[numpts++] = p;
 
@@ -961,14 +1009,29 @@ resolve_fnproto:
             }
 
             // reduce literal constant expressions
-            if ((saven - n) == 5 && (n[2] == Num || n[2] == NumF)) {
-              *--saven = n[3]; *--saven = n[2]; n = saven;
+            if ((saven - n) == 9 &&
+                (n[6] == Num || n[6] == NumF) &&
+                (n[5] == (int) retlabel[numpts-1])) {
+               --(retlabel[numpts-1]->flags);
+               *--saven = n[7]; *--saven = n[6]; n = saven;
+            }
+            else if ((saven - n) == 5 &&
+                     (n[2] == Num || n[2] == NumF)) {
+               *--saven = n[3]; *--saven = n[2]; n = saven;
+            }
+            else if (retlabel[numpts-1]->flags) {
+               c = n; *--n = (int) retlabel[numpts-1]; *--n = Label;
+               *--n = (int) c;  *--n = '{';
             }
 
             if (ld > maxld) maxld = ld;
             --ldn; ld = old; symlh = osymh;
 
             d->tsub = save_tsub;
+            ty = d->type;
+
+            p = pts[--numpts];
+            line = tsline[numpts];
 
             next();
          }
@@ -2235,12 +2298,10 @@ do_typedef:
             if (id->class == Func &&
                id->val > (int) text && id->val < (int) e)
                fatal("duplicate global definition");
-            if (rtt == -1) {
-               fspec[numfspec] = (int *) idp;
-               fspec[numfspec][0] = (int) dd->name; // func name
-               idp += 56 * sizeof(int);
-               saven = n;
-            }
+            fspec[numfspec] = (int *) idp;
+            fspec[numfspec][0] = (int) dd->name; // func name
+            idp += 56 * sizeof(int);
+            saven = n;
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = (int) (e + 1);
             symlh = symlt; tokloc = 1; next();
@@ -2250,7 +2311,7 @@ do_typedef:
                if (ty == FLOAT) {
                   ++nf; dd->ftype[(ld+11)/32] |= 1 << ((ld+11) % 32);
                }
-               if (rtt == -1) fspec[numfspec][3+ld] = (int) id->name;
+               fspec[numfspec][3+ld] = (int) id->name;
                if (tk == ',') next();
             }
             if (ld > MAX_FARG) fatal("maximum of 52 function parameters");
@@ -2263,21 +2324,14 @@ do_typedef:
                dd->val = 0; goto unwind_func;
             } // fn proto
             if (tk != '{') fatal("bad function definition");
-            if (rtt == -1) {
-               if (inln_func) {
-                  dd->tsub = (char *) (numfspec + 1);
-                  dd->val = 0;
-               }
-               fspec[numfspec][1] = (int) p;  // func body char* after '{'
-               fspec[numfspec][2] = line;     // first source line func body
-               fspec[numfspec++][3] = (int) ld; // number of func param names
-               // param names are in slot 4 onward.
+            if (inln_func) {
+               dd->tsub = (char *) (numfspec + 1);
+               dd->val = 0;
             }
-            else if (inln_func == 1) {
-               printf("%d: Ignoring inline on non-void function %s\n",
-                      line, dd->name);
-               inln_func = 0;
-            }
+            fspec[numfspec][1] = (int) p;  // func body char* after '{'
+            fspec[numfspec][2] = line;     // first source line func body
+            fspec[numfspec++][3] = (int) ld; // number of func param names
+            // fspec param names are in slot 4 onward.
             if (dd->val && dd->chain) { // backpatch fwd decl func addrs
                int *patch = dd->chain;
                while (patch) {
@@ -2297,18 +2351,16 @@ do_typedef:
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
-            if (rtt == -1) {
-               if (*p == '\n' || *p == ' ') {
-                  if (lp < p && !numpts) {
-                     if (src) printf("%d: %.*s", line, p - lp + 1, lp);
-                     lp = p + 1;
-                  }
-                  if (*p == '\n') ++line;
+            if (*p == '\n' || *p == ' ') {
+               if (lp < p && !numpts) {
+                  if (src) printf("%d: %.*s", line, p - lp + 1, lp);
+                  lp = p + 1;
                }
-               else
-                  fatal("char after function body decl must be whitespace");
-               *p++ = 0;
+               if (*p == '\n') ++line;
             }
+            else
+               fatal("char after function body decl must be whitespace");
+            *p++ = 0;
             if (ld > maxld) maxld = ld;
             *--n = maxld - loc; *--n = Enter;
             if (oname && n[1] > 64 && osize > 64)
@@ -2318,8 +2370,7 @@ do_typedef:
             if (!inln_func) gen(n); else n = saven;
             if (src && !numpts && !inln_func) {
                int *base = le;
-               printf("%d: %.*s%s\n", line, p - lp, lp,
-                      ((rtt == -1) ? "}" : "") );
+               printf("%d: %.*s\n", line, p - lp, lp);
                lp = p;
                while (le < e) {
                   int off = le - base; // Func IR instruction memory offset
@@ -2375,9 +2426,13 @@ do_typedef:
             }
 unwind_func:
             while (--labt >= lab) {
-               if (labt->class == 0 && labt->type == -1) {
-                  printf("%s: label %s not defined\n", linestr(), labt->name);
-                  exit(-1);
+               if ((labt->class == 0 && labt->type == -1) || labt->flags) {
+                  if (!(((*((int *) labt->name) & 0xffffff) == 0x6c7269) &&
+                        labt->flags == 0)) {
+                     printf("%s: label %s not defined\n",
+                            linestr(), labt->name);
+                     exit(-1);
+                  }
                }
             }
             labt = lab; tokloc = 0;
@@ -2697,17 +2752,30 @@ keepdeadcode_while:
       return;
    // RETURN_stmt -> 'return' expr ';' | 'return' ';'
    case Return:
-      a = 0; next();
-      if (tk != ';') {
-         expr(Assign); a = n;
-         if (rtt == -1) fatal("not expecting return value");
-         typecheck(Eq, rtt, ty);
+      if (numpts) { // inline code handler
+         next();
+         if (tk != ';') {
+            expr(Assign);
+         }
+         if (!deadzone) {
+            a = n; ++(retlabel[numpts-1]->flags);
+            *--n = (int) retlabel[numpts-1]; *--n = Goto;
+            *--n = (int) a; *--n = '{';
+         }
       }
       else {
-         if (rtt != -1) fatal("return value expected");
+         a = 0; next();
+         if (tk != ';') {
+            expr(Assign); a = n;
+            if (rtt == -1) fatal("not expecting return value");
+            typecheck(Eq, rtt, ty);
+         }
+         else {
+            if (rtt != -1) fatal("return value expected");
+         }
+         if (!deadzone) ++rtf; // signal a return statement exists
+         *--n = (int) a; *--n = Return;
       }
-      rtf = 1; // signal a return statement exisits
-      *--n = (int) a; *--n = Return;
       if (tk != ';') fatal("semicolon expected");
       next();
       return;
@@ -2717,7 +2785,8 @@ keepdeadcode_while:
                 || (id->class != Label && id->class != 0))
          fatal("goto expects label");
       if (id < lab || id >= labt) { // move labels to separate area
-         if (id != symlh) fatal("label problem");
+         if (id != symlh || (labt - lab) == MAX_LABEL)
+            fatal("label problem");
          memcpy(id = labt++, symlh++, sizeof (struct ident_s));
       }
       id->type = -1; // hack for id->class deficiency
@@ -3097,7 +3166,7 @@ int *codegen(int *jitmem, int *jitmap)
 
       int genpool = 0;
       if (imm0) {
-         if (i == LEV ||
+         if ((i == LEV && (pc == (e+1) || *pc == ENT)) ||
             (i == JMP && // start looking for opportunities
              ((imm0 && je > imm0 + 768) || (immf0 && je > immf0 + 128))))
             genpool = 1;
@@ -3804,7 +3873,7 @@ int main(int argc, char **argv)
       die("could not allocate symbol area");
    symlh = symlt = (struct ident_s *) ((int)sym + poolsz);
    syms = (struct ident_s *) ((int)sym + poolsz/2);
-   idp = idn = (char *) malloc(128 * 1024); // max space for id names
+   idp = idn = (char *) malloc(256 * 1024); // max space for id names
 
    // Register keywords in symbol stack. Must match the sequence of enum
    p = "typedef enum char int float struct union "

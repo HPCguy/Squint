@@ -468,8 +468,9 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
       int info = 0;
 
       /* skip code that won't be transformed */
-      if (is_nop(*scan)) {
+      if (is_nop(*scan) && scan < funcEnd) {
          int *end = skip_nop(scan, S_FWD);
+         if (end > funcEnd) end = funcEnd;
          while (scan < end) {
             if (*scan == NOP13) {
                *rInfo++ = RI_func; // R0 set in func
@@ -612,8 +613,9 @@ static void create_inst_info_f(int *instInfo, int *funcBegin, int *funcEnd)
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
 
       /* skip code that won't be transformed */
-      if (is_nop(*scan)) {
+      if (is_nop(*scan) && scan < funcEnd) {
          int *end = skip_nop(scan, S_FWD);
+         if (end > funcEnd) end = funcEnd;
          while (scan < end) {
             if (*scan == NOP13) {
                *rInfo++ = RI_func; // R0 set in func
