@@ -1019,7 +1019,14 @@ resolve_fnproto:
                      (n[2] == Num || n[2] == NumF)) {
                *--saven = n[3]; *--saven = n[2]; n = saven;
             }
-            else if (retlabel[numpts-1]->flags) {
+            else if (n[2] == '{' && n[3] == ((int) (n + 6)) &&
+               n[4] == Goto && n[5] == (int) retlabel[numpts-1]) {
+               // handle common case of return at end of function
+               --(retlabel[numpts-1]->flags);
+               n[5] = n[1]; n[4] = n[0]; n += 4;
+            }
+
+            if (retlabel[numpts-1]->flags) {
                c = n; *--n = (int) retlabel[numpts-1]; *--n = Label;
                *--n = (int) c;  *--n = '{';
             }
@@ -1934,6 +1941,7 @@ void gen(int *n)
       if (i == Syscall) *++e = SYSC;
       if (i == Func) {
          label = (struct ident_s *) n[2];
+         label->flags |= 2; // leaf function is not dead code
          *++e = JSR;
          if (label->val == 0) {
             *++e = (int) label->chain; label->chain = e;

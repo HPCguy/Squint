@@ -1683,6 +1683,7 @@ static void apply_peepholes7_5(int *instInfo, int *funcBegin, int *funcEnd)
             if (rxdd == 0 || (*rxdd & RI_func)) continue;
             rxu = find_use(instInfo, rxd-1, (*scanm & RI_Rn) >> 16, S_BACK);
             if (rxu == 0 || rxu <= rxdd) {
+               int vshft = (((*scan & 0xffb0ffff) == 0xed800a00) ? 2 : 0);
                rad = find_def(instInfo,rxd+1,(*scanm & RI_Rn) >> 16,S_FWD);
                if (rad < info) {
                   if (rad == 0 || (*rad & RI_func)) continue;
@@ -1713,29 +1714,22 @@ static void apply_peepholes7_5(int *instInfo, int *funcBegin, int *funcEnd)
                   switch(opt) { // disable case 1 and 2 to see structs in asm
                   case 1: // best performance
                      // move fp in ldr
-                     *scanmp = ((*scanmp & 0xff70ff00) | (0xb << 16) |
-                                (*scanmm & 0xff)) - (*scanm & 0xff);
-                     if (((*scan >> 20) & 0xff) == 0xd8)
-                        *scanmp = (*scanmp & 0xffffff00) |
-                                  ((*scanmp & 0xff) >> 2);
+                     *scanmp = (*scanmp & 0xff70ff00) | (0xb << 16) |
+                      (((*scanmm & 0xff) - (*scanm & 0xff)) >> vshft);
                   case 2:
-                     *scan = ((*scan & 0xff70ff00) | (0xb << 16) |
-                              (*scanmm & 0xff)) - (*scanm & 0xff);
-                     if (((*scan >> 20) & 0xff) == 0xd8)
-                        *scan = (*scan & 0xffffff00) | ((*scan & 0xff) >> 2);
+                     *scan = (*scan & 0xff70ff00) | (0xb << 16) |
+                        (((*scanmm & 0xff) - (*scanm & 0xff)) >> vshft);
                      *scanmm = NOP;
                      *scanm  = NOP;
                      break;
                   case 3:
-                     *scanmp = *scanmp | ((((*scan >> 20) & 0xff) != 0xd8) ?
-                                (*scanm & 0xff) : ((*scanm & 0xff) >> 2));
+                     *scanmp = *scanmp | ((*scanm & 0xff) >> vshft);
                   case 4:
                      if (*rxdd & RI_RdDest)
                         *scanmm = (*scanmm & ~RI_Rd) | (rx << 12);
                      else // RI_RnDest
                         *scanmm = (*scanmm & ~RI_Rn) | (rx << 16);
-                     *scan = *scan | ((((*scan >> 20) & 0xff) != 0xd8) ?
-                             (*scanm & 0xff) : ((*scanm & 0xff) >> 2));
+                     *scan = *scan | ((*scanm & 0xff) >> vshft);
                      *scanm = NOP;
                   }
                // }
@@ -4124,7 +4118,7 @@ int squint_opt(int *begin, int *end)
             fbase = rename_register2(tmpbuf, funcBegin, retAddr, fbase, 1);
 
          apply_peepholes4_7(tmpbuf, funcBegin, retAddr);
-         apply_peepholes5(funcBegin, retAddr);
+         // apply_peepholes5(funcBegin, retAddr);
          apply_peepholes6(tmpbuf, funcBegin, retAddr, ilow, ibase, 0);
 
          if (!noFloatConst)
@@ -4141,8 +4135,8 @@ int squint_opt(int *begin, int *end)
 
          apply_peepholes8(tmpbuf, funcBegin, retAddr, flow, fhigh);
 
-         if (noFloatConst)
-            simplify_frame(funcBegin, retAddr);
+         // if (noFloatConst)
+         //    simplify_frame(funcBegin, retAddr);
 
          funcEnd = relocate_nop(funcBegin, funcEnd, 0);
          optApplied = 1;
