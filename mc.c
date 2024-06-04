@@ -2435,8 +2435,7 @@ do_typedef:
 unwind_func:
             while (--labt >= lab) {
                if ((labt->class == 0 && labt->type == -1) || labt->flags) {
-                  if (!(((*((int *) labt->name) & 0xffffff) == 0x6c7269) &&
-                        labt->flags == 0)) {
+                  if ((*((int *) labt->name) & 0xffffff) != 0x6c7269) {
                      printf("%s: label %s not defined\n",
                             linestr(), labt->name);
                      exit(-1);
