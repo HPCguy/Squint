@@ -49,7 +49,16 @@ float norm(float *vec, int len)
    return sqrtf( dot(vec, vec, len) );
 }
 
+inline float sgn(float n)
+{
+   if (n > 0.0) return 1.0;
+   else if (n == 0.0) return 0.0;
+   else return -1.0;
+}
+
 // float vec[4] = { 1.0, 2.0, 3.0, 4.0 };
+
+#define ftest -37373.0
 
 int main()
 {
@@ -91,6 +100,8 @@ int main()
   printf("%f %f %f\n", z0, z1, z2 /* , y3 */);
 
   printf("%f %f\n", norm(vec, 4), inline norm(vec, 4) );
+
+  printf ("%f\n", sgn(ftest)*ftest);
 
   return 0;
 }

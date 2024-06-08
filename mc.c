@@ -814,10 +814,47 @@ int idchar(int n) // 6 bits wide
    return val;
 }
 
+/* Drop second item on AST stack */
+void swapDrop(int *b, int sz) // n is global
+{
+   int *t, *c = b, *a = b + sz;
+   do {
+      --c; --a;
+      t = (int *) (*a = *c);
+      if (t >= n && t <= b) *a += sz; // sketchy, not guaranteed safe
+   } while (c != n);
+   n += sz;
+}
+
+int elideZero(int *aa, int *b, int bt, int op) // n and ty are global
+{
+   // 0 = no elision, 1 = const elision, 2 = AST deletion (NOP)
+   int elide = 0;
+   if ((aa-n) == 2 && *n == Num) {
+      if (*b == Num) elide = 1;
+      else if (n[1] == 0) { n += 2; ty = bt; elide = 2; }
+   }
+   else if (aa == b && *b == Num && b[1] == 0) {
+      swapDrop(b, 2); elide = 2;
+   }
+
+   return elide;
+}
+
+int hasSideEffect(int *b, int *e) // conservative, so not strictly sketchy
+{
+   while (b != e) {
+      if (*b == Inc || *b == Dec || *b == Assign) break;
+      ++b;
+   }
+   return (b != e);
+}
+
 
 void expr(int lev)
 {
-   int t, tc, tt[2], nf, sz, *a, *b, *c;
+   int t, tc, tt[2], nf, sz, otk;
+   int *a, *b, *c;
    int memsub = 0;
    union conv *c1, *c2;
    struct ident_s *d;
@@ -1262,8 +1299,14 @@ resolve_fnproto:
          n += 2; b = n; *--n = ';'; *--n = t; *--n = Load;
          if (tk < ShlAssign) tk = Or + (tk - OrAssign);
          else tk = Shl + (tk - ShlAssign);
-         tk |= REENTRANT; ty = t; compound = 1; expr(Assign);
-         *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
+         otk = tk; tk |= REENTRANT; ty = t; compound = 1; a = n; expr(Assign);
+         if (a == n) { // NOP
+            // still need to unwind whole operation if lval has no side effects
+            n += 3;
+         }
+         else {
+            *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
+         }
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
          next(); expr(Assign); tc = ty;
@@ -1296,21 +1339,30 @@ resolve_fnproto:
          ty = INT;
          break;
       case Or: // push the current value, calculate the right value
-         next();
+         next(); a = n;
          if (compound) { compound = 0; expr(Assign); }
          else expr(Xor);
          bitopcheck(t, ty);
-         if (*n == Num && *b == Num) { b[1] |= n[1]; n += 2; }
-         else { *--n = (int) b; *--n = Or; }
+         if (*b == Num && b[1] == -1 && !hasSideEffect(n, b)) n = b;
+         // else if (*n == Num && b[1] == -1 && !hasSideEffect(b, ?))
+         //   { b[x] = Num; b[x+1] = -1; n = &b[x]; }
+         else {
+            switch(elideZero(a, b, t, Num)) {
+               case 0: *--n = (int) b; *--n = Or; break;
+               case 1: b[1] |= n[1]; n += 2;
+            }
+         }
          ty = INT;
          break;
       case Xor:
-         next();
+         next(); a = n;
          if (compound) { compound = 0; expr(Assign); }
          else expr(And);
          bitopcheck(t, ty);
-         if (*n == Num && *b == Num) { b[1] ^= n[1]; n += 2; }
-         else { *--n = (int) b; *--n = Xor; }
+         switch(elideZero(a, b, t, Num)) {
+            case 0: *--n = (int) b; *--n = Xor; break;
+            case 1: b[1] ^= n[1]; n += 2;
+         }
          ty = INT;
          break;
       case And:
@@ -1318,7 +1370,12 @@ resolve_fnproto:
          if (compound) { compound = 0; expr(Assign); }
          else expr(Eq);
          bitopcheck(t, ty);
-         if (*n == Num && *b == Num) { b[1] &= n[1]; n += 2; }
+         if (*n == Num && n[1] == -1) n += 2;
+         else if (*b == Num && b[1] == -1) swapDrop(b, 2);
+         else if (*b == Num && b[1] == 0 && !hasSideEffect(n, b)) n = b;
+         //if (*n == Num && n[1] == 0 && !hasSideEffect(b, ???))
+         //    { b[x] = Num; b[x+1] = 0; n = &b[x]; }
+         else if (*n == Num && *b == Num) { b[1] &= n[1]; n += 2; }
          else { *--n = (int) b; *--n = And; }
          ty = INT;
          break;
@@ -1435,6 +1492,7 @@ resolve_fnproto:
             n += 2;
          }
          else if (*n == Num && n[1] == 0) n += 2;
+         else if (*b == Num && b[1] == 0 && !hasSideEffect(n, b)) n = b;
          else { *--n = (int) b; *--n = Shl; }
          ty = INT;
          break;
@@ -1449,23 +1507,30 @@ resolve_fnproto:
             n += 2;
          }
          else if (*n == Num && n[1] == 0) n += 2;
+         else if (*b == Num && b[1] == 0 && !hasSideEffect(n, b)) n = b;
          else { *--n = (int) b; *--n = Shr; }
          ty = INT;
          break;
       case Add:
-         next();
+         next(); a = n;
          if (compound) { compound = 0; expr(Assign); }
          else expr(Mul);
          typecheck(Add, t, ty);
          if (ty == FLOAT) {
-            if (*n == NumF && *b == NumF) { 
-               c1 = &n[1]; c2 = &b[1]; c2->f += c1->f; n += 2;
+            switch(elideZero(a, b, t, NumF)) {
+               case 0: *--n = (int) b; *--n = AddF; break;
+               case 1: c1 = &n[1]; c2 = &b[1]; c2->f += c1->f; n += 2;
             }
-            else if (*n == NumF && n[1] == 0) n += 2;
-            else { *--n = (int) b; *--n = AddF; }
          }
-         else if (*n == Num && n[1] == 0) n += 2;
+         else if ((*n == Num && n[1] == 0) ||
+                  (*a == Num && a[1] == 0)) { // 0 + anything
+            switch(elideZero(a, b, t, Num)) {
+               case 0: goto careful_addition;
+               case 1: b[1] += n[1]; n += 2;
+            }
+         }
          else { // either (1) both int (2) one is ptr, one is int
+careful_addition:
             tc = ((t | ty) & (PTR | PTR2)) ? (t >= PTR) : (t >= ty);
             c = n; if (tc) ty = t; // set result type
             sz = (ty >= PTR2) ? sizeof(int) :
@@ -1482,7 +1547,7 @@ resolve_fnproto:
          }
          break;
       case Sub:
-         next();
+         next(); a = n;
          if (compound) { compound = 0; expr(Assign); }
          else expr(Mul);
          typecheck(Sub, t, ty);
@@ -1491,6 +1556,7 @@ resolve_fnproto:
                c1 = &n[1]; c2 = &b[1]; c2->f -= c1->f; n += 2;
             }
             else if (*n == NumF && n[1] == 0) n += 2;
+            // else if (*b == NumF && b[1] == 0)  do Fneg
             else { *--n = (int) b; *--n = SubF; }
          }
          else if (*n == Num && n[1] == 0) n += 2;
@@ -1550,14 +1616,27 @@ resolve_fnproto:
          if (compound) { compound = 0; expr(Assign); }
          else expr(Inc);
          typecheck(Mul, t, ty);
+         if ((*n == Num && n[1] == 1) ||
+             (*n == NumF && n[1] == 0x3f800000)) { // 1.0
+            n += 2; ty = t; break;
+         }
+         if ((*b == Num && b[1] == 1) ||
+             (*b == NumF && b[1] == 0x3f800000)) { // 1.0
+            swapDrop(b, 2); break;
+         }
+mod1_to_mul0:
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
                c1 = &n[1]; c2 = &b[1] ; c2->f *= c1->f; n += 2;
             }
-            else if (*n == NumF && n[1] == 0x3f800000) n += 2; // 1.0
+            else if (*b == NumF && b[1] == 0 && !hasSideEffect(n, b)) n = b;
+            // else if (*n == NumF && n[1] == 0 && !hasSideEffect(b, ?)) {
+            //    { b[x] = NumF; b[x+1] = 0; n = &b[x]; }
             else { *--n = (int) b; *--n = MulF; }
          }
-         else if (*n == Num && n[1] == 1) n += 2;
+         else if (*b == Num && b[1] == 0 && !hasSideEffect(n, b)) n = b;
+         // else if (*n == Num && n[1] == 0 && !hasSideEffect(b, ?)) {
+         //    { b[x] = Num; b[x+1] = 0; n = &b[x]; }
          else {
             if (*n == Num && *b == Num) { b[1] *= n[1]; n += 2; }
             else {
@@ -1586,19 +1665,20 @@ resolve_fnproto:
          next();
          if (compound) { compound = 0; expr(Assign); }
          else expr(Inc);
+         if ((*n == Num || *n == NumF) && n[1] == 0) fatal("division by zero");
          typecheck(Div, t, ty);
+         if ((*n == Num && n[1] == 1) ||
+                  (*n == NumF && n[1] == 0x3f800000)) {
+            n += 2; ty = t; break;
+         }
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               if (n[1] == 0) fatal("division by zero");
                c1 = &n[1]; c2 = &b[1] ; c2->f /= c1->f; n += 2;
             }
-            else if (*n == NumF && n[1] == 0x3f800000) n += 2; // 1.0
             else { *--n = (int) b; *--n = DivF; }
          }
-         else if (*n == Num && n[1] == 1) n += 2;
          else {
             if (*n == Num && *b == Num) {
-               if (n[1] == 0) fatal("division by zero");
                b[1] /= n[1]; n += 2;
             }
             else {
@@ -1617,7 +1697,12 @@ resolve_fnproto:
          next();
          if (compound) { compound = 0; expr(Assign); }
          else expr(Inc);
+         if ((*n == Num || *n == NumF) && n[1] == 0) fatal("division by zero");
          typecheck(Mod, t, ty);
+         if ((*n == Num && n[1] == 1) ||
+                  (*n == NumF && n[1] == 0x3f800000)) {
+            n[1] = 0; goto mod1_to_mul0;
+         }
          if (ty == FLOAT) fatal("use fmodf() for float modulo");
          if (*n == Num && *b == Num) { b[1] %= n[1]; n += 2; }
          else {
@@ -1640,7 +1725,7 @@ resolve_fnproto:
 #ifdef MC_TEXT_SUB
             masgn = mns = 1;
 #endif
-            int otk = tokloc; tokloc = 1; next(); tokloc = otk;
+            otk = tokloc; tokloc = 1; next(); tokloc = otk;
 #ifdef MC_TEXT_SUB
             mns = 0;
 #endif
