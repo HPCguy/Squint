@@ -1,9 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void copy(char *to, char *from, int count)
+void copy(char *dst, char *src, int count)
 {
     int n = (count + 7) >> 3;
+    char *to, *from;
+    to = dst; from = src;
+
     switch (count & 7) {
     case 0:
           do {
@@ -19,9 +22,11 @@ void copy(char *to, char *from, int count)
     }
 }
 
-void fastcopy(char *to, char *from, int count)
+void fastcopy(char *dst, char *src, int count)
 {
     int n = (count + 7) >> 3;
+    char *to, *from;
+    to = dst; from = src;
 
     switch (count & 7) {
     case 7: goto r7;

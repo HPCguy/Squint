@@ -1,9 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int mcmp(char *a, char *b, int n)
+int mcmp(char *aa, char *bb, int nn)
 {
-    int ret;
+    int ret, n;
+    char *a, *b;
+    n = nn; a = aa; b = bb;
     while (n--) {
         ret = *a++ - *b++;
         if (ret)
@@ -12,8 +14,12 @@ int mcmp(char *a, char *b, int n)
     return 0;
 }
 
-void mcpy(char *a, char *b, int n)
+void mcpy(char *aa, char *bb, int nn)
 {
+    int n;
+    char *a, *b;
+
+    n = nn; a = aa; b = bb;
     while (n--)
         *a++ = *b++;
 }

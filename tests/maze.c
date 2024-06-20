@@ -14,12 +14,14 @@ int maze_rand()
     return ((maze_rand_v = maze_rand_v * 214013 + 2531011) >> 16) & 0x7fff;
 }
 
-int maze_atoi(char *str, int radix)
+int maze_atoi(char *s, int radix)
 {
     int v, sign;
+    char *str;
 
     v = 0;
     sign = 1;
+    str = s;
     if (*str == '-') {
         sign = -1;
         ++str;
@@ -56,13 +58,15 @@ void show_maze(char *maze, int width, int height)
 }
 
 /*  Carve the maze starting at x, y. */
-void carve_maze(char *maze, int width, int height, int x, int y)
+void carve_maze(char *maze, int width, int height, int xx, int yy)
 {
     int x1, y1;
     int x2, y2;
     int dx, dy;
     int dir, count;
+    int x, y;
 
+    x = xx; y = yy;
     dir = maze_rand() % 4;
     count = 0;
     while (count < 4) {
@@ -180,19 +184,19 @@ void solve_maze(char *maze, int width, int height)
 
 enum { A_RANDV, A_WIDTH, A_HEIGHT, A_SOLVE };
 
-int main(int argc, char **argv)
+int main(int argcc, char **argvv)
 {
-    int width, height, solve, mode, v;
-    char *maze, *invocation;
+    int width, height, solve, mode, v, argc;
+    char *maze, *invocation, **argv;
 
     maze_rand_v = 6;  // chosen by fair dice roll, guaranteed to be random
     width = 10 * 2 + 3;
     height = 10 * 2 + 3;
     solve = 0;
 
-    invocation = *argv;
-    --argc;
-    ++argv;
+    invocation = *argvv;
+    argc = argcc - 1;
+    argv = argvv + 1;
     mode = A_RANDV;
     while (argc > 0) {
         if (**argv == '-' && *(*argv + 1) == 'h') {

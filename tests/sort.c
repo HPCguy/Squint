@@ -2,11 +2,12 @@
 #include <stdlib.h>
 
 
-void bubblesort(float *c, int n)
+void bubblesort(float *c, int nn)
 {
-   int i, done;
+   int i, n, done;
    float tmp;
 
+   n = nn;
    do {
       done = 1; --n;
       for (i=0; i<n; ++i) {

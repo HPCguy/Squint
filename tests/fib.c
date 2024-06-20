@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int my_atoi(char *s)
+int my_atoi(char *ss)
 {
+    char *s;
     int res;
     res = 0;
+    s = ss;
     while (*s) {
         if (*s < '0' || '9' < *s)
             return 0;

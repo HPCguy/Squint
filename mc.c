@@ -95,6 +95,7 @@ int ppactive;
 int oline, osize;   // for optimization suggestion
 char *oname;
 int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
+int ma = 1;         // prevent "modify argument" in functions
 
 // max recursive inline levels
 #define INL_LEV 32
@@ -433,8 +434,10 @@ inline void expr(int lev);
  * 1. store data into id and then set the id to current lexcial form
  * 2. set tk to appropriate type
  */
-void eol2semi(char *s) // preprocessor support
+void eol2semi(char *ss) // preprocessor support
 {
+   char *s;
+   s = ss;
    while(*s && *s != '\n') ++s;
    if (*s) *s = ';';
 }
@@ -708,9 +711,10 @@ new_block_def:
    }
 }
 
-int popcount32(int i)
+int popcount32(int ii)
 {
-   i = i - ((i >> 1) & 0x55555555); // add pairs of bits
+   int i;
+   i = ii - ((ii >> 1) & 0x55555555); // add pairs of bits
    i = (i & 0x33333333) + ((i >> 2) & 0x33333333); // quads
    i = (i + (i >> 4)) & 0x0F0F0F0F; // groups of 8
    return (i * 0x01010101) >> 24; // horizontal sum of bytes
@@ -843,17 +847,19 @@ int elideZero(int *aa, int *b, int bt, int op) // n and ty are global
 
 int hasSideEffect(int *b, int *e) // conservative, so not strictly sketchy
 {
-   while (b != e) {
-      if (*b == Inc || *b == Dec || *b == Assign) break;
-      ++b;
+   int *s;
+   s = b;
+   while (s != e) {
+      if (*s == Inc || *s == Dec || *s == Assign) break;
+      ++s;
    }
-   return (b != e);
+   return (s != e);
 }
 
 
 void expr(int lev)
 {
-   int t, tc, tt[2], nf, sz, otk;
+   int t, tc, tt[2], nf, sz;
    int *a, *b, *c;
    int memsub = 0;
    union conv *c1, *c2;
@@ -1299,7 +1305,7 @@ resolve_fnproto:
          n += 2; b = n; *--n = ';'; *--n = t; *--n = Load;
          if (tk < ShlAssign) tk = Or + (tk - OrAssign);
          else tk = Shl + (tk - ShlAssign);
-         otk = tk; tk |= REENTRANT; ty = t; compound = 1; a = n; expr(Assign);
+         tk |= REENTRANT; ty = t; compound = 1; a = n; expr(Assign);
          if (a == n) { // NOP
             // still need to unwind whole operation if lval has no side effects
             n += 3;
@@ -1547,7 +1553,7 @@ careful_addition:
          }
          break;
       case Sub:
-         next(); a = n;
+         next();
          if (compound) { compound = 0; expr(Assign); }
          else expr(Mul);
          typecheck(Sub, t, ty);
@@ -1725,7 +1731,7 @@ mod1_to_mul0:
 #ifdef MC_TEXT_SUB
             masgn = mns = 1;
 #endif
-            otk = tokloc; tokloc = 1; next(); tokloc = otk;
+            int otk = tokloc; tokloc = 1; next(); tokloc = otk;
 #ifdef MC_TEXT_SUB
             mns = 0;
 #endif
@@ -1907,7 +1913,9 @@ void gen(int *n)
    case Loc: *++e = LEA; *++e = n[1]; break;       // get address of variable
    case '{': gen((int *) n[1]); gen(n + 2); break; // parse AST expr or stmt
    case Assign: // assign the value to variables
-      gen((int *) n[2]); *++e = PSH; gen(n + 3); l = n[1] & 0xffff;
+      t = (int *) n[2];
+      if (ma && t[0] == Loc && t[1] > 1) fatal("Can't modify passed argument");
+      gen(t); *++e = PSH; gen(n + 3); l = n[1] & 0xffff;
       // Add SC/SI instruction to save value in register to variable address
       // held on stack.
       if (l > ATOM_TYPE && l < PTR) fatal("struct assign not yet supported");
@@ -1917,6 +1925,7 @@ void gen(int *n)
       break;
    case Inc: // increment or decrement variables
    case Dec:
+      if (ma && n[2] == Loc && n[3] > 1) fatal("Can't modify passed argument");
       gen(n + 2);
       *++e = PSH; *++e = (n[1] == CHAR) ? LC : LI; *++e = PSH;
       *++e = IMM; *++e = (n[1] >= PTR2) ? sizeof(int) :
@@ -2144,38 +2153,45 @@ void gen(int *n)
    }
 }
 
-void loc_array_decl(int ct, int extent[3], int *dims, int *et, int *size)
+int gen_etype(int ext[3], int d)
+{
+   int retVal ;
+   switch(d) { // get permutation information
+   case 1:
+      retVal = (ext[0]-1); break;
+   case 2:
+      retVal = ((ext[0]-1) << 16) + (ext[1]-1);
+      if (ext[0] > 32768 || ext[1] > 65536)
+         fatal("max [32768][65536]");
+      break;
+   case 3:
+      retVal = ((ext[0]-1) << 21) + ((ext[1]-1) << 11) + (ext[2]-1);
+      if (ext[0] > 1024 || ext[1] > 1024 || ext[2] > 2048)
+         fatal("max [1024][1024][2048]");
+      break;
+   }
+   return retVal;
+}
+
+void loc_array_decl(int ct, int ext[3], int *dims, int *et, int *size)
 {
    *dims = 0;
    do {
       next();
       if (*dims == 0 && ct == Par && tk == ']') {
-         extent[*dims] = 1; next();
+         ext[*dims] = 1; next();
       }
       else {
          expr(Cond);
          if (*n != Num) fatal("non-const array size");
          if (n[1] <= 0) fatal("non-positive array dimension");
          if (tk != ']') fatal("missing ]");
-         next(); extent[*dims] = n[1]; *size *= n[1]; n += 2;
+         next(); ext[*dims] = n[1]; *size *= n[1]; n += 2;
       }
       ++*dims;
    } while (tk == Bracket && *dims < 3);
    if (tk == Bracket) fatal("three subscript max on decl");
-   switch(*dims) {
-   case 1:
-      *et = (extent[0]-1); break;
-   case 2:
-      *et = ((extent[0]-1) << 16) + (extent[1]-1);
-      if (extent[0] > 32768 || extent[1] > 65536)
-         fatal("max bounds [32768][65536]");
-      break;
-   case 3:
-      *et = ((extent[0]-1) << 21) + ((extent[1]-1) << 11) + (extent[2]-1);
-      if (extent[0] > 1024 || extent[1] > 1024 || extent[2] > 2048)
-         fatal("max bounds [1024][1024][2048]");
-      break;
-   }
+   *et = gen_etype(ext, *dims);
 }
 
 // statement parsing (syntax analysis, except for declarations)
@@ -3952,12 +3968,13 @@ int elf32(int poolsz, int *main, int elf_fd)
 
 enum { _O_CREAT = 64, _O_WRONLY = 1 };
 
-int main(int argc, char **argv)
+int main(int argcc, char **argvv)
 {
-   int *freed_ast, *ast;
+   int *freed_ast, *ast, argc;
    int elf_fd;
    int fd, i, otk;
    int poolsz = 4 * 1024 * 1024; // arbitrary size
+   char **argv;
 
    labt = lab; // initialize label Ids
 
@@ -4014,7 +4031,7 @@ int main(int argc, char **argv)
    p = "__MC__ "; next();
    id->class = Num; id->val = 1; id->type = INT;
 
-   --argc; ++argv;
+   argc = argcc - 1; argv = argvv + 1;
    while (argc > 0 && **argv == '-') {
       if ((*argv)[1] == 's') {
          src = ((*argv)[2] == 'i') ? 2 : 1; --argc; ++argv;
@@ -4027,6 +4044,9 @@ int main(int argc, char **argv)
       }
       else if ((*argv)[1] == 'O' && (*argv)[2] == 'p') {
          peephole = 1; --argc; ++argv;
+      }
+      else if ((*argv)[1] == 'm' && (*argv)[2] == 'a') {
+         ma = 1 - ma; --argc; ++argv;
       }
       else if ((*argv)[1] == 'o') {
          elf = 1; --argc; ++argv;

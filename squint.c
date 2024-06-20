@@ -4094,7 +4094,7 @@ int squint_opt(int *begin, int *end)
          skip_const_blk = 1;
          apply_peepholes1(funcBegin, retAddr);
 
-         noFloatConst = (fbase == 2);
+         noFloatConst = *(funcBegin - 1) == NOP;
          create_pushpop_map2(tmpbuf, funcBegin, retAddr);
          apply_peepholes4(funcBegin, retAddr);
          apply_peepholes4_2(tmpbuf, funcBegin, retAddr);
