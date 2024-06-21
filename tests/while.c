@@ -1,9 +1,11 @@
 #include <stdio.h>
 
-int fact(int n)
+int fact(int nn)
 {
-    int r;
+    int n, r;
+
     r = 1;
+    n = nn;
     while (n > 0) {
         r = r * n;
         printf("n = %d, r = %d\n", n, r);
@@ -12,9 +14,11 @@ int fact(int n)
     return r;
 }
 
-int filteradd(char *data)
+int filteradd(char *d)
 {
+    char *data;
     int sum = 0;
+    data = d;
     do {
         if (*data == '*')
             break;
