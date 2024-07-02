@@ -2956,7 +2956,7 @@ static struct { int *push, *pop; int lev; } pair[2000];
 
 static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
 {
-   int i, cassign, lev = 0;
+   int i, lev = 0;
    int maxlev = 0;
    int *scanm1, *scanm2, *scanp1;
    int *stack[10];
@@ -2999,18 +2999,19 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
       scanp1 = active_inst(pair[i].pop,   1);
       if ((*scanp1 & 0xffbfffff) == 0xe5810000 || // str[b] r0, [r1]
           *scanp1 == 0xed810a00) {                // vstr s0, [r1]
-         cassign = (*(pair[i].push+1) == 0xed900a00);  // vldr s0, [r0]
-         int *pushp1 = &instInfo[(pair[i].push-funcBegin)+1];
+         int *pup1 = active_inst(pair[i].push, 1);
+         int cassign = (*pup1 == 0xed900a00);  // vldr s0, [r0]
+         int *pushp1 = &instInfo[pup1-funcBegin];
          int *r0d = cassign ? pushp1 : find_def(instInfo, pushp1, 0, S_FWD);
          int *r0u = find_use(instInfo, pushp1, 0, S_FWD);
          if (r0u == 0) r0u = r0d+1;
-         if (r0d <= r0u &&
+         if ((&funcBegin[r0d-instInfo] > scanp1 || r0d <= r0u) &&
              ((*scanm1 & 0xffffff00) == 0xe28b0000 ||  // add r0, fp, #X
               (*scanm1 & 0xffffff00) == 0xe24b0000 )) { // sub r0, fp, #X
             int off = *scanm1 & 0xff;
             int addOffsetBit =
                ((*scanm1 & 0xffffff00) == 0xe28b0000) ? (1<<23) : 0;
-            if (r0u == r0d) {
+            if (&funcBegin[r0d-instInfo] < scanp1 && r0u == r0d) {
                if (funcBegin[r0d-instInfo] == 0xe5900000 || //  ldr r0, [r0]
                    funcBegin[r0d-instInfo] == 0xed900a00) { // vldr s0, [r0]
                   funcBegin[r0d-instInfo] =
@@ -3118,7 +3119,8 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
       for (i = 0; i < np; ++i) {
          if (pair[i].lev == lev) {
             int *pop  = &instInfo[pair[i].pop-funcBegin];
-            int *pushp1 = &instInfo[(pair[i].push-funcBegin)+1];
+            int *pup1 = active_inst(pair[i].push, 1);
+            int *pushp1 = &instInfo[pup1-funcBegin];
             int *r1push1u = find_use(instInfo, pushp1, 1, S_FWD);
             int *r1push1d = find_def(instInfo, pushp1, 1, S_FWD);
             for (scan = pair[i].push + 1; scan < pair[i].pop; ++scan) {
