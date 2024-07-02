@@ -856,6 +856,25 @@ int hasSideEffect(int *b, int *e) // conservative, so not strictly sketchy
    return (s != e);
 }
 
+int idMatch(char *id, char *expr)
+{
+   int retVal = 0;
+   int bracketLev = 0;
+   char *a = id, *b = expr;
+
+   while (*a && *a++ == *b++);
+   while (*b) {
+      if (*b != ' ') {
+         if (bracketLev == 0 && *b != '[') break;
+         if (*b == '[') ++bracketLev;
+         else if (*b == ']') --bracketLev;
+      }
+      ++b;
+   }
+   if (*b && *b == ')' && b[1] == 0) retVal = !0;
+   return retVal;
+}
+
 
 void expr(int lev)
 {
@@ -1017,9 +1036,8 @@ resolve_fnproto:
                if (*ts[i] == '(') { // simple alias (e.g. &x, x, x[n])
                   if (*tsn == ts[i][1] ||
                       (ts[i][1] == '&' && *tsn == ts[i][2])) {
-                     int ilen = strlen(tsn);
                      int off = (*tsn == ts[i][1]) ? 1 : 2;
-                     if (!strncmp(tsn, ts[i]+off, ilen)) {
+                     if (idMatch(tsn, ts[i]+off)) {
                         if (off == 1) continue;
                         else recursive = 1; // off == 2
                      }
@@ -2612,7 +2630,12 @@ unwind_func:
                          (((a == n+4) && *n == Load && n[2] == Loc) ||
                          ((a == n+10) && *n == Load &&
                           n[2] == Add && n[4] == Num &&
-                          n[6] == Load && n[8] == Loc))) {
+                          n[6] == Load && n[8] == Loc) ||
+                         ((a == n+8) && *n == Load &&
+                          n[2] == Add && n[4] == Num &&
+                          n[6] == Loc) ||
+                         ((a == n+6) && *n == Load &&
+                          n[2] == Load && n[4] == Loc))) {
                         --ir_count; ld -= sz / sizeof(int);
                         dd->val = 0; // recursion flags
                         dd->tsub = idp;
