@@ -26,10 +26,6 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 
-// Replaces local variables that are simple array aliases with
-// text substitution. Better to disable this when not using Squint opt.
-#define MC_TEXT_SUB 1
-
 #define SMALL_TBL_SZ 256
 
 #ifdef __MC__
@@ -175,6 +171,7 @@ enum {
    Sizeof, Return, Goto,
    Break, Continue, If, DoWhile, While, For,
    Switch, Case, Default, Else, Inln, Label,
+   Alias, // operator :=, text substitution for simple memory address
    Assign, // operator =, keep Assign as highest priority operator
    OrAssign, XorAssign, AndAssign, ShlAssign, ShrAssign, // |=, ^=, &=, <<=, >>=
    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, // +=, -=, *=, /=, %=
@@ -700,6 +697,7 @@ new_block_def:
                 else tk = Mod; return;
       case '?': tk = Cond; return;
       case '.': tk = Dot; return;
+      case ':': if (*p == '=') { ++p; tk = Alias; } return;
       default: return;
       }
    }
@@ -1746,13 +1744,9 @@ mod1_to_mul0:
       case Arrow:
          if (t <= PTR+ATOM_TYPE || t >= PTR2) fatal("structure expected");
          if (tokloc) {
-#ifdef MC_TEXT_SUB
-            masgn = mns = 1;
-#endif
+            masgn = mns = 1; // these are for Alias state machine
             int otk = tokloc; tokloc = 1; next(); tokloc = otk;
-#ifdef MC_TEXT_SUB
-            mns = 0;
-#endif
+            mns = 0; // for Alias state machine
          }
          else next();
          if (tk != Id) fatal("structure member expected");
@@ -2611,13 +2605,12 @@ unwind_func:
                ir_var[ir_count].loc = dd->val = ld++;
                ir_var[ir_count++].name = dd->name;
             }
-            if (tk == Assign) {
+            if (tk == Assign || tk == Alias) {
                if (ctx == Par) fatal("default arguments not supported");
                if (tokloc) --tokloc;
-#ifdef MC_TEXT_SUB
-               psave = p;
-               masgn = 0;
-#endif
+               atk = tk;
+               psave = p; // for alias
+               masgn = 0; // for alias
                next();
                if (tk == '{' && (dd->type & 3)) init_array(dd, nd, j);
                else {
@@ -2625,33 +2618,32 @@ unwind_func:
                      if (b == 0) *--n = ';';
                      b = n; *--n = loc - dd->val; *--n = Loc;
                      a = n; i = ty; expr(Assign); typecheck(Assign, i, ty);
-#ifdef MC_TEXT_SUB
-                     if (i <= ATOM_TYPE && !masgn &&
-                         (((a == n+4) && *n == Load && n[2] == Loc) ||
-                         ((a == n+10) && *n == Load &&
-                          n[2] == Add && n[4] == Num &&
-                          n[6] == Load && n[8] == Loc) ||
-                         ((a == n+8) && *n == Load &&
-                          n[2] == Add && n[4] == Num &&
-                          n[6] == Loc) ||
-                         ((a == n+6) && *n == Load &&
-                          n[2] == Load && n[4] == Loc))) {
-                        --ir_count; ld -= sz / sizeof(int);
-                        dd->val = 0; // recursion flags
-                        dd->tsub = idp;
-                        memcpy(idp, psave, p-psave-1); idp[p-psave-1] = 0;
-                        idp = (char *) (((int) idp +
-                                         (p - psave) + sizeof(int)) &
-                                        (-sizeof(int)));
-                        n = b + 1;
+                     if (atk == Alias) {
+                        if (i <= ATOM_TYPE && !masgn &&
+                            (((a == n+4) && *n == Load && n[2] == Loc) ||
+                            ((a == n+10) && *n == Load &&
+                             n[2] == Add && n[4] == Num &&
+                             n[6] == Load && n[8] == Loc) ||
+                            ((a == n+8) && *n == Load &&
+                             n[2] == Add && n[4] == Num &&
+                             n[6] == Loc) ||
+                            ((a == n+6) && *n == Load &&
+                             n[2] == Load && n[4] == Loc))) {
+                           --ir_count; ld -= sz / sizeof(int);
+                           dd->val = 0; // recursion flags
+                           dd->tsub = idp;
+                           memcpy(idp, psave, p-psave-1); idp[p-psave-1] = 0;
+                           idp = (char *) (((int) idp +
+                                            (p - psave) + sizeof(int)) &
+                                           (-sizeof(int)));
+                           n = b + 1;
+                        }
+                        else atk = Assign;
                      }
-                     else {
-#endif
+                     if (atk == Assign) {
                         *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign;
                         ty = i; *--n = (int) b; *--n = '{';
-#ifdef MC_TEXT_SUB
                      }
-#endif
                   }
                   else { // ctx == Glo
                      i = ty; expr(Cond); typecheck(Assign, i, ty);
