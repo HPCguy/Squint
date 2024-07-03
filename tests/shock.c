@@ -108,8 +108,8 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
    for (i = 0; i < numFace; ++i)
    {
       /* each face has an upwind and downwind element. */
-      int upWind   = i;     /* upwind element */
-      int downWind = i + 1; /* downwind element */
+      int upWind   := i;     /* upwind element */
+      int downWind := i + 1; /* downwind element */
 
       /* calculate face centered quantities */
       float massf =     0.5 * (mass[upWind]     + mass[downWind]);
@@ -182,8 +182,8 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
    for (i = 1; i < numElem; ++i)
    {
       /* each element inside the tube has an upwind and downwind face */
-      int upWind = i-1;     /* upwind face */
-      int downWind = i;   /* downwind face */
+      int upWind := i-1;     /* upwind face */
+      int downWind := i;   /* downwind face */
 
       mass[i]     -= gammaInverse*(f0[downWind] - f0[upWind])*dtdx;
       momentum[i] -= gammaInverse*(f1[downWind] - f1[upWind])*dtdx;
