@@ -24,10 +24,6 @@
 #include <stdio.h>
 #include <math.h>
 
-#ifndef __MC__
-#define := =
-#endif
-
 float gammaa       = 1.4142135;
 float gammaInverse = 0.70710678;
 
@@ -113,8 +109,14 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
    for (i = 0; i < numFace; ++i)
    {
       /* each face has an upwind and downwind element. */
+#ifdef __MC__
       int upWind   := i;     /* upwind element */
       int downWind := i + 1; /* downwind element */
+#endif
+#ifndef __MC__
+      int upWind   = i;     /* upwind element */
+      int downWind = i + 1; /* downwind element */
+#endif
 
       /* calculate face centered quantities */
       float massf =     0.5 * (mass[upWind]     + mass[downWind]);
@@ -187,8 +189,14 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
    for (i = 1; i < numElem; ++i) 
    {
       /* each element inside the tube has an upwind and downwind face */
+#ifdef __MC__
       int upWind := i-1;     /* upwind face */
       int downWind := i;   /* downwind face */
+#endif
+#ifndef __MC__
+      int upWind = i-1;     /* upwind face */
+      int downWind = i;   /* downwind face */
+#endif
 
       mass[i]     -= gammaInverse*(fl[downWind].f0 - fl[upWind].f0)*dtdx;
       momentum[i] -= gammaInverse*(fl[downWind].f1 - fl[upWind].f1)*dtdx;
