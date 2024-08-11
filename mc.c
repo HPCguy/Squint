@@ -873,6 +873,11 @@ int idMatch(char *id, char *expr)
    return retVal;
 }
 
+void modArgCheck(int *node)
+{
+   if (ma && node[0] == Loc && node[1] > 1)
+      fatal("Can't modify passed argument (compile -ma to allow)");
+}
 
 void expr(int lev)
 {
@@ -1204,11 +1209,11 @@ resolve_fnproto:
          next();
          expr(Inc); // cast has precedence as Inc(++)
          if (t != ty && (t == FLOAT || ty == FLOAT)) {
-            if (t == FLOAT && ty < FLOAT) { // float : int
+            if (t == FLOAT && ty < FLOAT) { // int to float
                if (*n == Num) { *n = NumF; c1 = &n[1]; c1->f = (float) c1->i; }
                else { b = n; *--n = ITOF; *--n = (int) b; *--n = CastF; }
             }
-            else if (t < FLOAT && ty == FLOAT) { // int : float
+            else if (t < FLOAT && ty == FLOAT) { // float to int
                if (*n == NumF) { *n = Num; c1 = &n[1]; c1->i = (int) c1->f; }
                else { b = n; *--n = FTOI; *--n = (int) b; *--n = CastF; }
             }
@@ -1274,7 +1279,7 @@ resolve_fnproto:
       t = tk; next(); expr(Inc);
       if (ty == FLOAT) fatal("no ++/-- on float");
       if (*n != Load) fatal("bad lvalue in pre-increment");
-      *n = t;
+      *n = t; modArgCheck(n+2);
       break;
    case Inln:
       next();
@@ -1303,7 +1308,8 @@ resolve_fnproto:
          // and pushes the address
          if (*n != Load) fatal("bad lvalue in assignment");
          // get the value of the right part `expr` as the result of `a=expr`
-         n += 2; b = n; next(); expr(Assign); typecheck(Assign, t, ty);
+         n += 2; b = n; modArgCheck(b);
+         next(); expr(Assign); typecheck(Assign, t, ty);
          *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
       case  OrAssign: // right associated
@@ -1322,13 +1328,10 @@ resolve_fnproto:
          if (tk < ShlAssign) tk = Or + (tk - OrAssign);
          else tk = Shl + (tk - ShlAssign);
          tk |= REENTRANT; ty = t; compound = 1; a = n; expr(Assign);
-         if (a == n) { // NOP
-            // still need to unwind whole operation if lval has no side effects
-            n += 3;
-         }
-         else {
+         if (a != n) {
+            modArgCheck(b);
             *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
-         }
+         } // else can't optimize away assign-expr, unlike an assign-stmt
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
          next(); expr(Assign); tc = ty;
@@ -1678,8 +1681,8 @@ mod1_to_mul0:
          sz = (ty >= PTR2) ? sizeof(int) :
               ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
          if (*n != Load) fatal("bad lvalue in post-increment");
-         *n = tk;
-         *--n = sz; *--n = Num;
+         modArgCheck(n + 2);
+         *n = tk; *--n = sz; *--n = Num;
          *--n = (int) b; *--n = (tk == Inc) ? Sub : Add;
          next();
          break;
@@ -1925,9 +1928,7 @@ void gen(int *n)
    case Loc: *++e = LEA; *++e = n[1]; break;       // get address of variable
    case '{': gen((int *) n[1]); gen(n + 2); break; // parse AST expr or stmt
    case Assign: // assign the value to variables
-      t = (int *) n[2];
-      if (ma && t[0] == Loc && t[1] > 1) fatal("Can't modify passed argument");
-      gen(t); *++e = PSH; gen(n + 3); l = n[1] & 0xffff;
+      gen((int *) n[2]); *++e = PSH; gen(n + 3); l = n[1] & 0xffff;
       // Add SC/SI instruction to save value in register to variable address
       // held on stack.
       if (l > ATOM_TYPE && l < PTR) fatal("struct assign not yet supported");
@@ -1937,7 +1938,6 @@ void gen(int *n)
       break;
    case Inc: // increment or decrement variables
    case Dec:
-      if (ma && n[2] == Loc && n[3] > 1) fatal("Can't modify passed argument");
       gen(n + 2);
       *++e = PSH; *++e = (n[1] == CHAR) ? LC : LI; *++e = PSH;
       *++e = IMM; *++e = (n[1] >= PTR2) ? sizeof(int) :
@@ -2069,17 +2069,17 @@ void gen(int *n)
    case Sqrt: b = (int *) n[1]; gen(b + 1); *++e = n[2]; break;
    case While:
    case DoWhile:
-      if (i == While) { *++e = JMP; a = ++e; }
+      if (i == While && n[3] != 2) { *++e = JMP; a = ++e; }
       d = (e + 1);
       b = brks; brks = 0;
       c = cnts; cnts = 0;
       gen((int *) n[1]); // loop body
-      if (i == While) *a = (int) (e + 1);
+      if (i == While && n[3] != 2) *a = (int) (e + 1);
       while (cnts) { t = (int *) *cnts; *cnts = (int) (e + 1); cnts = t; }
       cnts = c;
-      if (n[2]) {
-         gen((int *) n[2]); // condition
-         *++e = BNZ; *++e = (int) d;
+      if (i != DoWhile || n[3] != 1) {
+         if (n[3] == 0) gen((int *) n[2]); // condition
+         *++e = (n[3] == 0) ? BNZ : JMP ; *++e = (int) d;
       }
       while (brks) { t = (int *) *brks; *brks = (int) (e + 1); brks = t; }
       brks = b;
@@ -2694,7 +2694,7 @@ next_type:
       next();
       return;
    case If:
-      dodeadcode = 1; psave = p; i = line; dd = labt;
+      dodeadcode = swtc ? 0 : 1; psave = p; i = line; dd = labt;
 keepdeadcode_if:
       next();
       if (tk != '(') fatal("open parenthesis expected");
@@ -2736,20 +2736,19 @@ keepdeadcode_if:
       }
       return;
    case While:
-      dodeadcode = 1; psave = p; i = line; dd = labt;
+      dodeadcode = swtc ? 0 : 1; psave = p; i = line; dd = labt;
 keepdeadcode_while:
       next();
       if (tk != '(') fatal("open parenthesis expected");
       next();
       c = n; expr(Assign); b = n; // condition
       if (tk != ')') fatal("close parenthesis expected");
-      next();
+      next(); ++brkc; ++cntc;
       // dead code elimination for const while-condition
       if (dodeadcode && (c-b == 2) &&
-          (*b == Num || *b == NumF) && (b[1] == 0)) {
+          (*b == Num || *b == NumF) && b[1] == 0) {
          struct ident_s *labcheck = labt;
          n += 2;
-         ++brkc; ++cntc;
          c = n; ++deadzone; stmt(ctx); --deadzone;
          --brkc; --cntc;
          if (labt != labcheck) {
@@ -2759,9 +2758,12 @@ keepdeadcode_while:
          n = c; // discard if no labels created
       }
       else {
-         ++brkc; ++cntc;
          stmt(ctx); a = n; // parse body of "while"
          --brkc; --cntc;
+         if (c-b == 2 && (*b == Num || *b == NumF)) {
+            *--n = (b[1] == 0) ? 1 : 2;
+         }
+         else *--n = 0;
          *--n = (int) b; *--n = (int) a; *--n = While;
       }
       return;
@@ -2778,14 +2780,11 @@ keepdeadcode_while:
       c = n; expr(Assign); b = n;
       if (tk != ')') fatal("close parenthesis expected");
       next();
-      // loop elimination for const dowhile-condition
-      if ((c-b == 2) && (*b == Num || *b == NumF) && (b[1] == 0)) {
-         n += 3; *--n = 0;
+      if (c-b == 2 && (*b == Num || *b == NumF)) {
+         *--n = (b[1] == 0) ? 1 : 2;
       }
-      else {
-         *--n = (int) b;
-      }
-      *--n = (int) a; *--n = DoWhile;
+      else *--n = 0;
+      *--n = (int) b; *--n = (int) a; *--n = DoWhile;
       return;
    case For:
       next();
