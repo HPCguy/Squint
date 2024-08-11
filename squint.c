@@ -2603,7 +2603,8 @@ static int *rethread_branch(int *branchInst)
 
       int *dstInst = branchInst + 2 + tmp;
       retVal = rethread_branch(dstInst);
-      *branchInst += (retVal - dstInst);
+      tmp += (retVal - dstInst);
+      *branchInst = 0xea000000 | (tmp & 0x00ffffff);
    }
    else {
       retVal = branchInst;
