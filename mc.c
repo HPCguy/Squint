@@ -55,6 +55,9 @@ int tnew;           // next available type
 int tk;             // current token
 int sbegin;         // statement begin state.
 int deadzone;       // don't do inlining during dead code elimination
+int attq;           // attribute query such as dereference or sizeof
+int parg;           // attq -- assume passing deref var to func means it is set
+int inDecl;         // declaration statement context
 int tokloc;         // 0 = global scope, 1 = function scope
                     // 2 = function scope, declaration in progress
 union conv {
@@ -114,7 +117,10 @@ struct ident_s {
    int val;
    int etype;    // extended type info for tensors
    int ftype[2]; // extended type info for funcs
-   int flags;    // 1 = fwd decl func
+   int flags;    // funcID: 1 = fwd decl func, 2 = func not dead code
+                 // varID: 4 = decl initalizer, 8 = assign
+                 //        16 = alias initializer, 32 = var was read
+                 // retlabel IDs: holds depth of recursive inlining
    int *chain;   // used for forward declaration IR inst ptr
 } *id,           // currently parsed identifier
   *sym,          // symbol table (simple list of identifiers)
@@ -448,7 +454,7 @@ void next()
     * cannot be recognized by the lexical analyzer are considered blank
     * characters, such as '@'.
     */
-text_sub: t = t; // dummy assignment for goto bug workaround
+text_sub:
    while ((tk = *p)) {
       ++p;
       if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') ||
@@ -879,6 +885,12 @@ void modArgCheck(int *node)
       fatal("Can't modify passed argument (compile -ma to allow)");
 }
 
+void flagWrite(int *flags, int *high, int *low)
+{
+   *flags |= ((*flags & 4) ? 8 : 4);
+   if (high - low == 2 && *low != Num && *low != NumF) *flags |= 64; // not lit
+}
+
 void expr(int lev)
 {
    int t, tc, tt[2], nf, sz;
@@ -947,6 +959,7 @@ resolve_fnproto:
              !(inln_func && numpts < INL_LEV)) {
             *--n = Phf; c = n;
          }
+         parg = 1;
          while (tk != ')') {
             if (inln_func && !deadzone) {
                a = n; expr(Assign);
@@ -976,6 +989,7 @@ resolve_fnproto:
             } else if (tk != ')') fatal("missing comma in function call");
          }
          if (t > MAX_FARG) fatal("maximum of 52 function parameters");
+         parg = 0;
          tt[0] += (nf << 6) + t;
          if (d->ftype[0] && (d->ftype[0] != tt[0] || d->ftype[1] != tt[1]) )
             fatal("argument type mismatch");
@@ -1118,15 +1132,23 @@ resolve_fnproto:
       }
       // enumeration, only enums have ->class == Num
       else if (d->class == Num || d->class == NumF) {
-         *--n = d->val; *--n = d->class; ty = d->type;
+         *--n = d->val; *--n = d->class; ty = d->type; d->flags |= 32; // read
       }
       else {
          // Variable get offset
          switch (d->class) {
-         case Loc: case Par: *--n = loc - d->val; *--n = Loc; break;
-         case Glo: *--n = d->val; *--n = Num; break;
+         case Par: d->flags |= 4; // all args are inited -- fall through to Loc
+         case Loc: *--n = loc - d->val; *--n = Loc;
+            if (attq == 0 && (d->flags & 0x1c) == 0) {
+               if ((tk > Assign && tk < Dot) || // arr/struct contents ignrd
+                   tk == ';' || tk == ')' || tk == ',' || tk == ']')
+                  fatal("var use before assignment");
+            }
+            break;
+         case Glo: *--n = d->val; *--n = Num; d->flags |= 4; break; // 0 dflt
          default: fatal("undefined variable");
          }
+         if (tk < Alias || tk > ModAssign) d->flags |= 32; // var is read
          if ((d->type & 3) && d->class != Par) { // push reference address
             ty = d->type & ~3;
          }
@@ -1152,6 +1174,7 @@ resolve_fnproto:
    case Sizeof:
       next();
       if (tk != '(') fatal("open parenthesis expected in sizeof");
+      attq = 1;
       next(); d = 0; t = 1;
       if (tk == Id || tk == TypeId) {
          d = id; ty = d->type;
@@ -1176,6 +1199,7 @@ resolve_fnproto:
          while (tk == Mul) { next(); ty += PTR; }
       }
       if (tk != ')') fatal("close parenthesis expected in sizeof");
+      attq = 0;
       next();
       *--n = (ty & 3) ?
              (((ty - PTR) >= PTR) ? sizeof(int) : tsize[(ty - PTR) >> 2]) :
@@ -1240,8 +1264,10 @@ resolve_fnproto:
       /* when "token" is a variable, it takes the address first and
        * then LI/LC, so `--e` becomes the address of "a".
        */
-      next(); expr(Inc);
+      attq = 1; next(); if (tk == Id && parg) id->flags |= (8 | 64);
+      expr(Inc);
       if (*n != Load) fatal("bad address-of");
+      attq = 0;
       n += 2;
       ty += PTR;
       break;
@@ -1280,6 +1306,9 @@ resolve_fnproto:
       if (ty == FLOAT) fatal("no ++/-- on float");
       if (*n != Load) fatal("bad lvalue in pre-increment");
       *n = t; modArgCheck(n+2);
+      if (n[2] == Loc && (id->flags & 0x0c) == 0)
+         fatal("modifying uninitialized variable");
+      id->flags |= (8 | 64); // written, not literal constant
       break;
    case Inln:
       next();
@@ -1307,9 +1336,10 @@ resolve_fnproto:
          // the left part is processed by the variable part of `tk=ID`
          // and pushes the address
          if (*n != Load) fatal("bad lvalue in assignment");
-         // get the value of the right part `expr` as the result of `a=expr`
          n += 2; b = n; modArgCheck(b);
+         a = (*b == Loc || *b == Num) ? &id->flags : (int *) 0; // write
          next(); expr(Assign); typecheck(Assign, t, ty);
+         if (a) flagWrite(a, b, n);
          *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
          break;
       case  OrAssign: // right associated
@@ -1324,12 +1354,13 @@ resolve_fnproto:
       case ModAssign:
          if (t & 3) fatal("Cannot assign to array type lvalue");
          if (*n != Load) fatal("bad lvalue in assignment");
-         n += 2; b = n; *--n = ';'; *--n = t; *--n = Load;
+         d = id; n += 2; b = n; *--n = ';'; *--n = t; *--n = Load;
          if (tk < ShlAssign) tk = Or + (tk - OrAssign);
          else tk = Shl + (tk - ShlAssign);
          tk |= REENTRANT; ty = t; compound = 1; a = n; expr(Assign);
          if (a != n) {
-            modArgCheck(b);
+            modArgCheck(b); // maybe sum of lit const should not be lit const?
+            if (*b == Loc || *b == Num) flagWrite(&d->flags,a,n); // var write
             *--n = (int) b; *--n = (ty << 16) | t; *--n = Assign; ty = t;
          } // else can't optimize away assign-expr, unlike an assign-stmt
          break;
@@ -1681,7 +1712,7 @@ mod1_to_mul0:
          sz = (ty >= PTR2) ? sizeof(int) :
               ((ty >= PTR) ? tsize[(ty - PTR) >> 2] : 1);
          if (*n != Load) fatal("bad lvalue in post-increment");
-         modArgCheck(n + 2);
+         modArgCheck(n + 2); id->flags |= (8 | 64); // written, not lit cnst
          *n = tk; *--n = sz; *--n = Num;
          *--n = (int) b; *--n = (tk == Inc) ? Sub : Add;
          next();
@@ -1898,6 +1929,7 @@ void init_array(struct ident_s *tn, int extent[], int dim)
       }
       if (tk == ',') next();
    } while(1);
+   tn->flags |= 4;
 }
 
 int isPrintf(char *s)
@@ -2232,7 +2264,7 @@ process_inln:
 inln_func_expr:
       sbegin = 1; expr(Assign);
       if (!sbegin) {
-         while (tk == ',' && ctx == Loc) {
+         while (tk == ',' && ctx == Loc && !inDecl) {
             int *t;
             next(); t = n; expr(Assign);
             if (t != n) { *--n = (int) t; *--n = '{'; }
@@ -2277,7 +2309,7 @@ inln_func_expr:
                if (*n != Num) fatal("bad enum initializer");
                i = n[1]; n += 2; // Set enum value
             }
-            dd->class = Num; dd->type = INT; dd->val = i++;
+            dd->class = Num; dd->type = INT; dd->val = i++; dd->flags |= 4;
             if (tk == ',') { if (tokloc) ++tokloc; next(); }
          }
          next(); // Skip "}"
@@ -2383,7 +2415,7 @@ do_typedef:
        * "enum" finishes by "tk == ';'", so the code below will be skipped.
        * While current token is not statement end or block end.
        */
-      b = 0;
+      b = 0; ++inDecl;
       while (tk != ';' && tk != '}' && tk != ',' && tk != ')') {
          ty = bt;
          // if the beginning of * is a pointer type, then type plus `PTR`
@@ -2461,7 +2493,7 @@ do_typedef:
                dd->chain = 0;
             }
             loc = ++ld;
-            next();
+            --inDecl; next();
             oline = -1; osize = -1; oname = 0; // optimization hint
             // Not declaration and must not be function, analyze inner block.
             // e represents the address which will store pc
@@ -2471,6 +2503,7 @@ do_typedef:
                int *t = n; stmt(Loc);
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
+            ++inDecl;
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
             if (*p == '\n' || *p == ' ') {
                if (lp < p && !numpts) {
@@ -2569,6 +2602,7 @@ unwind_func:
                   fatal("can't stack typedef subscripts...yet");
                if (tokloc) --tokloc;
                i = ty; loc_array_decl(ctx, nd, &j, &dd->etype, &sz);
+               dd->flags |= 4; // mark loc array inited as approximation
                ty = (i + PTR) | j; dd->type = ty;
                if (tokloc) ++tokloc;
             }
@@ -2600,6 +2634,7 @@ unwind_func:
                }
             }
             else if (ctx == Par) {
+               dd->flags |= 4; // mark func arguments as initialized
                if (ty > ATOM_TYPE && ty < PTR) // local struct decl
                   fatal("struct parameters must be pointers");
                ir_var[ir_count].loc = dd->val = ld++;
@@ -2637,17 +2672,19 @@ unwind_func:
                                             (p - psave) + sizeof(int)) &
                                            (-sizeof(int)));
                            n = b + 1;
+                           dd->flags |= 16; // alias declaration
                         }
                         else atk = Assign;
                      }
                      if (atk == Assign) {
+                        flagWrite(&dd->flags, a, n);  // var write
                         *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign;
                         ty = i; *--n = (int) b; *--n = '{';
                      }
                   }
                   else { // ctx == Glo
-                     i = ty; expr(Cond); typecheck(Assign, i, ty);
-                     if (*n != Num && *n != NumF)
+                     a = n; i = ty; expr(Cond); typecheck(Assign, i, ty);
+                     if (a - n != 2 || (*n != Num && *n != NumF))
                         fatal("global assignment must eval to lit expr");
                      if (ty == CHAR + PTR) {
                         if ((dd->type & 3) == 0)
@@ -2678,7 +2715,7 @@ unwind_func:
 next_type:
          if (ctx != Par && tk == ',') next();
       }
-      if (tokloc == 2) tokloc = 1;
+      --inDecl; if (tokloc == 2) tokloc = 1;
       return;
    // stmt -> '{' stmt '}'
    case '{':

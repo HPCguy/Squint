@@ -12,11 +12,12 @@ int hull_area(int *x, int *y)
     return ((area < 0) ? -area : area) / 2;
 }
 
+int lx = 1 << 31, ly = 1 << 31;
+
 void cubic_bezier(int *px, int *py, int threshold)
 {
     if (hull_area(px, py) < threshold) {
-        int i, lx, ly;
-        for (i = 0; i < 4; ++i) {
+        for (int i = 0; i < 4; ++i) {
             if (lx != px[i] || ly != py[i]) {
                 lx = px[i];
                 ly = py[i];
