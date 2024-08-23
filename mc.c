@@ -42,6 +42,7 @@ char *freedata, *data, *_data;   // data/bss pointer
 int *e, *le, *text; // current position in emitted IR code
 int *lastLEV;       // needed to close out functions
 char *idn, *idp;    // decouples ids from program source code
+char *idl, *idln;   // storage for func scope label names
 int *cas;           // case statement patch-up pointer
 int *def;           // default statement patch-up pointer
 int *brks;          // break statement patch-up pointer
@@ -88,7 +89,7 @@ int *n;             // current position in emitted abstract syntax tree
                     // emitted and pushed on the stack in the proper
                     // right-to-left order.
 int ld, maxld;      // local variable depth
-int lds[32], ldn;   // used to track scope level for duplicate var defs
+int lds[32], ldn;   // used to track scope level for duplicate local var defs
 int pplev, pplevt;  // preprocessor conditional level
 int ppactive;
 int oline, osize;   // for optimization suggestion
@@ -114,7 +115,7 @@ struct ident_s {
    char *tsub;   // != 0 substitutes var usage with tsub text, or func
    int class;    // FUNC, GLO (global var), LOC (local var), Syscall
    int type;     // data type such as char and int
-   int val;
+   int val;      // usually, contains stack or memory address of var
    int etype;    // extended type info for tensors
    int ftype[2]; // extended type info for funcs
    int flags;    // funcID: 1 = fwd decl func, 2 = func not dead code
@@ -128,7 +129,7 @@ struct ident_s {
   *symgt,        // tail for global symbols
   *syms,         // struct/union member parsing
   *symlh,        // head for local symbols
-  *symlt,        // tail for loacal symbols
+  *symlt,        // tail for local symbols
   *labt,         // tail ptr for label Ids
   *retlabel[INL_LEV], // label for end of inline function
   lab[MAX_LABEL];
@@ -521,9 +522,7 @@ text_sub:
                }
             }
          }
-         /* At this point, existing symbol name is not found.
-          * "id" points to the first unused symbol table entry.
-          */
+         // At this point, pre-existing symbol name was not found.
 new_block_def:
          id = tokloc ? --symlh : symgt++;
          id->name = idp;
@@ -911,7 +910,9 @@ do_inln_func:
          if (d < lab || d >= labt) { // move labels to separate area
             if (d != symlh || (labt - lab) == MAX_LABEL)
                fatal("label problem");
+            memcpy(idl, d->name, t = idp - d->name); idp = d->name;
             memcpy(d = labt++, symlh++, sizeof (struct ident_s));
+            d->name = idl; idl += t;
          }
          d->type = -1 ; // hack for d->class deficiency
          *--n = (int) d; *--n = Label;
@@ -1008,14 +1009,14 @@ resolve_fnproto:
             // create a label for the end of the inline function
             if ((labt - lab) == MAX_LABEL) fatal("label overflow");
             id = labt++;
-            id->name = s = idp;
+            id->name = s = idl;
             id->name[0] = 'i'; id->name[1] = 'r'; id->name[2] = 'l';
             id->name[3] = idchar((irl>>18) & 63);
             id->name[4] = idchar((irl>>12) & 63);
             id->name[5] = idchar((irl>> 6) & 63);
             id->name[6] = idchar(irl       & 63);
             id->name[7] = 0;
-            idp += 8;
+            idl += 8;
             ++irl;
             tk = *s++;
             while (*s) tk = tk * 147 + *s++;
@@ -1264,7 +1265,7 @@ resolve_fnproto:
       /* when "token" is a variable, it takes the address first and
        * then LI/LC, so `--e` becomes the address of "a".
        */
-      attq = 1; next(); if (tk == Id && parg) id->flags |= (8 | 64);
+      attq = 1; next(); if (tk == Id && parg) id->flags |= (8 | 32 | 64);
       expr(Inc);
       if (*n != Load) fatal("bad address-of");
       attq = 0;
@@ -2457,7 +2458,7 @@ do_typedef:
             saven = n;
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = (int) (e + 1);
-            symlh = symlt; tokloc = 1; next();
+            symlh = symlt; labt = lab; idl = idln; tokloc = 1; next();
             nf = ir_count = ld = maxld = ldn = lds[0] = 0; // ld is param index
             while (tk != ')') {
                stmt(Par);
@@ -2556,7 +2557,7 @@ do_typedef:
                               (*le > 0 || -*le > 0x1000000)) {
                         int cval = (*(le-1) != JSR) ? (*le) :
                            (((struct ident_s *)(*le))->val) ;
-                        for (scan = sym; scan->tk; ++scan)
+                        for (scan = symk; scan->tk; ++scan)
                            if (scan->val == cval) {
                               printf(" &%s", scan->name);
                               if (src == 2) printf(" (0x%08x)", cval);
@@ -2588,7 +2589,7 @@ unwind_func:
                   }
                }
             }
-            labt = lab; tokloc = 0;
+            tokloc = 0;
          }
          else {
             if (ty > ATOM_TYPE && ty < PTR && tsize[bt >> 2] == 0)
@@ -2946,7 +2947,9 @@ keepdeadcode_while:
       if (id < lab || id >= labt) { // move labels to separate area
          if (id != symlh || (labt - lab) == MAX_LABEL)
             fatal("label problem");
+         memcpy(idl, id->name, i = idp - id->name); idp = id->name;
          memcpy(id = labt++, symlh++, sizeof (struct ident_s));
+         id->name = idl; idl += i;
       }
       id->type = -1; // hack for id->class deficiency
       *--n = (int) id; *--n = Goto; next();
@@ -4034,6 +4037,7 @@ int main(int argcc, char **argvv)
    symlh = symlt = (struct ident_s *) ((int)sym + poolsz);
    syms = (struct ident_s *) ((int)sym + poolsz/2);
    idp = idn = (char *) malloc(256 * 1024); // max space for id names
+   idl = idln = (char *) malloc(9 * MAX_LABEL); // space for label names
 
    // Register keywords in symbol stack. Must match the sequence of enum
    p = "typedef enum char int float struct union "
@@ -4187,6 +4191,7 @@ int main(int argcc, char **argvv)
    free(freed_ast);
    free(tsize);
    free(freedata);
+   free(idln);
    free(idn);
    free(sym);
 

@@ -15,9 +15,7 @@ void sieve1(char *buf, int max)
             buf[i / 8] &= ~(1 << (i % 8));
             i += p;
         }
-        ++p;
-        while (p < max && !(buf[p / 8] & (1 << (p % 8))))
-            ++p;
+        do ++p; while (p < max && !(buf[p / 8] & (1 << (p % 8))));
     } while (p < max);
 }
 
@@ -41,9 +39,7 @@ void sieve2(char *buf, int max)
             }
             i += p;
         }
-        ++p;
-        while (p < max && !(buf[p / 8] & (1 << (p % 8))))
-            ++p;
+        do ++p; while (p < max && !(buf[p / 8] & (1 << (p % 8))));
     } while (p < max);
 }
 
@@ -59,9 +55,7 @@ void sieve3(char *buf, int max)
             bits[i / 32] &= ~(1 << (i % 32));
             i += p;
         }
-        ++p;
-        while (p < max && !(bits[p / 32] & (1 << (p % 32))))
-            ++p;
+        do ++p; while (p < max && !(bits[p / 32] & (1 << (p % 32))));
     } while (p < max);
 }
 
