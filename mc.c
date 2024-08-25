@@ -1366,15 +1366,12 @@ resolve_fnproto:
          } // else can't optimize away assign-expr, unlike an assign-stmt
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
-         next(); expr(Assign); tc = ty;
+         t = -1; if (*n == Num || *n == NumF) { t = n[1]; n += 2; b = n; }
+         next(); expr(Assign); tc = ty; if (t == 0) n = b;
          if (tk != ':') fatal("conditional missing colon");
-         next(); c = n;
-         expr(Cond); if (tc != ty) fatal("both results need same type");
-         if ((*b == Num || *b == NumF) &&
-             ((*n == Num && *c == Num) || (*n == NumF && *c == NumF))) {
-            b[1] = b[1] ? c[1] : n[1]; *b = *n; n += 4;
-         }
-         else {
+         next(); c = n; expr(Cond); if (t == 1) { n = c; ty = tc; }
+         if (t == -1) {
+            if (tc != ty) fatal("both results need same type");
             --n; *n = (int) (n + 1); *--n = (int) c;
             *--n = (int) b; *--n = Cond;
          }
@@ -1854,6 +1851,8 @@ mod1_to_mul0:
 add_simple:
          if (doload) { *--n = ((ty = t) >= PTR) ? INT : ty; *--n = Load; }
          break;
+      case Alias:
+         fatal(":= can only be used as a declaration initializer");
       default:
          printf("%s: compiler error tk=%d\n", linestr(), tk); exit(-1);
       }
@@ -2186,7 +2185,8 @@ void gen(int *n)
       label = (struct ident_s *) n[1];
       if (label->class != 0) fatal("duplicate label definition");
       d = e + 1; b = (int *) label->val;
-      while (b != 0) { t = (int *) *b; *b = (int) d; b = t; }
+      while (b && (b == e)) { e -= 2; d -= 2; b = (int *) *b; }
+      while (b) { t = (int *) *b; *b = (int) d; b = t; }
       label->val = (int) d; label->class = Label;
       lastLEV = 0;
       break;
