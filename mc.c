@@ -1150,6 +1150,7 @@ resolve_fnproto:
          default: fatal("undefined variable");
          }
          if (tk < Alias || tk > ModAssign) d->flags |= 32; // var is read
+         else if (d->flags & 16) fatal("Can't assign to an Alias");
          if ((d->type & 3) && d->class != Par) { // push reference address
             ty = d->type & ~3;
          }
@@ -1864,6 +1865,7 @@ void init_array(struct ident_s *tn, int extent[], int dim)
    int i, cursor, match, coff = 0, off, empty, *vi;
    int inc[3];
 
+   if (tn->class != Glo) fatal("array init only supported at global scope");
    inc[0] = extent[dim-1];
    for (i = 1; i < dim; ++i) inc[i] = inc[i-1] * extent[dim-(i+1)];
 
@@ -2651,31 +2653,49 @@ unwind_func:
                if (tk == '{' && (dd->type & 3)) init_array(dd, nd, j);
                else {
                   if (ctx == Loc) {
-                     if (b == 0) *--n = ';';
+                     if (b == 0) *--n = ';'; j = (b == 0) ? 1 : 0;
                      b = n; *--n = loc - dd->val; *--n = Loc;
                      a = n; i = ty; expr(Assign); typecheck(Assign, i, ty);
                      if (atk == Alias) {
-                        if (i <= ATOM_TYPE && !masgn &&
-                            (((a == n+4) && *n == Load && n[2] == Loc) ||
-                            ((a == n+10) && *n == Load &&
-                             n[2] == Add && n[4] == Num &&
-                             n[6] == Load && n[8] == Loc) ||
-                            ((a == n+8) && *n == Load &&
-                             n[2] == Add && n[4] == Num &&
-                             n[6] == Loc) ||
-                            ((a == n+6) && *n == Load &&
-                             n[2] == Load && n[4] == Loc))) {
-                           --ir_count; ld -= sz / sizeof(int);
-                           dd->val = 0; // recursion flags
-                           dd->tsub = idp;
-                           memcpy(idp, psave, p-psave-1); idp[p-psave-1] = 0;
-                           idp = (char *) (((int) idp +
-                                            (p - psave) + sizeof(int)) &
-                                           (-sizeof(int)));
-                           n = b + 1;
-                           dd->flags |= 16; // alias declaration
+                        if (i <= ATOM_TYPE && (i & (INT+FLOAT)) && !masgn) {
+                           if ((a == n+4) && *n == Load && n[2] == Num) {
+                              ld -= 1; dd->val = n[3]; dd->class = Glo;
+                              dd->flags |= 16; n = b + j; if (j) b = 0;
+                              --ir_count;
+                           }
+                           else if (((a == n+8) && *n == Load &&
+                              n[2] == Add && n[4] == Num && n[6] == Loc) ||
+                              ((a == n+4) && *n == Load && n[2] == Loc)) {
+                              dd->val = (a == n+4) ?
+                                 (loc-n[3]) : (loc-n[7]) - n[5]/sizeof(int);
+                              ld -= 1; dd->flags |= 16; n = b+j; if (j) b = 0;
+                              if (src == 2) ir_var[ir_count-1].loc = dd->val;
+                           }
+                           else if (((a == n+8) && (*n == Add || *n == Sub) &&
+                                     n[2] == Num && n[4] == Load &&
+                                     n[6] == Loc) ||
+                                    ((a == n+10) && *n == Load &&
+                                     n[2] == Add && n[4] == Num &&
+                                     n[6] == Load && n[8] == Loc) ||
+                                    ((a == n+6) && *n == Load &&
+                                     n[2] == Load && n[4] == Loc)) {
+                              --ir_count; ld -= sz / sizeof(int);
+                              dd->val = 0; // recursion flags
+                              dd->tsub = idp;
+                              memcpy(idp,psave,p-psave-1); idp[p-psave-1] = 0;
+                              idp = (char *) (((int) idp +
+                                               (p - psave) + sizeof(int)) &
+                                              (-sizeof(int)));
+                              n = b + 1;
+                              dd->flags |= 16; // alias declaration
+                           }
+                           else goto do_assign;
                         }
-                        else atk = Assign;
+                        else {
+do_assign:
+                           fatal("This specific alias semantic not supported");
+                           atk = Assign;
+                        }
                      }
                      if (atk == Assign) {
                         flagWrite(&dd->flags, a, n);  // var write
