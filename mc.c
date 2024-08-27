@@ -2663,9 +2663,10 @@ unwind_func:
                               dd->flags |= 16; n = b + j; if (j) b = 0;
                               --ir_count;
                            }
-                           else if (((a == n+8) && *n == Load &&
-                              n[2] == Add && n[4] == Num && n[6] == Loc) ||
-                              ((a == n+4) && *n == Load && n[2] == Loc)) {
+                           else if (((a == n+8) && *n == Load && n[2] == Add &&
+                              n[4] == Num && n[6] == Loc && n[7] < 0) ||
+                              ((a == n+4) && *n == Load &&
+                                           n[2] == Loc && n[3] < 0)) {
                               dd->val = (a == n+4) ?
                                  (loc-n[3]) : (loc-n[7]) - n[5]/sizeof(int);
                               ld -= 1; dd->flags |= 16; n = b+j; if (j) b = 0;
