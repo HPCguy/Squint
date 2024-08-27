@@ -1368,9 +1368,11 @@ resolve_fnproto:
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
          t = -1; if (*n == Num || *n == NumF) { t = n[1]; n += 2; b = n; }
-         next(); expr(Assign); tc = ty; if (t == 0) n = b;
+         next(); if (t == 0) ++deadzone; expr(Assign); tc = ty;
+         if (t == 0) { --deadzone; n = b; }
          if (tk != ':') fatal("conditional missing colon");
-         next(); c = n; expr(Cond); if (t == 1) { n = c; ty = tc; }
+         next(); c = n; if (t == 1) ++deadzone; expr(Cond);
+         if (t == 1) { --deadzone; n = c; ty = tc; }
          if (t == -1) {
             if (tc != ty) fatal("both results need same type");
             --n; *n = (int) (n + 1); *--n = (int) c;
