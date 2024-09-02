@@ -59,6 +59,7 @@ int deadzone;       // don't do inlining during dead code elimination
 int attq;           // attribute query such as dereference or sizeof
 int parg;           // attq -- assume passing deref var to func means it is set
 int inDecl;         // declaration statement context
+int pinlndef;       // parsing an inline-only function
 int tokloc;         // 0 = global scope, 1 = function scope
                     // 2 = function scope, declaration in progress
 union conv {
@@ -75,7 +76,8 @@ int ty;             // current expression type
                     // bit 10:11 - ptr level
 int compound;       // manage precedence of compound assign expressions
 int rtf, rtt;       // return flag and return type for current function
-int loc;            // local variable offset
+int ld, maxld;      // function frame ptr -- argument index then local var
+int loc;            // separating point for arg vs local variables
 int line;           // current line number
 int src;            // print source and assembly flag
 int signed_char;    // use `signed char` for `char`
@@ -88,7 +90,6 @@ int *n;             // current position in emitted abstract syntax tree
                     // This capability allows function parameter code to be
                     // emitted and pushed on the stack in the proper
                     // right-to-left order.
-int ld, maxld;      // local variable depth
 int lds[32], ldn;   // used to track scope level for duplicate local var defs
 int pplev, pplevt;  // preprocessor conditional level
 int ppactive;
@@ -495,6 +496,7 @@ text_sub:
                         if (id->val == 3) { id->val = 1; continue; }
                         else id->val = 3;
                      }
+                     if (numpts == INL_LEV) fatal("inline level exceeded");
                      tsline[numpts] = 0;
                      pts[numpts++] = p; p = id->tsub;
                      goto text_sub;
@@ -946,18 +948,19 @@ resolve_fnproto:
          t = 0; b = c = 0; tt[0] = tt[1] = 0; nf = 0; // FP argument count
          if (!deadzone && (inln_func || d->tsub)) {
             if (d->tsub) {
-               fidx = ((int) d->tsub) - 1;
-               inln_func = 1;
+               if (numpts == INL_LEV) {
+                  if (d->val == 0) fatal("inline level exceeded");
+               }
+               else { fidx = ((int) d->tsub) - 1; inln_func = 1; }
             }
             else {
                for (fidx = 0; fidx < numfspec; ++fidx)
                   if (!strcmp(d->name, (char *)fspec[fidx][0])) break;
             }
-            if (fidx == numfspec) inln_func = 0; // warn?
+            if (fidx == numfspec || numpts == INL_LEV) inln_func = 0; // warn?
             else { tsi = 0; saven = n; }
          }
-         if (peephole && (d->class < Fneg || d->class > Sqrt) &&
-             !(inln_func && numpts < INL_LEV)) {
+         if (peephole && (d->class < Fneg || d->class > Sqrt) && !inln_func) {
             *--n = Phf; c = n;
          }
          parg = 1;
@@ -965,7 +968,7 @@ resolve_fnproto:
             if (inln_func && !deadzone) {
                a = n; expr(Assign);
                ts[tsi++] = idp;
-               if ( (a-n == 2) && (*n == Num || *n == NumF)) { // lit const
+               if ((a-n == 2) && (*n == Num || *n == NumF)) { // lit const
                   a = (int *) idp;
                   *a++ = n[0]; *a++ = n[1];
                   idp = (char *) a;
@@ -994,9 +997,7 @@ resolve_fnproto:
          tt[0] += (nf << 6) + t;
          if (d->ftype[0] && (d->ftype[0] != tt[0] || d->ftype[1] != tt[1]) )
             fatal("argument type mismatch");
-         if (inln_func && d->val == 0 && numpts == INL_LEV)
-            fatal("nesting limit reached on inline function calls");
-         if (inln_func && !deadzone && numpts < INL_LEV) {
+         if (inln_func && !deadzone) {
             int i, args;
             int old;
             char *s;
@@ -1316,7 +1317,7 @@ resolve_fnproto:
       next();
       if (!(tk == Id && id->class == Func))
          fatal("inline cast only applies to functions");
-      inln_func = 1;
+      if (!pinlndef) inln_func = 1;
       goto do_inln_func;
       break;
    case 0: fatal("unexpected EOF in expression");
@@ -2320,9 +2321,11 @@ inln_func_expr:
          next(); // Skip "}"
       } else if (tk == Id) {
          if (ctx != Par) fatal("enum can only be declared as parameter");
-         id->type = INT; id->class = ctx;
-         ir_var[ir_count].loc = id->val = ld++;
-         ir_var[ir_count++].name = id->name;
+         id->type = INT; id->class = ctx; id->val = ld++;
+         if (src == 2) {
+            ir_var[ir_count].loc = id->val;
+            ir_var[ir_count++].name = id->name;
+         }
          if (tokloc) --tokloc;
          next();
       }
@@ -2483,6 +2486,7 @@ do_typedef:
             } // fn proto
             if (tk != '{') fatal("bad function definition");
             if (inln_func) {
+               ++pinlndef;
                dd->tsub = (char *) (numfspec + 1);
                dd->val = 0;
             }
@@ -2508,7 +2512,7 @@ do_typedef:
                int *t = n; stmt(Loc);
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
-            ++inDecl;
+            ++inDecl; if (inln_func) --pinlndef;
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
             if (*p == '\n' || *p == ' ') {
                if (lp < p && !numpts) {
@@ -2639,11 +2643,13 @@ unwind_func:
                }
             }
             else if (ctx == Par) {
-               dd->flags |= 4; // mark func arguments as initialized
+               dd->val = ld++; dd->flags |= 4; // mark func args as inited
                if (ty > ATOM_TYPE && ty < PTR) // local struct decl
                   fatal("struct parameters must be pointers");
-               ir_var[ir_count].loc = dd->val = ld++;
-               ir_var[ir_count++].name = dd->name;
+               if (src == 2) {
+                  ir_var[ir_count].loc = dd->val;
+                  ir_var[ir_count++].name = dd->name;
+               }
             }
             if (tk == Assign || tk == Alias) {
                if (ctx == Par) fatal("default arguments not supported");
@@ -2660,10 +2666,15 @@ unwind_func:
                      a = n; i = ty; expr(Assign); typecheck(Assign, i, ty);
                      if (atk == Alias) {
                         if (i <= ATOM_TYPE && (i & (INT+FLOAT)) && !masgn) {
-                           if ((a == n+4) && *n == Load && n[2] == Num) {
-                              ld -= 1; dd->val = n[3]; dd->class = Glo;
+                           if ((a == n+2) && (*n == Num || *n == NumF)) {
+                              dd->class = *n; dd->val = n[1]; dd->flags |= 4;
+                              --ld; n = b + j; if (j) b = 0;
+                              if (src == 2) --ir_count;
+                           }
+                           else if ((a == n+4) && *n == Load && n[2] == Num) {
+                              --ld; dd->val = n[3]; dd->class = Glo;
                               dd->flags |= 16; n = b + j; if (j) b = 0;
-                              --ir_count;
+                              if (src == 2) --ir_count;
                            }
                            else if (((a == n+8) && *n == Load && n[2] == Add &&
                               n[4] == Num && n[6] == Loc && n[7] < 0) ||
@@ -2671,7 +2682,7 @@ unwind_func:
                                            n[2] == Loc && n[3] < 0)) {
                               dd->val = (a == n+4) ?
                                  (loc-n[3]) : (loc-n[7]) - n[5]/sizeof(int);
-                              ld -= 1; dd->flags |= 16; n = b+j; if (j) b = 0;
+                              --ld; dd->flags |= 16; n = b+j; if (j) b = 0;
                               if (src == 2) ir_var[ir_count-1].loc = dd->val;
                            }
                            else if (((a == n+8) && (*n == Add || *n == Sub) &&
@@ -2682,14 +2693,14 @@ unwind_func:
                                      n[6] == Load && n[8] == Loc) ||
                                     ((a == n+6) && *n == Load &&
                                      n[2] == Load && n[4] == Loc)) {
-                              --ir_count; ld -= sz / sizeof(int);
                               dd->val = 0; // recursion flags
                               dd->tsub = idp;
                               memcpy(idp,psave,p-psave-1); idp[p-psave-1] = 0;
                               idp = (char *) (((int) idp +
                                                (p - psave) + sizeof(int)) &
                                               (-sizeof(int)));
-                              n = b + 1;
+                              --ld; if (src == 2) --ir_count;
+                              n = b + j; if (j) b = 0;
                               dd->flags |= 16; // alias declaration
                            }
                            else goto do_assign;
@@ -2771,22 +2782,22 @@ keepdeadcode_if:
             stmt(ctx);
             if (tk == Else) { // discard if no labels created
                labcheck = labt;
-               next(); c = n; ++deadzone; stmt(ctx); --deadzone;
+               next(); c = n; j = maxld; ++deadzone; stmt(ctx); --deadzone;
                if (labt != labcheck) {
                   dodeadcode = 0; p = psave; line = i; labt = dd; n = a + 2;
                   goto keepdeadcode_if;
                }
-               n = c;
+               n = c; maxld = j;
             }
          }
          else {
             labcheck = labt;
-            c = n; ++deadzone; stmt(ctx); --deadzone;
+            c = n; j = maxld; ++deadzone; stmt(ctx); --deadzone;
             if (labt != labcheck) {
                dodeadcode = 0; p = psave; line = i; labt = dd; n = a + 2;
                goto keepdeadcode_if;
             }
-            n = c; // discard if no labels created
+            n = c; maxld = j; // discard if no labels created
             if (tk == Else) { next(); stmt(ctx); }
          }
       }
@@ -2810,13 +2821,13 @@ keepdeadcode_while:
           (*b == Num || *b == NumF) && b[1] == 0) {
          struct ident_s *labcheck = labt;
          n += 2;
-         c = n; ++deadzone; stmt(ctx); --deadzone;
+         c = n; j = maxld; ++deadzone; stmt(ctx); --deadzone;
          --brkc; --cntc;
          if (labt != labcheck) {
             dodeadcode = 0; p = psave; line = i; labt = dd; n = b + 2;
             goto keepdeadcode_while;
          }
-         n = c; // discard if no labels created
+         n = c; maxld = j; // discard if no labels created
       }
       else {
          stmt(ctx); a = n; // parse body of "while"
