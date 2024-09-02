@@ -42,6 +42,7 @@ char *freedata, *data, *_data;   // data/bss pointer
 int *e, *le, *text; // current position in emitted IR code
 int *lastLEV;       // needed to close out functions
 char *idn, *idp;    // decouples ids from program source code
+char *idl, *idln;   // storage for func scope label names
 int *cas;           // case statement patch-up pointer
 int *def;           // default statement patch-up pointer
 int *brks;          // break statement patch-up pointer
@@ -58,6 +59,7 @@ int deadzone;       // don't do inlining during dead code elimination
 int attq;           // attribute query such as dereference or sizeof
 int parg;           // attq -- assume passing deref var to func means it is set
 int inDecl;         // declaration statement context
+int pinlndef;       // parsing an inline-only function
 int tokloc;         // 0 = global scope, 1 = function scope
                     // 2 = function scope, declaration in progress
 union conv {
@@ -74,7 +76,8 @@ int ty;             // current expression type
                     // bit 10:11 - ptr level
 int compound;       // manage precedence of compound assign expressions
 int rtf, rtt;       // return flag and return type for current function
-int loc;            // local variable offset
+int ld, maxld;      // function frame ptr -- argument index then local var
+int loc;            // separating point for arg vs local variables
 int line;           // current line number
 int src;            // print source and assembly flag
 int signed_char;    // use `signed char` for `char`
@@ -87,8 +90,7 @@ int *n;             // current position in emitted abstract syntax tree
                     // This capability allows function parameter code to be
                     // emitted and pushed on the stack in the proper
                     // right-to-left order.
-int ld, maxld;      // local variable depth
-int lds[32], ldn;   // used to track scope level for duplicate var defs
+int lds[32], ldn;   // used to track scope level for duplicate local var defs
 int pplev, pplevt;  // preprocessor conditional level
 int ppactive;
 int oline, osize;   // for optimization suggestion
@@ -114,7 +116,7 @@ struct ident_s {
    char *tsub;   // != 0 substitutes var usage with tsub text, or func
    int class;    // FUNC, GLO (global var), LOC (local var), Syscall
    int type;     // data type such as char and int
-   int val;
+   int val;      // usually, contains stack or memory address of var
    int etype;    // extended type info for tensors
    int ftype[2]; // extended type info for funcs
    int flags;    // funcID: 1 = fwd decl func, 2 = func not dead code
@@ -128,7 +130,7 @@ struct ident_s {
   *symgt,        // tail for global symbols
   *syms,         // struct/union member parsing
   *symlh,        // head for local symbols
-  *symlt,        // tail for loacal symbols
+  *symlt,        // tail for local symbols
   *labt,         // tail ptr for label Ids
   *retlabel[INL_LEV], // label for end of inline function
   lab[MAX_LABEL];
@@ -494,6 +496,7 @@ text_sub:
                         if (id->val == 3) { id->val = 1; continue; }
                         else id->val = 3;
                      }
+                     if (numpts == INL_LEV) fatal("inline level exceeded");
                      tsline[numpts] = 0;
                      pts[numpts++] = p; p = id->tsub;
                      goto text_sub;
@@ -521,9 +524,7 @@ text_sub:
                }
             }
          }
-         /* At this point, existing symbol name is not found.
-          * "id" points to the first unused symbol table entry.
-          */
+         // At this point, pre-existing symbol name was not found.
 new_block_def:
          id = tokloc ? --symlh : symgt++;
          id->name = idp;
@@ -911,7 +912,9 @@ do_inln_func:
          if (d < lab || d >= labt) { // move labels to separate area
             if (d != symlh || (labt - lab) == MAX_LABEL)
                fatal("label problem");
+            memcpy(idl, d->name, t = idp - d->name); idp = d->name;
             memcpy(d = labt++, symlh++, sizeof (struct ident_s));
+            d->name = idl; idl += t;
          }
          d->type = -1 ; // hack for d->class deficiency
          *--n = (int) d; *--n = Label;
@@ -945,18 +948,19 @@ resolve_fnproto:
          t = 0; b = c = 0; tt[0] = tt[1] = 0; nf = 0; // FP argument count
          if (!deadzone && (inln_func || d->tsub)) {
             if (d->tsub) {
-               fidx = ((int) d->tsub) - 1;
-               inln_func = 1;
+               if (numpts == INL_LEV) {
+                  if (d->val == 0) fatal("inline level exceeded");
+               }
+               else { fidx = ((int) d->tsub) - 1; inln_func = 1; }
             }
             else {
                for (fidx = 0; fidx < numfspec; ++fidx)
                   if (!strcmp(d->name, (char *)fspec[fidx][0])) break;
             }
-            if (fidx == numfspec) inln_func = 0; // warn?
+            if (fidx == numfspec || numpts == INL_LEV) inln_func = 0; // warn?
             else { tsi = 0; saven = n; }
          }
-         if (peephole && (d->class < Fneg || d->class > Sqrt) &&
-             !(inln_func && numpts < INL_LEV)) {
+         if (peephole && (d->class < Fneg || d->class > Sqrt) && !inln_func) {
             *--n = Phf; c = n;
          }
          parg = 1;
@@ -964,7 +968,7 @@ resolve_fnproto:
             if (inln_func && !deadzone) {
                a = n; expr(Assign);
                ts[tsi++] = idp;
-               if ( (a-n == 2) && (*n == Num || *n == NumF)) { // lit const
+               if ((a-n == 2) && (*n == Num || *n == NumF)) { // lit const
                   a = (int *) idp;
                   *a++ = n[0]; *a++ = n[1];
                   idp = (char *) a;
@@ -993,9 +997,7 @@ resolve_fnproto:
          tt[0] += (nf << 6) + t;
          if (d->ftype[0] && (d->ftype[0] != tt[0] || d->ftype[1] != tt[1]) )
             fatal("argument type mismatch");
-         if (inln_func && d->val == 0 && numpts == INL_LEV)
-            fatal("nesting limit reached on inline function calls");
-         if (inln_func && !deadzone && numpts < INL_LEV) {
+         if (inln_func && !deadzone) {
             int i, args;
             int old;
             char *s;
@@ -1008,14 +1010,14 @@ resolve_fnproto:
             // create a label for the end of the inline function
             if ((labt - lab) == MAX_LABEL) fatal("label overflow");
             id = labt++;
-            id->name = s = idp;
+            id->name = s = idl;
             id->name[0] = 'i'; id->name[1] = 'r'; id->name[2] = 'l';
             id->name[3] = idchar((irl>>18) & 63);
             id->name[4] = idchar((irl>>12) & 63);
             id->name[5] = idchar((irl>> 6) & 63);
             id->name[6] = idchar(irl       & 63);
             id->name[7] = 0;
-            idp += 8;
+            idl += 8;
             ++irl;
             tk = *s++;
             while (*s) tk = tk * 147 + *s++;
@@ -1149,6 +1151,7 @@ resolve_fnproto:
          default: fatal("undefined variable");
          }
          if (tk < Alias || tk > ModAssign) d->flags |= 32; // var is read
+         else if (d->flags & 16) fatal("Can't assign to an Alias");
          if ((d->type & 3) && d->class != Par) { // push reference address
             ty = d->type & ~3;
          }
@@ -1264,7 +1267,7 @@ resolve_fnproto:
       /* when "token" is a variable, it takes the address first and
        * then LI/LC, so `--e` becomes the address of "a".
        */
-      attq = 1; next(); if (tk == Id && parg) id->flags |= (8 | 64);
+      attq = 1; next(); if (tk == Id && parg) id->flags |= (8 | 32 | 64);
       expr(Inc);
       if (*n != Load) fatal("bad address-of");
       attq = 0;
@@ -1314,7 +1317,7 @@ resolve_fnproto:
       next();
       if (!(tk == Id && id->class == Func))
          fatal("inline cast only applies to functions");
-      inln_func = 1;
+      if (!pinlndef) inln_func = 1;
       goto do_inln_func;
       break;
    case 0: fatal("unexpected EOF in expression");
@@ -1365,15 +1368,14 @@ resolve_fnproto:
          } // else can't optimize away assign-expr, unlike an assign-stmt
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
-         next(); expr(Assign); tc = ty;
+         t = -1; if (*n == Num || *n == NumF) { t = n[1]; n += 2; b = n; }
+         next(); if (t == 0) ++deadzone; expr(Assign); tc = ty;
+         if (t == 0) { --deadzone; n = b; }
          if (tk != ':') fatal("conditional missing colon");
-         next(); c = n;
-         expr(Cond); if (tc != ty) fatal("both results need same type");
-         if ((*b == Num || *b == NumF) &&
-             ((*n == Num && *c == Num) || (*n == NumF && *c == NumF))) {
-            b[1] = b[1] ? c[1] : n[1]; *b = *n; n += 4;
-         }
-         else {
+         next(); c = n; if (t == 1) ++deadzone; expr(Cond);
+         if (t == 1) { --deadzone; n = c; ty = tc; }
+         if (t == -1) {
+            if (tc != ty) fatal("both results need same type");
             --n; *n = (int) (n + 1); *--n = (int) c;
             *--n = (int) b; *--n = Cond;
          }
@@ -1853,6 +1855,8 @@ mod1_to_mul0:
 add_simple:
          if (doload) { *--n = ((ty = t) >= PTR) ? INT : ty; *--n = Load; }
          break;
+      case Alias:
+         fatal(":= can only be used as a declaration initializer");
       default:
          printf("%s: compiler error tk=%d\n", linestr(), tk); exit(-1);
       }
@@ -1864,6 +1868,7 @@ void init_array(struct ident_s *tn, int extent[], int dim)
    int i, cursor, match, coff = 0, off, empty, *vi;
    int inc[3];
 
+   if (tn->class != Glo) fatal("array init only supported at global scope");
    inc[0] = extent[dim-1];
    for (i = 1; i < dim; ++i) inc[i] = inc[i-1] * extent[dim-(i+1)];
 
@@ -2185,7 +2190,8 @@ void gen(int *n)
       label = (struct ident_s *) n[1];
       if (label->class != 0) fatal("duplicate label definition");
       d = e + 1; b = (int *) label->val;
-      while (b != 0) { t = (int *) *b; *b = (int) d; b = t; }
+      while (b && (b == e)) { e -= 2; d -= 2; b = (int *) *b; }
+      while (b) { t = (int *) *b; *b = (int) d; b = t; }
       label->val = (int) d; label->class = Label;
       lastLEV = 0;
       break;
@@ -2315,9 +2321,11 @@ inln_func_expr:
          next(); // Skip "}"
       } else if (tk == Id) {
          if (ctx != Par) fatal("enum can only be declared as parameter");
-         id->type = INT; id->class = ctx;
-         ir_var[ir_count].loc = id->val = ld++;
-         ir_var[ir_count++].name = id->name;
+         id->type = INT; id->class = ctx; id->val = ld++;
+         if (src == 2) {
+            ir_var[ir_count].loc = id->val;
+            ir_var[ir_count++].name = id->name;
+         }
          if (tokloc) --tokloc;
          next();
       }
@@ -2457,7 +2465,7 @@ do_typedef:
             saven = n;
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = (int) (e + 1);
-            symlh = symlt; tokloc = 1; next();
+            symlh = symlt; labt = lab; idl = idln; tokloc = 1; next();
             nf = ir_count = ld = maxld = ldn = lds[0] = 0; // ld is param index
             while (tk != ')') {
                stmt(Par);
@@ -2478,6 +2486,7 @@ do_typedef:
             } // fn proto
             if (tk != '{') fatal("bad function definition");
             if (inln_func) {
+               ++pinlndef;
                dd->tsub = (char *) (numfspec + 1);
                dd->val = 0;
             }
@@ -2503,7 +2512,7 @@ do_typedef:
                int *t = n; stmt(Loc);
                if (t != n) { *--n = (int) t; *--n = '{'; }
             }
-            ++inDecl;
+            ++inDecl; if (inln_func) --pinlndef;
             if (rtf == 0 && rtt != -1) fatal("expecting return value");
             if (*p == '\n' || *p == ' ') {
                if (lp < p && !numpts) {
@@ -2556,7 +2565,7 @@ do_typedef:
                               (*le > 0 || -*le > 0x1000000)) {
                         int cval = (*(le-1) != JSR) ? (*le) :
                            (((struct ident_s *)(*le))->val) ;
-                        for (scan = sym; scan->tk; ++scan)
+                        for (scan = symk; scan->tk; ++scan)
                            if (scan->val == cval) {
                               printf(" &%s", scan->name);
                               if (src == 2) printf(" (0x%08x)", cval);
@@ -2588,7 +2597,7 @@ unwind_func:
                   }
                }
             }
-            labt = lab; tokloc = 0;
+            tokloc = 0;
          }
          else {
             if (ty > ATOM_TYPE && ty < PTR && tsize[bt >> 2] == 0)
@@ -2634,11 +2643,13 @@ unwind_func:
                }
             }
             else if (ctx == Par) {
-               dd->flags |= 4; // mark func arguments as initialized
+               dd->val = ld++; dd->flags |= 4; // mark func args as inited
                if (ty > ATOM_TYPE && ty < PTR) // local struct decl
                   fatal("struct parameters must be pointers");
-               ir_var[ir_count].loc = dd->val = ld++;
-               ir_var[ir_count++].name = dd->name;
+               if (src == 2) {
+                  ir_var[ir_count].loc = dd->val;
+                  ir_var[ir_count++].name = dd->name;
+               }
             }
             if (tk == Assign || tk == Alias) {
                if (ctx == Par) fatal("default arguments not supported");
@@ -2650,31 +2661,55 @@ unwind_func:
                if (tk == '{' && (dd->type & 3)) init_array(dd, nd, j);
                else {
                   if (ctx == Loc) {
-                     if (b == 0) *--n = ';';
+                     if (b == 0) *--n = ';'; j = (b == 0) ? 1 : 0;
                      b = n; *--n = loc - dd->val; *--n = Loc;
                      a = n; i = ty; expr(Assign); typecheck(Assign, i, ty);
                      if (atk == Alias) {
-                        if (i <= ATOM_TYPE && !masgn &&
-                            (((a == n+4) && *n == Load && n[2] == Loc) ||
-                            ((a == n+10) && *n == Load &&
-                             n[2] == Add && n[4] == Num &&
-                             n[6] == Load && n[8] == Loc) ||
-                            ((a == n+8) && *n == Load &&
-                             n[2] == Add && n[4] == Num &&
-                             n[6] == Loc) ||
-                            ((a == n+6) && *n == Load &&
-                             n[2] == Load && n[4] == Loc))) {
-                           --ir_count; ld -= sz / sizeof(int);
-                           dd->val = 0; // recursion flags
-                           dd->tsub = idp;
-                           memcpy(idp, psave, p-psave-1); idp[p-psave-1] = 0;
-                           idp = (char *) (((int) idp +
-                                            (p - psave) + sizeof(int)) &
-                                           (-sizeof(int)));
-                           n = b + 1;
-                           dd->flags |= 16; // alias declaration
+                        if (i <= ATOM_TYPE && (i & (INT+FLOAT)) && !masgn) {
+                           if ((a == n+2) && (*n == Num || *n == NumF)) {
+                              dd->class = *n; dd->val = n[1]; dd->flags |= 4;
+                              --ld; n = b + j; if (j) b = 0;
+                              if (src == 2) --ir_count;
+                           }
+                           else if ((a == n+4) && *n == Load && n[2] == Num) {
+                              --ld; dd->val = n[3]; dd->class = Glo;
+                              dd->flags |= 16; n = b + j; if (j) b = 0;
+                              if (src == 2) --ir_count;
+                           }
+                           else if (((a == n+8) && *n == Load && n[2] == Add &&
+                              n[4] == Num && n[6] == Loc && n[7] < 0) ||
+                              ((a == n+4) && *n == Load &&
+                                           n[2] == Loc && n[3] < 0)) {
+                              dd->val = (a == n+4) ?
+                                 (loc-n[3]) : (loc-n[7]) - n[5]/sizeof(int);
+                              --ld; dd->flags |= 16; n = b+j; if (j) b = 0;
+                              if (src == 2) ir_var[ir_count-1].loc = dd->val;
+                           }
+                           else if (((a == n+8) && (*n == Add || *n == Sub) &&
+                                     n[2] == Num && n[4] == Load &&
+                                     n[6] == Loc) ||
+                                    ((a == n+10) && *n == Load &&
+                                     n[2] == Add && n[4] == Num &&
+                                     n[6] == Load && n[8] == Loc) ||
+                                    ((a == n+6) && *n == Load &&
+                                     n[2] == Load && n[4] == Loc)) {
+                              dd->val = 0; // recursion flags
+                              dd->tsub = idp;
+                              memcpy(idp,psave,p-psave-1); idp[p-psave-1] = 0;
+                              idp = (char *) (((int) idp +
+                                               (p - psave) + sizeof(int)) &
+                                              (-sizeof(int)));
+                              --ld; if (src == 2) --ir_count;
+                              n = b + j; if (j) b = 0;
+                              dd->flags |= 16; // alias declaration
+                           }
+                           else goto do_assign;
                         }
-                        else atk = Assign;
+                        else {
+do_assign:
+                           fatal("This specific alias semantic not supported");
+                           atk = Assign;
+                        }
                      }
                      if (atk == Assign) {
                         flagWrite(&dd->flags, a, n);  // var write
@@ -2747,22 +2782,22 @@ keepdeadcode_if:
             stmt(ctx);
             if (tk == Else) { // discard if no labels created
                labcheck = labt;
-               next(); c = n; ++deadzone; stmt(ctx); --deadzone;
+               next(); c = n; j = maxld; ++deadzone; stmt(ctx); --deadzone;
                if (labt != labcheck) {
                   dodeadcode = 0; p = psave; line = i; labt = dd; n = a + 2;
                   goto keepdeadcode_if;
                }
-               n = c;
+               n = c; maxld = j;
             }
          }
          else {
             labcheck = labt;
-            c = n; ++deadzone; stmt(ctx); --deadzone;
+            c = n; j = maxld; ++deadzone; stmt(ctx); --deadzone;
             if (labt != labcheck) {
                dodeadcode = 0; p = psave; line = i; labt = dd; n = a + 2;
                goto keepdeadcode_if;
             }
-            n = c; // discard if no labels created
+            n = c; maxld = j; // discard if no labels created
             if (tk == Else) { next(); stmt(ctx); }
          }
       }
@@ -2786,13 +2821,13 @@ keepdeadcode_while:
           (*b == Num || *b == NumF) && b[1] == 0) {
          struct ident_s *labcheck = labt;
          n += 2;
-         c = n; ++deadzone; stmt(ctx); --deadzone;
+         c = n; j = maxld; ++deadzone; stmt(ctx); --deadzone;
          --brkc; --cntc;
          if (labt != labcheck) {
             dodeadcode = 0; p = psave; line = i; labt = dd; n = b + 2;
             goto keepdeadcode_while;
          }
-         n = c; // discard if no labels created
+         n = c; maxld = j; // discard if no labels created
       }
       else {
          stmt(ctx); a = n; // parse body of "while"
@@ -2946,7 +2981,9 @@ keepdeadcode_while:
       if (id < lab || id >= labt) { // move labels to separate area
          if (id != symlh || (labt - lab) == MAX_LABEL)
             fatal("label problem");
+         memcpy(idl, id->name, i = idp - id->name); idp = id->name;
          memcpy(id = labt++, symlh++, sizeof (struct ident_s));
+         id->name = idl; idl += i;
       }
       id->type = -1; // hack for id->class deficiency
       *--n = (int) id; *--n = Goto; next();
@@ -4034,6 +4071,7 @@ int main(int argcc, char **argvv)
    symlh = symlt = (struct ident_s *) ((int)sym + poolsz);
    syms = (struct ident_s *) ((int)sym + poolsz/2);
    idp = idn = (char *) malloc(256 * 1024); // max space for id names
+   idl = idln = (char *) malloc(9 * MAX_LABEL); // space for label names
 
    // Register keywords in symbol stack. Must match the sequence of enum
    p = "typedef enum char int float struct union "
@@ -4187,6 +4225,7 @@ int main(int argcc, char **argvv)
    free(freed_ast);
    free(tsize);
    free(freedata);
+   free(idln);
    free(idn);
    free(sym);
 
