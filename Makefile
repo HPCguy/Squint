@@ -60,6 +60,15 @@ check: $(EXEC) $(TEST_OBJ)
 	fi
 	@echo "Type 'make show_asm' to create assembly listing in ASM directory"
 
+bench: $(EXEC)
+	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/lulesh-opt $(TEST_DIR)/extra/lulesh.c
+	$(Q) scripts/peep $(OBJ_DIR)/lulesh-opt -e
+	$(Q)$(ARM_EXEC) time $(OBJ_DIR)/lulesh-opt
+	$(VECHO) "\n\n"
+	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/nbody_arr-opt $(TEST_DIR)/extra/nbody_arr.c
+	$(Q) scripts/peep $(OBJ_DIR)/nbody_arr-opt -e
+	$(Q)$(ARM_EXEC) time $(OBJ_DIR)/nbody_arr-opt
+
 $(OBJ_DIR)/$(BIN): $(BIN)
 	$(VECHO) "  SelfCC\t$@\n"
 	$(Q)$(ARM_EXEC) ./$^ -o $@ $(BIN).c
