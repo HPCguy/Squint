@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 if [ "$#" != "1" ]; then
-    echo "Usage: disasm <amacc ELF executable file>"
+    echo "Usage: disasm <mc ELF executable file>"
     exit
 fi
 DD_BYTES=`readelf -a $1 2>/dev/null | awk '/\.text.*PROGBITS/ { s = sprintf("skip=%d", "0x" $6) ; c = sprintf("count=%d", "0x" $7) ; print s, c }'`

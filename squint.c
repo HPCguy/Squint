@@ -99,6 +99,7 @@ static int cnst_pool_size;
 static int *cbegin;
 
 static int skip_const_blk;
+static int extra_opt = 1;
 
 /**********************************************************/
 /*************** general utility functions ****************/
@@ -4132,7 +4133,8 @@ int squint_opt(int *begin, int *end)
          ibase = create_pushpop_map3(tmpbuf, funcBegin, retAddr, ibase, 0);
          apply_peepholes7_5(tmpbuf, funcBegin, retAddr);
          apply_peepholes7_7(funcBegin, retAddr);
-         fbase = apply_ptr_cleanup(tmpbuf, funcBegin, retAddr, fbase);
+         if (extra_opt)
+            fbase = apply_ptr_cleanup(tmpbuf, funcBegin, retAddr, fbase);
          apply_peepholes7_8(tmpbuf, funcBegin, retAddr);
 
          rename_nop(funcBegin, retAddr);
@@ -4166,7 +4168,9 @@ int main(int argc, char *argv[])
    int offset, length;
    int *mem;
 
-   if (argc != 4) {
+   if (argc == 5 && argv[4][0] == '-' && argv[4][1] == 'e')
+      extra_opt = 0;
+   else if (argc != 4) {
       printf("Use: %s <mc executable> <text start> <length>\n", argv[0]);
       exit(-1);
    }
