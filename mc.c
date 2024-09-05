@@ -1276,13 +1276,13 @@ resolve_fnproto:
       break;
    case '!': // "!x" is equivalent to "x == 0"
       next(); expr(Inc);
-      if (ty > ATOM_TYPE && ty < PTR) fatal("!(struct/union) is meaningless");
+      if (ty >= FLOAT && ty < PTR) fatal("! operator undefined on type");
       if (*n == Num) n[1] = n[1] ? 0 : (btrue ? -1 : 1);
       else { *--n = 0; *--n = Num; --n; *n = (int) (n + 3); *--n = Eq; }
       ty = INT;
       break;
    case '~': // "~x" is equivalent to "x ^ -1"
-      next(); expr(Inc); if (ty > ATOM_TYPE) fatal("~ptr is illegal");
+      next(); expr(Inc); if (ty >= FLOAT) fatal("~ applied to illegal type");
       if (*n == Num) n[1] = ~n[1];
       else { *--n = -1; *--n = Num; --n; *n = (int) (n + 3); *--n = Xor; }
       ty = INT;
@@ -1369,11 +1369,13 @@ resolve_fnproto:
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
          t = -1; if (*n == Num || *n == NumF) { t = n[1]; n += 2; b = n; }
-         next(); if (t == 0) ++deadzone; expr(Assign); tc = ty;
-         if (t == 0) { --deadzone; n = b; }
+         next(); if (t == 0) { ++pinlndef; ++deadzone; }
+         expr(Assign); tc = ty;
+         if (t == 0) { --deadzone; --pinlndef; n = b; }
          if (tk != ':') fatal("conditional missing colon");
-         next(); c = n; if (t == 1) ++deadzone; expr(Cond);
-         if (t == 1) { --deadzone; n = c; ty = tc; }
+         next(); c = n; if (t == 1) { ++pinlndef; ++deadzone; }
+         expr(Cond);
+         if (t == 1) { --deadzone; --pinlndef; n = c; ty = tc; }
          if (t == -1) {
             if (tc != ty) fatal("both results need same type");
             --n; *n = (int) (n + 1); *--n = (int) c;
@@ -2249,7 +2251,7 @@ void stmt(int ctx)
 {
    struct ident_s *dd, *td, *osymh, *osymt;
    int *a, *b, *c, *d;
-   int i, j, nf, atk, sz, old, toksav;
+   int i, j, tt, nf, atk, sz, old, toksav;
    int nd[3];
    int bt, tdef = 0;
    int inln_func = 0;
@@ -2771,7 +2773,7 @@ keepdeadcode_if:
       next();
       if (tk != '(') fatal("open parenthesis expected");
       next();
-      c = n; expr(Assign); a = n;
+      c = n; expr(Assign); tt = ty; a = n;
       if (tk != ')') fatal("close parenthesis expected");
       next();
       // dead code elimination for const if-condition
@@ -2782,7 +2784,8 @@ keepdeadcode_if:
             stmt(ctx);
             if (tk == Else) { // discard if no labels created
                labcheck = labt;
-               next(); c = n; j = maxld; ++deadzone; stmt(ctx); --deadzone;
+               next(); c = n; j = maxld;
+               ++pinlndef; ++deadzone; stmt(ctx); --deadzone; --pinlndef;
                if (labt != labcheck) {
                   dodeadcode = 0; p = psave; line = i; labt = dd; n = a + 2;
                   goto keepdeadcode_if;
@@ -2792,7 +2795,8 @@ keepdeadcode_if:
          }
          else {
             labcheck = labt;
-            c = n; j = maxld; ++deadzone; stmt(ctx); --deadzone;
+            c = n; j = maxld;
+            ++pinlndef; ++deadzone; stmt(ctx); --deadzone; --pinlndef;
             if (labt != labcheck) {
                dodeadcode = 0; p = psave; line = i; labt = dd; n = a + 2;
                goto keepdeadcode_if;
@@ -2802,6 +2806,9 @@ keepdeadcode_if:
          }
       }
       else {
+         if (tt == FLOAT) {
+            *--n = 0; *--n = NumF; --n; *n = (int) (n + 3); *--n = NeF; b = n;
+         }
          stmt(ctx); b = n;
          if (tk == Else) { next(); stmt(ctx); d = n; } else d = 0;
          *--n = (int)d; *--n = (int) b; *--n = (int) a; *--n = Cond;
@@ -2813,7 +2820,7 @@ keepdeadcode_while:
       next();
       if (tk != '(') fatal("open parenthesis expected");
       next();
-      c = n; expr(Assign); b = n; // condition
+      c = n; expr(Assign); tt = ty; b = n; // condition
       if (tk != ')') fatal("close parenthesis expected");
       next(); ++brkc; ++cntc;
       // dead code elimination for const while-condition
@@ -2821,7 +2828,8 @@ keepdeadcode_while:
           (*b == Num || *b == NumF) && b[1] == 0) {
          struct ident_s *labcheck = labt;
          n += 2;
-         c = n; j = maxld; ++deadzone; stmt(ctx); --deadzone;
+         c = n; j = maxld;
+         ++pinlndef; ++deadzone; stmt(ctx); --deadzone; --pinlndef;
          --brkc; --cntc;
          if (labt != labcheck) {
             dodeadcode = 0; p = psave; line = i; labt = dd; n = b + 2;
@@ -2830,6 +2838,9 @@ keepdeadcode_while:
          n = c; maxld = j; // discard if no labels created
       }
       else {
+         if (tt == FLOAT) {
+            *--n = 0; *--n = NumF; --n; *n = (int) (n + 3); *--n = NeF; b = n;
+         }
          stmt(ctx); a = n; // parse body of "while"
          --brkc; --cntc;
          if (c-b == 2 && (*b == Num || *b == NumF)) {
@@ -2855,7 +2866,12 @@ keepdeadcode_while:
       if (c-b == 2 && (*b == Num || *b == NumF)) {
          *--n = (b[1] == 0) ? 1 : 2;
       }
-      else *--n = 0;
+      else {
+         if (ty == FLOAT) {
+            *--n = 0; *--n = NumF; --n; *n = (int) (n + 3); *--n = NeF; b = n;
+         }
+         *--n = 0;
+      }
       *--n = (int) b; *--n = (int) a; *--n = DoWhile;
       return;
    case For:
@@ -2871,6 +2887,9 @@ keepdeadcode_while:
       d = n;
       *--n = ';';
       expr(Assign); a = n; // Point to entry of for cond
+      if (ty == FLOAT) {
+         *--n = 0; *--n = NumF; --n; *n = (int) (n + 3); *--n = NeF; a = n;
+      }
       if (tk != ';') fatal("semicolon expected");
       next();
       *--n = ';';

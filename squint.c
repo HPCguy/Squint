@@ -1858,7 +1858,8 @@ static void apply_peepholes7_8(int *instInfo, int *funcBegin, int *funcEnd)
          rxd = find_def(instInfo, info-1, rx, S_BACK);
          if (rxd == 0 || (*rxd & RI_func)) continue;
          scanm = &funcBegin[rxd-instInfo];
-         if ((*scanm & 0xfff00f00) == 0xe2800000) { // add rx, rn, #N
+         if ((*scanm & 0xfff00f00) == 0xe2800000 && // add rx, rn, #N
+             (*scanm & RI_Rn) != ((*scanm & RI_Rd) << 4)) {
             rxu = find_use(instInfo, rxd+1, rx, S_FWD);
             if (rxu == info) {
                rxdd = find_def(instInfo, info+1, rx, S_FWD);
