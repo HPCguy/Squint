@@ -371,8 +371,8 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
 | 10b7c: vldr  s15, [sp, #88] | | |
 | 10b80: b  106ac | | |
 
-By the end of 2022, I expect to have automatic vectorization and/or parallelization working
-in my offline HPC compiler.  The HPC extensions/restrictions make it "natural" to manage
+By the end of 2030, I expect to have automatic vectorization and/or parallelization working
+in my HPC compiler.  The HPC extensions/restrictions make it "natural" to manage
 parallel partitions, unlike the mess created by C standard semantics.
 
 ## Prerequisites
