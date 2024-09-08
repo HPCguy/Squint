@@ -4151,8 +4151,8 @@ int squint_opt(int *begin, int *end)
          if (!noFloatConst)
             apply_peepholes6(tmpbuf, funcBegin, retAddr, flow, fhigh, 1);
 
-         apply_peepholes7(tmpbuf, funcBegin, retAddr);
          ibase = create_pushpop_map3(tmpbuf, funcBegin, retAddr, ibase, 0);
+         apply_peepholes7(tmpbuf, funcBegin, retAddr);
          apply_peepholes7_5(tmpbuf, funcBegin, retAddr);
          apply_peepholes7_7(funcBegin, retAddr);
          if (extra_opt)
