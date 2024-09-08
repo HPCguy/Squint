@@ -1368,7 +1368,11 @@ resolve_fnproto:
          } // else can't optimize away assign-expr, unlike an assign-stmt
          break;
       case Cond: // `x?a:b` is similar to if except that it relies on else
-         t = -1; if (*n == Num || *n == NumF) { t = n[1]; n += 2; b = n; }
+         t = -1;
+         if (*n == Num || *n == NumF) { t = n[1]; n += 2; b = n; }
+         else if (ty == FLOAT) {
+            *--n = 0; *--n = NumF; --n; *n = (int) (n + 3); *--n = NeF; b = n;
+         }
          next(); if (t == 0) { ++pinlndef; ++deadzone; }
          expr(Assign); tc = ty;
          if (t == 0) { --deadzone; --pinlndef; n = b; }
