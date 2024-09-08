@@ -1596,14 +1596,16 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
 {
    int *scan, *scanm1, *rdt, *info;
    int *rdd, *rdu, *rdd2, *rdu2;
-   int rn, inst, inst2, isAdd, isSub, off;
+   int rn, inst, inst2, isAdd, isSub, isFP, off;
 
    create_inst_info(instInfo, funcBegin, funcEnd);
    create_bb_info(instInfo, funcBegin, funcEnd);
 
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
-      if ((*scan & 0xff200000) == 0xe5000000) { // (ldr|str)[b] rd, [rn]
+      if ((*scan & 0xff200000) == 0xe5000000 ||          // (ldr|str)[b]
+          (isFP = (*scan & 0xff200f00) == 0xed000a00)) { // vldr|str
+         if (isFP && (*scan & 0xff) > 1) continue;
          rn = (*scan & RI_Rn) >> 16;
          if (rn >= NUM_USABLE_REG) continue;
          info = &instInfo[scan-funcBegin];
@@ -1613,21 +1615,34 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
          for (rdt = rdd+1; rdt <= info; ++rdt) if (*rdt & RI_bb) break;
          if (rdt <= info) continue;
          inst = funcBegin[rdd-instInfo];
+         if (isFP && (inst & 0xff) != 4) continue;
          if ((isAdd = (inst & 0xfff00f00) == 0xe2800000) || // add #X
              (inst & 0xfff00f00) == 0xe2400000) {           // sub #X
-            off = *scan & 0xfff;
+            off = isFP ? ((*scan & 0xff) * 4) : (*scan & 0xfff);
             if ((inst & RI_Rn) == ((inst & RI_Rd) << 4)) { // pre inc/dec
                if (off == 0) {
-                  *scan = (*scan & 0xff7ff000) |
-                          (inst & 0xff) | ((isAdd ? 5 : 1) << 21);
-                  funcBegin[rdd-instInfo] = NOP;
-                  *rdd &= RI_bb;
+                  if (isFP) {
+                     if (!isAdd) {
+                        *scan = (*scan & 0xff7fff00) | (1 << 21) | 1;
+                        funcBegin[rdd-instInfo] = NOP;
+                        *rdd &= RI_bb;
+                     }
+                  }
+                  else {
+                     *scan = (*scan & 0xff7ff000) |
+                             ((isAdd ? 5 : 1) << 21) | (inst & 0xff);
+                     funcBegin[rdd-instInfo] = NOP;
+                     *rdd &= RI_bb;
+                  }
                }
                else if (off * ((*scan & (1 << 23)) ? 1 : -1) +
-                        (inst & 0xff) * (isAdd ? 1 : -1) == 0) {
-                  *scan ^= 3 << 23;   // post inc/dec
-                  funcBegin[rdd-instInfo] = NOP;
-                  *rdd &= RI_bb;
+                        (inst & 0xff) * (isAdd ? 1 : -1) == 0) { // post
+                  if (!isFP || isAdd) {
+                     *scan ^= 3 << 23;   // post inc/dec
+                     if (isFP) *scan |= (1 << 21);
+                     funcBegin[rdd-instInfo] = NOP;
+                     *rdd &= RI_bb;
+                  }
                }
             }
             else if (off == 0) { // post inc/dec
@@ -1643,8 +1658,12 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
                      rdd2 = find_def(instInfo, info+1, rn, S_FWD);
                      if (rdd2 == 0) rdd2 = &instInfo[funcEnd-funcBegin];
                      if (rdu2 != 0 && rdu2 <= rdd2) continue;
-                     *scan = (*scan & 0xfe70f000) |
-                             (inst & 0x000f00ff) | ((isAdd ? 0 : 1) << 23);
+                     if (isFP)
+                        *scan = (*scan & 0xfe70ff00) | (inst & RI_Rn) |
+                                ((isAdd ? 0 : 1) << 23) | (1 << 21) | 1;
+                     else
+                        *scan = (*scan & 0xfe70f000) | (inst & 0x000f00ff) |
+                                ((isAdd ? 0 : 1) << 23);
                      funcBegin[rdd-instInfo] = *scanm1 = NOP;
                      *rdd &= RI_bb;
                      instInfo[scanm1-funcBegin] &= RI_bb;
@@ -2570,19 +2589,22 @@ static void simplify_branch1(int *funcBegin, int *funcEnd)
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
       if (!reachable[cursor++]) {
          if (!is_const(scan)) {
-            *scan = NOP;
-            --scan;
-            if ((*scan & 0x0fffffff) == 0x0a000000 &&
-                ((*scan >> 28) & 0xf) != 0xf && !is_const(scan)) {
-               *scan = NOP; // remove branch past single nop
+            if (*scan != 0xe8bd8800 || // keep dead sentinel "pop {fp, pc}"
+                (*(scan-2) == 0xe8bd8800 && !is_const(scan-2))) {
+               *scan = NOP;
+               --scan;
+               if ((*scan & 0x0fffffff) == 0x0a000000 &&
+                   ((*scan >> 28) & 0xf) != 0xf && !is_const(scan)) {
+                  *scan = NOP; // remove branch past single nop
+               }
+               --scan;
+               if ((*scan & 0x0fffffff) == 0x0a000001 &&
+                   ((*scan >> 28) & 0xf) != 0xf && !is_const(scan)) {
+                  *scan ^= 1; // allows other optimizations, cf xx_branch5()
+               }
+               ++scan;
+               ++scan;
             }
-            --scan;
-            if ((*scan & 0x0fffffff) == 0x0a000001 &&
-                ((*scan >> 28) & 0xf) != 0xf && !is_const(scan)) {
-               *scan ^= 1; // allows other optimizations, cf xx_branch5()
-            }
-            ++scan;
-            ++scan;
          }
       }
       else if (*scan == 0xeaffffff) { // branch to next statement
