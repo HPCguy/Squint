@@ -12,7 +12,7 @@ int main()
       for (c=0; c<SIZE; ++c) {
          sum = 0.0;
          bc = b + c;
-         for (k=SIZE; k > 0; --k) {
+         for (k=SIZE; k != 0; --k) {
             sum += *a++ * *bc;
             bc += SIZE;
          }

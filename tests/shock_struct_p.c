@@ -105,16 +105,21 @@ void ComputeFaceInfo(int numFace, struct con *cv, struct flux *fl)
    struct con *cv_ = cv;
    struct flux *fl_ = fl;
    float f0_, f1_, f2_;
-   int contributor;
-   int i;
+   struct con *contributor;
    float ev;
    float cLocal;
 
-   for (i = 0; i < numFace; ++i)
+   for (int i = numFace; i != 0; --i)
    {
       /* each face has an upwind and downwind element. */
+#ifdef __MC__
       int upWind   := 0; /* upwind element */
       int downWind := 1; /* downwind element */
+#endif
+#ifndef __MC__
+      int upWind   = 0; /* upwind element */
+      int downWind = 1; /* downwind element */
+#endif
 
       /* calculate face centered quantities */
       float massf =     0.5 * (cv_[upWind].mass   + cv_[downWind].mass);
@@ -132,10 +137,10 @@ void ComputeFaceInfo(int numFace, struct con *cv, struct flux *fl)
 
       /* OK, calculate face quantities */
 
-      contributor = ((v >= 0.0) ? upWind : downWind);
-      massf     = cv_[contributor].mass;
-      momentumf = cv_[contributor].mom;
-      energyf   = cv_[contributor].energy;
+      contributor = ((v >= 0.0) ? &cv_[upWind] : &cv_[downWind]);
+      massf     = contributor->mass;
+      momentumf = contributor->mom;
+      energyf   = contributor->energy;
       pressuref = energyf - 0.5*momentumf*momentumf/massf;
       ev = v*(gammaa - 1.0);
 
@@ -143,10 +148,10 @@ void ComputeFaceInfo(int numFace, struct con *cv, struct flux *fl)
       f1_ = ev*momentumf;
       f2_ = ev*(energyf - pressuref);
 
-      contributor = ((v + c >= 0.0) ? upWind : downWind);
-      massf     = cv_[contributor].mass;
-      momentumf = cv_[contributor].mom;
-      energyf   = cv_[contributor].energy;
+      contributor = ((v + c >= 0.0) ? &cv_[upWind] : &cv_[downWind]);
+      massf     = contributor->mass;
+      momentumf = contributor->mom;
+      energyf   = contributor->energy;
       pressuref = (gammaa - 1.0)*(energyf - 0.5*momentumf*momentumf/massf);
       ev = 0.5*(v + c);
       cLocal = sqrtf(gammaa*pressuref/massf);
@@ -155,14 +160,14 @@ void ComputeFaceInfo(int numFace, struct con *cv, struct flux *fl)
       f1_ += ev*(momentumf + massf*cLocal);
       f2_ += ev*(energyf + pressuref + momentumf*cLocal);
 
-      contributor = ((v - c >= 0.0) ? upWind : downWind);
-      massf     = cv_[contributor].mass;
-      momentumf = cv_[contributor].mom;
-      energyf   = cv_[contributor].energy;
+      contributor = ((v - c >= 0.0) ? &cv_[upWind] : &cv_[downWind]);
+      massf     = contributor->mass;
+      momentumf = contributor->mom;
+      energyf   = contributor->energy;
+      ++cv_;
       pressuref = (gammaa - 1.0)*(energyf - 0.5*momentumf*momentumf/massf);
       ev = 0.5*(v - c);
       cLocal = sqrtf(gammaa*pressuref/massf);
-      ++cv_;
 
       f0_ += ev*massf;
       f1_ += ev*(momentumf - massf*cLocal);
@@ -191,11 +196,17 @@ void UpdateElemInfo(int numElem, struct con *cv, float *pressure,
    struct flux *fl_ = &fl[1];
    float *p = pressure;
 
-   for (int i = 1; i < numElem; ++i) 
+   for (int i = 1; i < numElem; ++i)
    {
       /* each element inside the tube has an upwind and downwind face */
+#ifdef __MC__
       int upWind :=  -1;   /* upwind face */
       int downWind := 0;   /* downwind face */
+#endif
+#ifndef __MC__
+      int upWind =  -1;   /* upwind face */
+      int downWind = 0;   /* downwind face */
+#endif
 
       float m_ = cv_->mass, mo_ = cv_->mom, e_ = cv_->energy;
       m_  -= gammaInverse*(fl_[downWind].f0 - fl_[upWind].f0)*dtdx;

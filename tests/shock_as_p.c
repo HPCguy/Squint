@@ -107,11 +107,10 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
    struct flux *fl_ = fl;
    float f0_, f1_, f2_;
    int contributor;
-   int i;
    float ev;
    float cLocal;
 
-   for (i = 0; i < numFace; ++i)
+   for (int i = numFace; i != 0; --i)
    {
       /* each face has an upwind and downwind element. */
 #ifdef __MC__
