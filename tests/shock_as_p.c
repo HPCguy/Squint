@@ -110,7 +110,7 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
    float ev;
    float cLocal;
 
-   for (int i = numFace; i != 0; --i)
+   for (int i = numFace; i > 0; --i)
    {
       /* each face has an upwind and downwind element. */
 #ifdef __MC__
@@ -196,7 +196,7 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
    float *m = &mass[1], *mo = &momentum[1], *e = &energy[1], *p = pressure;
    struct flux *fl_ = &fl[1];
 
-   for (int i = 1; i < numElem; ++i) 
+   for (int i = numElem - 1; i > 0; --i)
    {
       /* each element inside the tube has an upwind and downwind face */
 #ifdef __MC__

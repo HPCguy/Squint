@@ -2012,8 +2012,26 @@ static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd,
                 instMask2 == 0xe0400000 || // sub rn, rx, ry
                 instMask2 == 0xe0800000 || // add rn, rx, ry
                 instMask2 == 0xe0000000) { // and rn, rx, ry
+                scanp1 = active_inst(scan, 1);
                *scan = NOP;
                *scanm1 = *scanm1 | (1<<20);
+               if (((*scanp1 >> 23) & 0x1f) == 0x15) {  // backward branch
+                  t = 0xff000000 | (*scanp1 & 0x00ffffff);
+                  int *dst = scanp1 + 2 + t;
+                  scanm1 = active_inst(dst, -1);
+                  if (((*scanm1 >> 23) & 0x1f) == 0x14) { // forward branch
+                     // forward branch should point at deleted cmp
+                     *scanm1 = ((scanp1 - scanm1) -1) |
+                               ((*scanp1 & 0xff000000) ^ (1 <<28));
+                     scanm1 = active_inst(scanm1, -1);
+                     if (((*scanm1 >> 12) & 0x0f) != rn ||
+                         *(scanm1 - 1) != NOP) {
+                        printf("internal compiler error\n"); exit(-1);
+                     }
+                     *(scanm1 - 1) = *scanm1;
+                     *scanm1 = 0xe3500000 | (rn << 16); // cmp rx, 0
+                  }
+               }
             }
          }
       }

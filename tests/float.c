@@ -9,8 +9,7 @@ float dot(float *xx, float *yy, int n)
 {
    float *x = xx, *y = yy;
    float retVal = 0.0;
-   int i;
-   for (i = n; i > 0; --i) {
+   for (int i = n; i > 0; --i) {
       retVal += *x++ * *y++;
    }
    return retVal;
