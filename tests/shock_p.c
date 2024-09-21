@@ -207,11 +207,10 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
 #endif
 
       float m_ = *m, mo_ = *mo, e_ = *e;
-      m_  -= gammaInverse*(f0_[downWind] - f0_[upWind])*dtdx;
-      mo_ -= gammaInverse*(f1_[downWind] - f1_[upWind])*dtdx;
-      e_  -= gammaInverse*(f2_[downWind] - f2_[upWind])*dtdx;
+      m_  -= gammaInverse*(f0_[downWind] - f0_[upWind])*dtdx; ++f0_;
+      mo_ -= gammaInverse*(f1_[downWind] - f1_[upWind])*dtdx; ++f1_;
+      e_  -= gammaInverse*(f2_[downWind] - f2_[upWind])*dtdx; ++f2_;
       *++p   = (gammaa - 1.0) * (e_ - 0.5*mo_*(*mo++ = mo_)/(*m++ = m_));
-      ++f0_; ++f1_; ++f2_;
       *e++ = e_;
    }
 }
