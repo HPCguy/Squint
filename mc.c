@@ -2077,7 +2077,7 @@ void gen(int *n)
          a[j] = (int) b;
          while (j >= 0) { // push arguments
             gen(b + 1);
-            if (peephole && i != ClearCache) *++e = PHD;
+            if (peephole) *++e = PHD;
             if (i == ClearCache)
                *++e = PSH;
             else

@@ -346,7 +346,7 @@ static int *skip_nop(int *begin, enum search_dir dir)
          scan += dir;
          done = 0;
       }
-      else if (dir == 1 &&
+      else if (dir == S_FWD &&
                *scan == NOP1 &&
                (*(scan+1) & 0xffff0fff) != 0xe52d0004) { /* push */
          scan += 2;
@@ -354,7 +354,7 @@ static int *skip_nop(int *begin, enum search_dir dir)
       }
       else if (*(scan-1) == NOP1 &&
                (*scan & 0xffff0fff) != 0xe52d0004 && /* push */
-               dir == -1) {
+               dir == S_BACK) {
          scan -= 2;
          done = 0;
       }
@@ -368,7 +368,7 @@ static int *skip_nop(int *begin, enum search_dir dir)
          for (scan2 = scan + 1; scan2 < after_const_block; ++scan2)
             if (!is_const(scan2)) break;
          if (scan2 == after_const_block) {
-            scan = ((dir == 1) ? after_const_block : (scan - 1));
+            scan = ((dir == S_FWD) ? after_const_block : (scan - 1));
             done = 0;
          }
       }
@@ -2000,41 +2000,6 @@ static void apply_peepholes8(int *instInfo, int *funcBegin, int *funcEnd,
             scan = scanp1;
          }
       }
-      else if ((*scan & 0xfff0ffff) == 0xe3500000) { // cmp rx, #0
-         int rn = (*scan & RI_Rn) >> 16;
-         scanm1 = active_inst(scan,-1);
-         if (((*scanm1 >> 12) & 0x0f) == rn) {
-            int instMask  = *scanm1 & 0xfff00000;
-            int instMask2 = *scanm1 & 0xfff00ff0;
-            if (instMask == 0xe2400000 || // sub rn, rx, #lit
-                instMask == 0xe2800000 || // add rn, rx, #lit
-                instMask == 0xe2000000 || // and rn, rx, #lit
-                instMask2 == 0xe0400000 || // sub rn, rx, ry
-                instMask2 == 0xe0800000 || // add rn, rx, ry
-                instMask2 == 0xe0000000) { // and rn, rx, ry
-                scanp1 = active_inst(scan, 1);
-               *scan = NOP;
-               *scanm1 = *scanm1 | (1<<20);
-               if (((*scanp1 >> 23) & 0x1f) == 0x15) {  // backward branch
-                  t = 0xff000000 | (*scanp1 & 0x00ffffff);
-                  int *dst = scanp1 + 2 + t;
-                  scanm1 = active_inst(dst, -1);
-                  if (((*scanm1 >> 23) & 0x1f) == 0x14) { // forward branch
-                     // forward branch should point at deleted cmp
-                     *scanm1 = ((scanp1 - scanm1) -1) |
-                               ((*scanp1 & 0xff000000) ^ (1 <<28));
-                     scanm1 = active_inst(scanm1, -1);
-                     if (((*scanm1 >> 12) & 0x0f) != rn ||
-                         *(scanm1 - 1) != NOP) {
-                        printf("internal compiler error\n"); exit(-1);
-                     }
-                     *(scanm1 - 1) = *scanm1;
-                     *scanm1 = 0xe3500000 | (rn << 16); // cmp rx, 0
-                  }
-               }
-            }
-         }
-      }
       else if (*scan == 0xe3a00000) { // mov r0, #0
          // clean up FP printf prologue
          scanp1 = active_inst(scan, 1);
@@ -2239,12 +2204,193 @@ fallback:
             }
          }
       }
+      else if ((*scan & 0xfff0ffff) == 0xecb00a01) { // vldmia rn!,{s0}
+         scanp1 = active_inst(scan,1);
+         if ((*scanp1 & 0xffbf0fff) == 0xeeb00a40) { // vmov.f32 sd, s0
+            *scan |= (*scanp1 & (RI_Rd | RI_Sd));    // vldmia rn!,{sd}
+            *scanp1 = NOP;
+            finfo[scanp1-funcBegin] &= RI_bb;
+            scan = scanp1;
+         }
+      }
+      else if ((*scan & 0xffff0fff) == 0xe3e00000) { // mvn rA, #0
+         scanp1 = active_inst(scan,1);
+         if ((*scanp1 & 0xfff00ff0) == 0xe0200000) { // eor rB, rx, rA
+            scanp2 = active_inst(scanp1,1);
+            if ((*scanp2 & 0xfff00ff0) == 0xe0000000) { // and rd, ry, rB
+               if (((*scan & RI_Rd) >> 12) == (*scanp1 & 0x0f) &&
+                   ((*scanp1 & RI_Rd) >> 12) == (*scanp2 & 0x0f)) {
+                  *scanp2 = 0xe1c00000 | (*scanp2 & (RI_Rn | RI_Rd)) |
+                            ((*scanp1 & RI_Rn) >> 16); // bic rd, ry. rx
+                  *scan = *scanp1 = NOP;
+                  instInfo[scanp1-funcBegin] &= RI_bb;
+                  instInfo[scan  -funcBegin] &= RI_bb;
+                  scan = scanp2;
+               }
+            }
+         }
+      }
    }
    ++funcEnd;
 
    free(finfo);
 }
 
+static void apply_peepholes8_1(int *instInfo, int *funcBegin, int *funcEnd)
+{
+   int *scan, *scanm1, *scanm2, *scanp1, *scanfb;
+
+   create_inst_info(instInfo, funcBegin, funcEnd);
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+      if ((*scan & 0xfff0ffff) == 0xe3500000) { // cmp rx, #0
+         scanp1 = active_inst(scan, 1);
+         int cc = (*scanp1 >> 28) & 0x0f; // condition code
+         if (((*scanp1 >> 24) & 0x0f) != 0x0a || cc >= 14) // check cond branch
+            continue;
+
+         if (cc == 10 || cc == 11) { // GE -> PL or LT -> MI
+            *scanp1 = (*scanp1 & 0x0fffffff) | (((cc == 10) ? 5 : 4) << 28);
+         }
+
+         int rn = (*scan & RI_Rn) >> 16;
+         scanm1 = active_inst(scan,-1);
+         int isMul = ((*scanm1 & 0xffc000f0) == 0xe0000090); // mul/mla
+         int isDP  = (((*scanm1 & 0xfc000000) == 0xe0000000) &&
+                      ((*scanm1 & 0x01800000) != 0x01000000) && !isMul);
+         int rc = (*scanm1 >> (isMul ? 16 : 12)) & 0x0f;
+         if (rc == rn && (isMul || isDP)) {
+            // check for branch compatability
+            int t = (*scanm1 >> 21) & 0x0f; // DP opcode
+            if ((isDP && ((t < 2) || t > 11 || t == 8 || t == 9)) || isMul) {
+               if (cc == 12 || cc == 13) continue; // GT or LE require work
+            }
+
+            if (*scanp1 & (1 << 23)) {  // backward branch
+               int xform = 0;
+               t = 0xff000000 | (*scanp1 & 0x00ffffff);
+               int *bdst = scanp1 + 2 + t;
+               scanfb = active_inst(bdst, -1); // should be ptr to cond expr
+               if (((*scanfb >> 23) & 0x1f) == 0x14) { // forward branch
+                  int sc = 0; // special case
+                  scanm2 = active_inst(scanfb, -1);
+                  isMul = ((*scanm2 & 0xffc000f0) == 0xe0000090); // mul/mla
+                  isDP  = (((*scanm2 & 0xfc000000) == 0xe0000000) &&
+                           ((*scanm2 & 0x01800000) != 0x01000000) && !isMul);
+                  int rl = ((*scanm2 >> (isMul ? 16 : 12)) & 0x0f); // loopvar?
+                  int t = (*scanm2 >> 21) & 0x0f; // DP opcode
+                  if ((isDP && ((t < 2) || t > 11 || t == 8 || t == 9)) ||
+                      isMul) {
+                     if (cc == 12 || cc == 13) { // GT or LE
+                        if ((*scanm2 & 0xffef0000) == 0xe3a00000) // mov rd, #N
+                           sc = 1;
+                        else
+                           sc = 2; // need explicit compare
+                     }
+                  }
+                  int *fdst = scanfb + 2 + (*scanfb & 0x00ffffff);
+                  fdst = skip_nop(fdst, S_FWD);
+                  if (fdst <= scanm1) {
+                     *scan = NOP;
+                     *scanm1 |= (1 << 20);
+                     scan = scanm1;
+                  }
+                  else if (sc < 2 && (((isMul || isDP) && rl == rc) ||
+                           (isDP && rl == ((*scanm1 >> 16) & 0x0f)))) {
+                     int allNop = 1;
+                     for (int *scan1 = scanfb+1; scan1 < bdst; ++scan1) {
+                        if (!is_nop(*scan1)) { allNop = 0; break; }
+                     }
+                     *scan = NOP;
+                     *scanm1 |= (1 << 20);
+                     scan = scanm1;
+                     if (sc == 1) { // mov rd, #N for loop init
+                        int immrot = ((*scanm2 >> 8) & 0x0f) * 2;
+                        int imm = *scanm2 & 0xff;
+                        imm = (immrot ? (imm << (32 - immrot)) : imm);
+                        int cond = ((cc == 12) ? (imm > 0) : (imm <= 0));
+                        if (!cond)
+                           *scanfb = ((scanp1 - scanfb) - 1) | (0xea << 24);
+                        else if (allNop)
+                           *scanfb = NOP;
+                        else
+                           *scanfb = ((bdst - scanfb) - 1) | (0xea << 24);
+                     }
+                     else {
+                        *scanm2 |= (1 << 20);
+                        if (allNop) {
+                           *scanfb = ((scanp1 - scanfb) - 1) |
+                                     ((*scanp1 & 0xff000000) ^ (1 << 28));
+                        }
+                     }
+                     xform = 1;
+                  }
+                  else if (fdst == scan && is_nop(*(scanm2 - 1)) &&
+                           (*scanm2 & 0x0f000000) != 0x0a000000) { // branch
+                     int allNop = 1;
+                     for (int *scan1 = scanfb+1; scan1 < bdst; ++scan1) {
+                        if (!is_nop(*scan1)) { allNop = 0; break; }
+                     }
+                     if (allNop) {
+                        *scanfb = ((scanp1 - scanfb) - 1) |
+                                  ((*scanp1 & 0xff000000) ^ (1 << 28));
+                     }
+                     *(scanm2 - 1) = *scanm2;
+                     *scanm2 = *scan;
+                     *scan = NOP;
+                     *scanm1 |= (1 << 20);
+                     scan = scanm1;
+                     xform = 1;
+                  }
+               }
+               else { // handle do-while
+                  *scan = NOP;
+                  *scanm1 |= (1 << 20);
+                  scan = scanm1;
+               }
+               // 'scan' currently points at the comparison instruction.
+               // search backward for last def of comparison register
+               // or any other comparison of branch target on the way
+               // search backward for last use. If they seem ok,
+               // scan backward toward closest previous use/def
+               // looking for any blockers, like RI_bb, return-stmts,
+               // and other flag setting instructions.
+               if (xform && (instInfo[scan-funcBegin] & RI_bb) != RI_bb) {
+                  int *inst = &instInfo[scan-funcBegin];
+                  int *rxd = find_def(instInfo, inst-1, rc, S_BACK);
+                  if (rxd && rxd < bdst) {
+                     int *rxu = find_use(instInfo, inst-1, rc, S_BACK);
+                     if (rxu < bdst) { // simple loop counter, no dependency
+                        scanm1 = scan - 1; // rn <<= 12;
+                        while (scanm1 > bdst) {
+                           if ((*inst & RI_bb) || // jump target
+                               (*scanm1 == 0xeef1fa10) || // vmrs  APSR_nzcv, fpscr
+                               (*scanm1 & 0xfc100000) == 0xe0100000 || // S bit set
+                               *scanm1 == 0xe8bd8800) { // pop {fp, pc}
+                              while (!is_nop(*scanm1) && scanm1 < scan) ++scanm1;
+                              if (scanm1 != scan) {
+                                 *scanm1 = *scan;
+                                 *scan = NOP;
+                                 break;
+                              }
+                           }
+                           --scanm1; --inst;
+                        }
+                     }
+                  }
+               }
+            }
+            else { // fwd branch is always safe
+               *scan = NOP;
+               *scanm1 |= (1 << 20);
+               scan = scanm1;
+            }
+         }
+      }
+   }
+}
 static int apply_ptr_cleanup(int *instInfo, int *funcBegin, int *funcEnd,
                              int base)
 {
@@ -4180,6 +4326,7 @@ int squint_opt(int *begin, int *end)
          rename_nop(funcBegin, retAddr);
 
          apply_peepholes8(tmpbuf, funcBegin, retAddr, flow, fhigh);
+         apply_peepholes8_1(tmpbuf, funcBegin, retAddr);
 
          // if (noFloatConst)
          //    simplify_frame(funcBegin, retAddr);
