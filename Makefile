@@ -92,12 +92,12 @@ $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
 	$(Q)$(ARM_EXEC) ./$(OBJ_DIR)/$(BIN) $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <JIT-opt> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN)-so $(OP) $< 2 $(REDIR)
+	$(VECHO) "[*** verify $< <ELF-so-opt> *******]\n"
+	$(Q)$(ARM_EXEC) ./$(BIN)-so $(OP) -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
+	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
 	$(VECHO) "[*** verify $< <ELF-opt> *******]\n"
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
 	$(Q) scripts/peep $(OBJ_DIR)/$(notdir $(basename $<))-opt
-	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
-	$(VECHO) "[*** verify $< <ELF-so-opt> *******]\n"
-	$(Q)$(ARM_EXEC) ./$(BIN)-so $(OP) -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
 	$(Q)$(call pass,$<)
 

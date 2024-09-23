@@ -69,6 +69,10 @@ Additional BSD Notice
 float cbrtf(float x);
 float fmaxf(float x, float y);
 
+#define ZERO 0.0f
+#define ONE  1.0f
+#define HALF 0.5f
+
 #define LULESH_SHOW_PROGRESS 1
 
 enum { VolumeError = -1, QStopError = -2 } ;
@@ -276,21 +280,21 @@ void TimeIncrement(Domain *domain)
 {
    float targetdt = domain->stoptime - domain->time ;
 
-   if ((domain->dtfixed <= 0.0) && (domain->cycle != 0)) {
+   if ((domain->dtfixed <= ZERO) && (domain->cycle != 0)) {
       float ratio ;
       float olddt = domain->deltatime ;
 
       /* This will require a reduction in parallel */
       float newdt = 1.0e+20 ;
       if (domain->dtcourant < newdt) {
-         newdt = domain->dtcourant / 2.0 ;
+         newdt = domain->dtcourant / 2.0f ;
       }
       if (domain->dthydro < newdt) {
-         newdt = domain->dthydro * 2.0 / 3.0 ;
+         newdt = domain->dthydro * 2.0f / 3.0f ;
       }
 
       ratio = newdt / olddt ;
-      if (ratio >= 1.0) {
+      if (ratio >= ONE) {
          if (ratio < domain->deltatimemultlb) {
             newdt = olddt ;
          }
@@ -307,8 +311,8 @@ void TimeIncrement(Domain *domain)
 
    /* TRY TO PREVENT VERY SMALL SCALING ON THE NEXT CYCLE */
    if ((targetdt > domain->deltatime) &&
-       (targetdt < (4.0 * domain->deltatime / 3.0)) ) {
-      targetdt = 2.0 * domain->deltatime / 3.0 ;
+       (targetdt < (4.0f * domain->deltatime / 3.0f)) ) {
+      targetdt = 2.0f * domain->deltatime / 3.0f ;
    }
 
    if (targetdt < domain->deltatime) {
@@ -350,9 +354,9 @@ void CalcElemShapeFunctionDerivatives( float *x, float *y, float *z,
 
       t1 = (x6-x0); t2 = (x5-x3); t3 = (x7-x1); t4 = (x4-x2);
 
-      fjxxi = 0.125 * ( t1 + t2 - t3 - t4 );
-      fjxet = 0.125 * ( t1 - t2 + t3 - t4 );
-      fjxze = 0.125 * ( t1 + t2 + t3 + t4 );
+      fjxxi = 0.125f * ( t1 + t2 - t3 - t4 );
+      fjxet = 0.125f * ( t1 - t2 + t3 - t4 );
+      fjxze = 0.125f * ( t1 + t2 + t3 + t4 );
    }
 
    {
@@ -365,9 +369,9 @@ void CalcElemShapeFunctionDerivatives( float *x, float *y, float *z,
 
       t1 = (y6-y0); t2 = (y5-y3); t3 = (y7-y1); t4 = (y4-y2);
 
-      fjyxi = 0.125 * ( t1 + t2 - t3 - t4 );
-      fjyet = 0.125 * ( t1 - t2 + t3 - t4 );
-      fjyze = 0.125 * ( t1 + t2 + t3 + t4 );
+      fjyxi = 0.125f * ( t1 + t2 - t3 - t4 );
+      fjyet = 0.125f * ( t1 - t2 + t3 - t4 );
+      fjyze = 0.125f * ( t1 + t2 + t3 + t4 );
    }
 
    {
@@ -380,9 +384,9 @@ void CalcElemShapeFunctionDerivatives( float *x, float *y, float *z,
 
       t1 = (z6-z0); t2 = (z5-z3); t3 = (z7-z1); t4 = (z4-z2);
 
-      fjzxi = 0.125 * ( t1 + t2 - t3 - t4 );
-      fjzet = 0.125 * ( t1 - t2 + t3 - t4 );
-      fjzze = 0.125 * ( t1 + t2 + t3 + t4 );
+      fjzxi = 0.125f * ( t1 + t2 - t3 - t4 );
+      fjzet = 0.125f * ( t1 - t2 + t3 - t4 );
+      fjzze = 0.125f * ( t1 + t2 + t3 + t4 );
    }
 
    float cjxxi, cjxet, cjxze;
@@ -434,7 +438,7 @@ void CalcElemShapeFunctionDerivatives( float *x, float *y, float *z,
    // b[2][7] = -b[2][1];
 
    /* calculate jacobian determinant (volume) */
-   *volume = 8.0 * ( fjxet * cjxet + fjyet * cjyet + fjzet * cjzet);
+   *volume = 8.0f * ( fjxet * cjxet + fjyet * cjyet + fjzet * cjzet);
 }
 
 inline void SumElemFaceNormal(float *normalX0, float *normalY0, float *normalZ0,
@@ -452,9 +456,9 @@ inline void SumElemFaceNormal(float *normalX0, float *normalY0, float *normalZ0,
    float bisectX1 = x2 + x1 - x3 - x0;
    float bisectY1 = y2 + y1 - y3 - y0;
    float bisectZ1 = z2 + z1 - z3 - z0;
-   float areaX = 0.0625 * (bisectY0 * bisectZ1 - bisectZ0 * bisectY1);
-   float areaY = 0.0625 * (bisectZ0 * bisectX1 - bisectX0 * bisectZ1);
-   float areaZ = 0.0625 * (bisectX0 * bisectY1 - bisectY0 * bisectX1);
+   float areaX = 0.0625f * (bisectY0 * bisectZ1 - bisectZ0 * bisectY1);
+   float areaY = 0.0625f * (bisectZ0 * bisectX1 - bisectX0 * bisectZ1);
+   float areaZ = 0.0625f * (bisectX0 * bisectY1 - bisectY0 * bisectX1);
 
    *normalX0 += areaX;
    *normalX1 += areaX;
@@ -476,9 +480,9 @@ void CalcElemNodeNormals(float *pfx, float *pfy, float *pfz,
                          float *x, float *y, float *z)
 {
    for (int i = 0 ; i < 8 ; ++i) {
-      pfx[i] = 0.0;
-      pfy[i] = 0.0;
-      pfz[i] = 0.0;
+      pfx[i] = ZERO;
+      pfy[i] = ZERO;
+      pfz[i] = ZERO;
    }
    /* evaluate face one: nodes 0, 1, 2, 3 */
    SumElemFaceNormal(&pfx[0], &pfy[0], &pfz[0],
@@ -671,7 +675,7 @@ void CollectDomainNodesToElemNodes(float *x, float *y, float *z,
 
 }
 
-#define twelfth 0.0833333333
+#define twelfth 0.0833333333f
 
 inline void VoluDer(float x0,  float x1,  float x2,
              float x3,  float x4,  float x5,
@@ -681,7 +685,7 @@ inline void VoluDer(float x0,  float x1,  float x2,
              float z3,  float z4,  float z5,
              float *dvdx, float *dvdy, float *dvdz)
 {
-    // float twelfth = 1.0 / 12.0 ;
+    // float twelfth = ONE / 12.0f ;
 
    *dvdx =
      ((y1 + y2) * (z0 + z1) - (y0 + y1) * (z1 + z2) +
@@ -925,10 +929,10 @@ void CalcElemFBHourglassForce(float *xd, float *yd, float *zd,
 
 float gammaa[4][8] =
 {
-   {  1.0,  1.0, -1.0, -1.0, -1.0, -1.0, 1.0,  1.0 },
-   {  1.0, -1.0, -1.0,  1.0, -1.0,  1.0, 1.0, -1.0 },
-   {  1.0, -1.0,  1.0, -1.0,  1.0, -1.0, 1.0, -1.0 },
-   { -1.0,  1.0, -1.0,  1.0,  1.0, -1.0, 1.0, -1.0 }
+   {  ONE,  ONE, -ONE, -ONE, -ONE, -ONE, ONE,  ONE },
+   {  ONE, -ONE, -ONE,  ONE, -ONE,  ONE, ONE, -ONE },
+   {  ONE, -ONE,  ONE, -ONE,  ONE, -ONE, ONE, -ONE },
+   { -ONE,  ONE, -ONE,  ONE,  ONE, -ONE, ONE, -ONE }
 } ;
 
 void FBKernel(float *x8ni, float *y8ni, float *z8ni,
@@ -1016,7 +1020,7 @@ void CalcFBHourglassForceForElems(int * nodelist,
       float coefficient;
       int *elemToNode = &nodelist[8*i2];
       int i3=8*i2;
-      // float volinv = 1.0/determ[i2];
+      // float volinv = ONE/determ[i2];
       float ss1, mass1, volume13 ;
       // float hourmodx, hourmody, hourmodz;
       int n0si2, n1si2, n2si2, n3si2;
@@ -1025,7 +1029,7 @@ void CalcFBHourglassForceForElems(int * nodelist,
 
       FBKernel( &x8n[i3],  &y8n[i3],  &z8n[i3],
                &dvdx[i3], &dvdy[i3], &dvdz[i3],
-               hourgam, 1.0/determ[i2]);
+               hourgam, ONE/determ[i2]);
 
       /* compute forces */
       /* store forces into h arrays (force arrays) */
@@ -1073,7 +1077,7 @@ void CalcFBHourglassForceForElems(int * nodelist,
       zd1[6] = zd[n6si2];
       zd1[7] = zd[n7si2];
 
-      coefficient = - hourg * 0.01 * ss1 * mass1 / volume13;
+      coefficient = - hourg * 0.01f * ss1 * mass1 / volume13;
 
       CalcElemFBHourglassForce(xd1,yd1,zd1,
                       hourgam, coefficient, hgfx, hgfy, hgfz);
@@ -1148,12 +1152,12 @@ void CalcHourglassControlForElems(Domain *domain, float *determ, float hgcoef)
       determ[idx] = domain->volo[idx] * domain->v[idx];
 
       /* Do a check for negative volumes */
-      if ( domain->v[idx] <= 0.0 ) {
+      if ( domain->v[idx] <= ZERO ) {
          exit(VolumeError) ;
       }
    }
 
-   if ( hgcoef > 0. ) {
+   if ( hgcoef > ZERO ) {
       CalcFBHourglassForceForElems( domain->nodelist,
                                     domain->ss, domain->elemMass,
                                     domain->xd, domain->yd, domain->zd,
@@ -1195,7 +1199,7 @@ void CalcVolumeForceForElems(Domain *domain)
 
       // check for negative element volume
       for (int k=0; k<numElem; ++k) {
-         if (determ[k] <= 0.0) {
+         if (determ[k] <= ZERO) {
             exit(VolumeError) ;
          }
       }
@@ -1213,9 +1217,9 @@ void CalcForceForNodes(Domain *domain)
 {
   int numNode = domain->numNode ;
   for (int i=0; i<numNode; ++i) {
-     domain->fx[i] = 0.0 ;
-     domain->fy[i] = 0.0 ;
-     domain->fz[i] = 0.0 ;
+     domain->fx[i] = ZERO ;
+     domain->fy[i] = ZERO ;
+     domain->fz[i] = ZERO ;
   }
 }
 
@@ -1238,9 +1242,9 @@ void ApplyAccelerationBoundaryConditionsForNodes(float *xdd, float *ydd,
   int numNodeBC = (size+1)*(size+1) ;
 
   for (int i=0; i<numNodeBC; ++i) {
-     xdd[symmX[i]] = 0.0 ;
-     ydd[symmY[i]] = 0.0 ;
-     zdd[symmZ[i]] = 0.0 ;
+     xdd[symmX[i]] = ZERO ;
+     ydd[symmY[i]] = ZERO ;
+     zdd[symmZ[i]] = ZERO ;
   }
 }
 
@@ -1253,15 +1257,15 @@ void CalcVelocityForNodes(float *xd,  float *yd,  float *zd,
      float xdtmp, ydtmp, zdtmp ;
 
      xdtmp = xt = xd[i] + xdd[i] * dt ;
-     if ( fabsf(xt) < u_cut ) xdtmp = 0.0;
+     if ( fabsf(xt) < u_cut ) xdtmp = ZERO;
      xd[i] = xdtmp ;
 
      ydtmp = yt = yd[i] + ydd[i] * dt ;
-     if( fabsf(yt) < u_cut ) ydtmp = 0.0;
+     if( fabsf(yt) < u_cut ) ydtmp = ZERO;
      yd[i] = ydtmp ;
 
      zdtmp = zt = zd[i] + zdd[i] * dt ;
-     if( fabsf(zt) < u_cut ) zdtmp = 0.0;
+     if( fabsf(zt) < u_cut ) zdtmp = ZERO;
      zd[i] = zdtmp ;
    }
 }
@@ -1329,9 +1333,9 @@ inline void CalcElemVolume2(float x0, float x1, float x2,  float x3,
                      float z0,  float z1, float z2,  float z3,
                      float z4,  float z5, float z6,  float z7, float *fv)
 {
-  // float twelfth = 1.0 / 12.0;
+  // float twelfth = ONE / 12.0f;
 
-  *fv = 0.0;
+  *fv = ZERO;
   {
      float dx31 = x3 - x1;
      float dy31 = y3 - y1;
@@ -1451,7 +1455,7 @@ float CalcElemCharacteristicLength(float x[8], float y[8], float z[8],
                                    float volume)
 {
    float a;
-   float charLength = 0.0;
+   float charLength = ZERO;
 
    AreaFace(x[0],x[1],x[2],x[3],
             y[0],y[1],y[2],y[3],
@@ -1483,7 +1487,7 @@ float CalcElemCharacteristicLength(float x[8], float y[8], float z[8],
             z[3],z[0],z[4],z[7], &a) ;
    charLength = fmaxf(a,charLength) ;
 
-   charLength = (4.0 * volume) / sqrtf( charLength );
+   charLength = (4.0f * volume) / sqrtf( charLength );
 
    return charLength;
 }
@@ -1491,7 +1495,7 @@ float CalcElemCharacteristicLength(float x[8], float y[8], float z[8],
 void CalcElemVelocityGrandient(float *xvel, float *yvel, float *zvel,
                                float b[][8], float detJ, float *d)
 {
-   float inv_detJ = 1.0 / detJ ;
+   float inv_detJ = ONE / detJ ;
    float dyddx, dxddy, dzddx, dxddz, dzddy, dyddz;
    float*  pfx = &b[0][0];
    float*  pfy = &b[1][0];
@@ -1541,9 +1545,9 @@ void CalcElemVelocityGrandient(float *xvel, float *yvel, float *zvel,
                       + pfz[1] * (yvel[1]-yvel[7])
                       + pfz[2] * (yvel[2]-yvel[4])
                       + pfz[3] * (yvel[3]-yvel[5]) );
-  d[5]  = 0.5 * ( dxddy + dyddx );
-  d[4]  = 0.5 * ( dxddz + dzddx );
-  d[3]  = 0.5 * ( dzddy + dyddz );
+  d[5]  = ( dxddy + dyddx ) * HALF;
+  d[4]  = ( dxddz + dzddx ) * HALF;
+  d[3]  = ( dzddy + dyddz ) * HALF;
 }
 
 void CalcKinematicsForElems(int *nodelist,
@@ -1558,7 +1562,7 @@ void CalcKinematicsForElems(int *nodelist,
   // loop over all elements
   for (int k=0; k<numElem; ++k) {
     float dt2;
-    float detJ = 0.0 ;
+    float detJ = ZERO ;
     float volume ;
     float relativeVolume ;
     int * elemToNode = &nodelist[8*k] ;
@@ -1602,7 +1606,7 @@ void CalcKinematicsForElems(int *nodelist,
       zd_local[lnode] = zd[gnode2];
     }
 
-    dt2 = 0.5 * deltaTime;
+    dt2 = deltaTime * HALF;
     for (j=0 ; j<8 ; ++j )
     {
        x_local[j] -= dt2 * xd_local[j];
@@ -1645,7 +1649,7 @@ void CalcLagrangeElements(Domain *domain)
       for (int k=0; k<numElem; ++k) {
         // calc strain rate and apply as raint (only done in FB element)
         float vdov = domain->dxx[k] + domain->dyy[k] + domain->dzz[k] ;
-        float vdovthird = vdov * (1.0 / 3.0 ) ;
+        float vdovthird = vdov * (ONE / 3.0f ) ;
         
         // make the rate of deformation tensor deviatoric
         domain->vdov[k] = vdov ;
@@ -1654,7 +1658,7 @@ void CalcLagrangeElements(Domain *domain)
         domain->dzz[k] -= vdovthird ;
 
         // See if any volumes are negative, and take appropriate action.
-        if (domain->vnew[k] <= 0.0)
+        if (domain->vnew[k] <= ZERO)
         {
            exit(VolumeError) ;
         }
@@ -1697,7 +1701,7 @@ void CalcMonotonicQGradientsForElems(float *x, float *y, float *z,
       int n7 := elemToNode[7] ;
 
       float vol = volo[i]*vnew[i] ;
-      float norm = 1.0 / ( vol + ptiny ) ;
+      float norm = ONE / ( vol + ptiny ) ;
 
       {
          float x0 = x[n0] ;
@@ -1727,17 +1731,17 @@ void CalcMonotonicQGradientsForElems(float *x, float *y, float *z,
          float z6 = z[n6] ;
          float z7 = z[n7] ;
 
-         dxj = -0.25*((x0 + x1 + x5 + x4) - (x3 + x2 + x6 + x7)) ;
-         dyj = -0.25*((y0 + y1 + y5 + y4) - (y3 + y2 + y6 + y7)) ;
-         dzj = -0.25*((z0 + z1 + z5 + z4) - (z3 + z2 + z6 + z7)) ;
+         dxj = -0.25f*((x0 + x1 + x5 + x4) - (x3 + x2 + x6 + x7)) ;
+         dyj = -0.25f*((y0 + y1 + y5 + y4) - (y3 + y2 + y6 + y7)) ;
+         dzj = -0.25f*((z0 + z1 + z5 + z4) - (z3 + z2 + z6 + z7)) ;
 
-         dxi = 0.25*((x1 + x2 + x6 + x5) - (x0 + x3 + x7 + x4)) ;
-         dyi = 0.25*((y1 + y2 + y6 + y5) - (y0 + y3 + y7 + y4)) ;
-         dzi = 0.25*((z1 + z2 + z6 + z5) - (z0 + z3 + z7 + z4)) ;
+         dxi = 0.25f*((x1 + x2 + x6 + x5) - (x0 + x3 + x7 + x4)) ;
+         dyi = 0.25f*((y1 + y2 + y6 + y5) - (y0 + y3 + y7 + y4)) ;
+         dzi = 0.25f*((z1 + z2 + z6 + z5) - (z0 + z3 + z7 + z4)) ;
 
-         dxk = 0.25*((x4 + x5 + x6 + x7) - (x0 + x1 + x2 + x3)) ;
-         dyk = 0.25*((y4 + y5 + y6 + y7) - (y0 + y1 + y2 + y3)) ;
-         dzk = 0.25*((z4 + z5 + z6 + z7) - (z0 + z1 + z2 + z3)) ;
+         dxk = 0.25f*((x4 + x5 + x6 + x7) - (x0 + x1 + x2 + x3)) ;
+         dyk = 0.25f*((y4 + y5 + y6 + y7) - (y0 + y1 + y2 + y3)) ;
+         dzk = 0.25f*((z4 + z5 + z6 + z7) - (z0 + z1 + z2 + z3)) ;
       }
 
       /* find delvk and delxk ( i cross j ) */
@@ -1776,9 +1780,9 @@ void CalcMonotonicQGradientsForElems(float *x, float *y, float *z,
       float zv6 = zd[n6] ;
       float zv7 = zd[n7] ;
 
-      dxv = 0.25*((xv4 + xv5 + xv6 + xv7) - (xv0 + xv1 + xv2 + xv3)) ;
-      dyv = 0.25*((yv4 + yv5 + yv6 + yv7) - (yv0 + yv1 + yv2 + yv3)) ;
-      dzv = 0.25*((zv4 + zv5 + zv6 + zv7) - (zv0 + zv1 + zv2 + zv3)) ;
+      dxv = 0.25f*((xv4 + xv5 + xv6 + xv7) - (xv0 + xv1 + xv2 + xv3)) ;
+      dyv = 0.25f*((yv4 + yv5 + yv6 + yv7) - (yv0 + yv1 + yv2 + yv3)) ;
+      dzv = 0.25f*((zv4 + zv5 + zv6 + zv7) - (zv0 + zv1 + zv2 + zv3)) ;
 
       delv_zeta[i] = ( ax*dxv + ay*dyv + az*dzv ) * norm ;
 
@@ -1790,9 +1794,9 @@ void CalcMonotonicQGradientsForElems(float *x, float *y, float *z,
 
       delx_xi[i] = vol / sqrtf(ax*ax + ay*ay + az*az + ptiny) ;
 
-      dxv = 0.25*((xv1 + xv2 + xv6 + xv5) - (xv0 + xv3 + xv7 + xv4)) ;
-      dyv = 0.25*((yv1 + yv2 + yv6 + yv5) - (yv0 + yv3 + yv7 + yv4)) ;
-      dzv = 0.25*((zv1 + zv2 + zv6 + zv5) - (zv0 + zv3 + zv7 + zv4)) ;
+      dxv = 0.25f*((xv1 + xv2 + xv6 + xv5) - (xv0 + xv3 + xv7 + xv4)) ;
+      dyv = 0.25f*((yv1 + yv2 + yv6 + yv5) - (yv0 + yv3 + yv7 + yv4)) ;
+      dzv = 0.25f*((zv1 + zv2 + zv6 + zv5) - (zv0 + zv3 + zv7 + zv4)) ;
 
       delv_xi[i] = ( ax*dxv + ay*dyv + az*dzv ) * norm ;
 
@@ -1804,9 +1808,9 @@ void CalcMonotonicQGradientsForElems(float *x, float *y, float *z,
 
       delx_eta[i] = vol / sqrtf(ax*ax + ay*ay + az*az + ptiny) ;
 
-      dxv = -0.25*((xv0 + xv1 + xv5 + xv4) - (xv3 + xv2 + xv6 + xv7)) ;
-      dyv = -0.25*((yv0 + yv1 + yv5 + yv4) - (yv3 + yv2 + yv6 + yv7)) ;
-      dzv = -0.25*((zv0 + zv1 + zv5 + zv4) - (zv3 + zv2 + zv6 + zv7)) ;
+      dxv = -0.25f*((xv0 + xv1 + xv5 + xv4) - (xv3 + xv2 + xv6 + xv7)) ;
+      dyv = -0.25f*((yv0 + yv1 + yv5 + yv4) - (yv3 + yv2 + yv6 + yv7)) ;
+      dzv = -0.25f*((zv0 + zv1 + zv5 + zv4) - (zv3 + zv2 + zv6 + zv7)) ;
 
       // i is int type and ax is float == mismatch
       delv_eta[i] = ( ax*dxv + ay*dyv + az*dzv ) * norm ;
@@ -1833,119 +1837,119 @@ void CalcMonotonicQRegionForElems(int *elemBC,
       float delvm, delvp ;
 
       /*  phixi     */
-      float norm = 1.0 / ( delv_xi[i] + ptiny ) ;
+      float norm = ONE / ( delv_xi[i] + ptiny ) ;
 
       switch (bcMask & XI_M) {
          case 0:         delvm = delv_xi[lxim[i]] ; break ;
          case XI_M_SYMM: delvm = delv_xi[i] ;       break ;
-         case XI_M_FREE: delvm = 0.0 ;              break ;
+         case XI_M_FREE: delvm = ZERO ;             break ;
          default:        /* ERROR */ ;              break ;
       }
       switch (bcMask & XI_P) {
          case 0:         delvp = delv_xi[lxip[i]] ; break ;
          case XI_P_SYMM: delvp = delv_xi[i] ;       break ;
-         case XI_P_FREE: delvp = 0.0 ;              break ;
+         case XI_P_FREE: delvp = ZERO ;             break ;
          default:        /* ERROR */ ;              break ;
       }
 
       delvm = delvm * norm ;
       delvp = delvp * norm ;
 
-      phixi = 0.5 * ( delvm + delvp ) ;
+      phixi = ( delvm + delvp ) * HALF;
 
       delvm *= monoq_limiter_mult ;
       delvp *= monoq_limiter_mult ;
 
       if ( delvm < phixi ) phixi = delvm ;
       if ( delvp < phixi ) phixi = delvp ;
-      if ( phixi < 0.0) phixi = 0. ;
+      if ( phixi < ZERO) phixi = ZERO ;
       if ( phixi > monoq_max_slope) phixi = monoq_max_slope;
 
 
       /*  phieta     */
-      norm = 1.0 / ( delv_eta[i] + ptiny ) ;
+      norm = ONE / ( delv_eta[i] + ptiny ) ;
 
       switch (bcMask & ETA_M) {
          case 0:          delvm = delv_eta[letam[i]] ; break ;
          case ETA_M_SYMM: delvm = delv_eta[i] ;        break ;
-         case ETA_M_FREE: delvm = 0.0 ;                break ;
+         case ETA_M_FREE: delvm = ZERO ;               break ;
          default:         /* ERROR */ ;                break ;
       }
       switch (bcMask & ETA_P) {
          case 0:          delvp = delv_eta[letap[i]] ; break ;
          case ETA_P_SYMM: delvp = delv_eta[i] ;        break ;
-         case ETA_P_FREE: delvp = 0.0 ;                break ;
+         case ETA_P_FREE: delvp = ZERO ;               break ;
          default:         /* ERROR */ ;                break ;
       }
 
       delvm = delvm * norm ;
       delvp = delvp * norm ;
 
-      phieta = 0.5 * ( delvm + delvp ) ;
+      phieta = ( delvm + delvp ) * HALF;
 
       delvm *= monoq_limiter_mult ;
       delvp *= monoq_limiter_mult ;
 
       if ( delvm  < phieta ) phieta = delvm ;
       if ( delvp  < phieta ) phieta = delvp ;
-      if ( phieta < 0.0) phieta = 0.0 ;
+      if ( phieta < ZERO) phieta = ZERO ;
       if ( phieta > monoq_max_slope)  phieta = monoq_max_slope;
 
       /*  phizeta     */
-      norm = 1.0 / ( delv_zeta[i] + ptiny ) ;
+      norm = ONE / ( delv_zeta[i] + ptiny ) ;
 
       switch (bcMask & ZETA_M) {
          case 0:           delvm = delv_zeta[lzetam[i]] ; break ;
          case ZETA_M_SYMM: delvm = delv_zeta[i] ;         break ;
-         case ZETA_M_FREE: delvm = 0.0 ;                  break ;
+         case ZETA_M_FREE: delvm = ZERO ;                 break ;
          default:          /* ERROR */ ;                  break ;
       }
       switch (bcMask & ZETA_P) {
          case 0:           delvp = delv_zeta[lzetap[i]] ; break ;
          case ZETA_P_SYMM: delvp = delv_zeta[i] ;         break ;
-         case ZETA_P_FREE: delvp = 0.0 ;                  break ;
+         case ZETA_P_FREE: delvp = ZERO ;                 break ;
          default:          /* ERROR */ ;                  break ;
       }
 
       delvm = delvm * norm ;
       delvp = delvp * norm ;
 
-      phizeta = 0.5 * ( delvm + delvp ) ;
+      phizeta = ( delvm + delvp ) * HALF;
 
       delvm *= monoq_limiter_mult ;
       delvp *= monoq_limiter_mult ;
 
       if ( delvm   < phizeta ) phizeta = delvm ;
       if ( delvp   < phizeta ) phizeta = delvp ;
-      if ( phizeta < 0.0)      phizeta = 0.;
+      if ( phizeta < ZERO)     phizeta = ZERO ;
       if ( phizeta > monoq_max_slope  ) phizeta = monoq_max_slope;
 
       /* Remove length scale */
 
-      if ( vdov[i] > 0.0 )  {
-         qlin  = 0.0 ;
-         qquad = 0.0 ;
+      if ( vdov[i] > ZERO )  {
+         qlin  = ZERO ;
+         qquad = ZERO ;
       }
       else {
          float delvxxi   = delv_xi[i]   * delx_xi[i]   ;
          float delvxeta  = delv_eta[i]  * delx_eta[i]  ;
          float delvxzeta = delv_zeta[i] * delx_zeta[i] ;
 
-         if ( delvxxi   > 0.0 ) delvxxi   = 0.0 ;
-         if ( delvxeta  > 0.0 ) delvxeta  = 0.0 ;
-         if ( delvxzeta > 0.0 ) delvxzeta = 0.0 ;
+         if ( delvxxi   > ZERO ) delvxxi   = ZERO ;
+         if ( delvxeta  > ZERO ) delvxeta  = ZERO ;
+         if ( delvxzeta > ZERO ) delvxzeta = ZERO ;
 
          float rho = elemMass[i] / (volo[i] * vnew[i]) ;
 
          qlin = -qlc_monoq * rho *
-            (  delvxxi   * (1.0 - phixi) +
-               delvxeta  * (1.0 - phieta) +
-               delvxzeta * (1.0 - phizeta)  ) ;
+            (  delvxxi   * (ONE - phixi) +
+               delvxeta  * (ONE - phieta) +
+               delvxzeta * (ONE - phizeta)  ) ;
 
          qquad = qqc_monoq * rho *
-            (  delvxxi*delvxxi     * (1.0 - phixi*phixi) +
-               delvxeta*delvxeta   * (1.0 - phieta*phieta) +
-               delvxzeta*delvxzeta * (1.0 - phizeta*phizeta)  ) ;
+            (  delvxxi*delvxxi     * (ONE - phixi*phixi) +
+               delvxeta*delvxeta   * (ONE - phieta*phieta) +
+               delvxzeta*delvxzeta * (ONE - phizeta*phizeta)  ) ;
       }
 
       qq[i] = qquad ;
@@ -2045,7 +2049,7 @@ void CalcQForElems(Domain *domain)
    }
 }
 
-#define c1s 0.666666666
+#define c1s 0.666666666f
 
 inline void CalcPressureForElems(float *p_new, float *bvc,
                           float *pbvc, float *e_old,
@@ -2053,9 +2057,9 @@ inline void CalcPressureForElems(float *p_new, float *bvc,
                           float pmin, float p_cut, float eosvmax,
                           int length)
 {
-   // float c1s = 2.0 / 3.0 ;
+   // float c1s = 2.0f / 3.0f ;
    for (int i=0 ; i<length; ++i) {
-      bvc[i] = c1s * (compression[i] + 1.0 );
+      bvc[i] = c1s * (compression[i] + ONE );
       pbvc[i] = c1s;
    }
 
@@ -2063,17 +2067,17 @@ inline void CalcPressureForElems(float *p_new, float *bvc,
       p_new[i] = bvc[i] * e_old[i] ;
 
       if    (fabsf(p_new[i]) <  p_cut)
-         p_new[i] = 0.0 ;
+         p_new[i] = ZERO ;
 
       if    ( vnewc[i] >= eosvmax ) /* impossible condition here? */
-         p_new[i] = 0.0 ;
+         p_new[i] = ZERO ;
 
       if    (p_new[i]       <  pmin)
          p_new[i]   = pmin ;
    }
 }
 
-#define sixth 0.166666666
+#define sixth 0.166666666f
 
 void CalcEnergyForElems(float *p_new, float *e_new, float *q_new,
                         float *bvc, float *pbvc,
@@ -2085,12 +2089,12 @@ void CalcEnergyForElems(float *p_new, float *e_new, float *q_new,
                         float rho0, float eosvmax, float *pHalfStep,
                         int length)
 {
-   // float sixth = 1.0 / 6.0 ;
+   // float sixth = ONE / 6.0f ;
    // float *pHalfStep = AllocateFloat(length) ;
 
    for (int i=0; i<length; ++i) {
-      e_new[i] = e_old[i] - 0.5 * delvc[i] * (p_old[i] + q_old[i])
-         + 0.5 * work[i];
+      e_new[i] = e_old[i] - delvc[i]*(p_old[i] + q_old[i]) * HALF +
+                 work[i] * HALF;
 
       if (e_new[i]  < emin ) {
          e_new[i] = emin ;
@@ -2101,35 +2105,35 @@ void CalcEnergyForElems(float *p_new, float *e_new, float *q_new,
                    pmin, p_cut, eosvmax, length);
 
    for (int i=0; i<length; ++i) {
-      float vhalf = 1.0 / (1.0 + compHalfStep[i]) ;
+      float vhalf = ONE / (ONE + compHalfStep[i]) ;
 
-      if ( delvc[i] > 0.0 ) {
-         q_new[i] /* = qq_old[i] = ql_old[i] */ = 0.0 ;
+      if ( delvc[i] > ZERO ) {
+         q_new[i] /* = qq_old[i] = ql_old[i] */ = ZERO ;
       }
       else {
          float ssc = ( pbvc[i] * e_new[i]
                  + vhalf * vhalf * bvc[i] * pHalfStep[i] ) / rho0 ;
 
-         if ( ssc > 0.1111111e-36 ) {
+         if ( ssc > 0.1111111e-36f ) {
             ssc = sqrtf(ssc) ;
          } else {
-            ssc = 0.3333333e-18 ;
+            ssc = 0.3333333e-18f ;
          }
 
          q_new[i] = (ssc*ql_old[i] + qq_old[i]) ;
       }
 
-      e_new[i] = e_new[i] + 0.5 * delvc[i]
-         * (  3.0 * (p_old[i]     + q_old[i])
-              - 4.0 * (pHalfStep[i] + q_new[i])) ;
+      e_new[i] = e_new[i] + delvc[i] * HALF
+         * (  3.0f * (p_old[i]     + q_old[i])
+              - 4.0f * (pHalfStep[i] + q_new[i])) ;
    }
 
    for (int i=0; i<length; ++i) {
 
-      e_new[i] += 0.5 * work[i];
+      e_new[i] += work[i] * HALF;
 
       if (fabsf(e_new[i]) < e_cut) {
-         e_new[i] = 0. ;
+         e_new[i] = ZERO ;
       }
       if (     e_new[i]  < emin ) {
          e_new[i] = emin ;
@@ -2142,28 +2146,28 @@ void CalcEnergyForElems(float *p_new, float *e_new, float *q_new,
    for (int i=0; i<length; ++i) {
       float q_tilde ;
 
-      if (delvc[i] > 0.) {
-         q_tilde = 0.0 ;
+      if (delvc[i] > ZERO) {
+         q_tilde = ZERO ;
       }
       else {
          float ssc = ( pbvc[i] * e_new[i]
                  + vnewc[i] * vnewc[i] * bvc[i] * p_new[i] ) / rho0 ;
 
-         if ( ssc > 0.1111111e-36 ) {
+         if ( ssc > 0.1111111e-36f ) {
             ssc = sqrtf(ssc) ;
          } else {
-            ssc = 0.3333333e-18 ;
+            ssc = 0.3333333e-18f ;
          }
 
          q_tilde = (ssc*ql_old[i] + qq_old[i]) ;
       }
 
-      e_new[i] = e_new[i] - (  (7.0)*(p_old[i]     + q_old[i])
-                               - (8.0)*(pHalfStep[i] + q_new[i])
+      e_new[i] = e_new[i] - (  (p_old[i]     + q_old[i]) * 7.0f
+                               - (pHalfStep[i] + q_new[i]) * 8.0f
                                + (p_new[i] + q_tilde)) * delvc[i]*sixth ;
 
       if (fabsf(e_new[i]) < e_cut) {
-         e_new[i] = 0.0  ;
+         e_new[i] = ZERO  ;
       }
       if (     e_new[i]  < emin ) {
          e_new[i] = emin ;
@@ -2175,19 +2179,19 @@ void CalcEnergyForElems(float *p_new, float *e_new, float *q_new,
 
    for (int i=0 ;i<length; ++i) {
 
-      if ( delvc[i] <= 0.0 ) {
+      if ( delvc[i] <= ZERO ) {
          float ssc = ( pbvc[i] * e_new[i]
                  + vnewc[i] * vnewc[i] * bvc[i] * p_new[i] ) / rho0 ;
 
-         if ( ssc > 0.1111111e-36 ) {
+         if ( ssc > 0.1111111e-36f ) {
             ssc = sqrtf(ssc) ;
          } else {
-            ssc = 0.3333333e-18 ;
+            ssc = 0.3333333e-18f ;
          }
 
          q_new[i] = (ssc*ql_old[i] + qq_old[i]) ;
 
-         if (fabsf(q_new[i]) < q_cut) q_new[i] = 0. ;
+         if (fabsf(q_new[i]) < q_cut) q_new[i] = ZERO ;
       }
    }
 
@@ -2204,8 +2208,8 @@ void CalcSoundSpeedForElems(int length, float *ss,
    for (int iz=0; iz<length; ++iz) {
       float ssTmp = (pbvc[iz] * enewc[iz] + vnewc[iz] * vnewc[iz] *
                  bvc[iz] * pnewc[iz]) / rho0;
-      if (ssTmp <= 0.1111111e-36) {
-         ssTmp = 0.3333333e-18;
+      if (ssTmp <= 0.1111111e-36f) {
+         ssTmp = 0.3333333e-18f;
       }
       else {
          ssTmp = sqrtf( ssTmp );
@@ -2250,31 +2254,31 @@ void EvalEOSForElems(Domain *domain, float *vnewc, int numElem)
 
    for (int zidx=0; zidx<numElem; ++zidx) {
       float vchalf ;
-      compression[zidx] = 1.0 / vnewc[zidx] - 1.0;
-      vchalf = vnewc[zidx] - delvc[zidx] * 0.5;
-      compHalfStep[zidx] = 1.0 / vchalf - 1.0;
+      compression[zidx] = ONE / vnewc[zidx] - ONE;
+      vchalf = vnewc[zidx] - delvc[zidx] * HALF;
+      compHalfStep[zidx] = ONE / vchalf - ONE;
    }
 
    /* Check for v > eosvmax or v < eosvmin */
-   if ( eosvmin != 0.0 ) {
+   if ( eosvmin != ZERO ) {
       for (int zidx=0; zidx<numElem; ++zidx) {
          if (vnewc[zidx] <= eosvmin) { /* impossible due to calling func? */
             compHalfStep[zidx] = compression[zidx] ;
          }
       }
    }
-   if ( eosvmax != 0.0 ) {
+   if ( eosvmax != ZERO ) {
       for (int zidx=0; zidx<numElem; ++zidx) {
          if (vnewc[zidx] >= eosvmax) { /* impossible due to calling func? */
-            p_old[zidx]        = (0.0) ;
-            compression[zidx]  = (0.0) ;
-            compHalfStep[zidx] = (0.0) ;
+            p_old[zidx]        = ZERO ;
+            compression[zidx]  = ZERO ;
+            compHalfStep[zidx] = ZERO ;
          }
       }
    }
 
    for (int zidx=0; zidx<numElem; ++zidx) {
-      work[zidx] = (0.0) ; 
+      work[zidx] = ZERO ; 
    }
 
    CalcEnergyForElems(p_new, e_new, q_new, bvc, pbvc,
@@ -2328,14 +2332,14 @@ void ApplyMaterialPropertiesForElems(Domain *domain)
        vnewc[zn] = domain->vnew[zn] ;
     }
 
-    if (eosvmin != 0.0) {
+    if (eosvmin != ZERO) {
        for (int zn=0; zn<numElem; ++zn) {
           if (vnewc[zn] < eosvmin)
              vnewc[zn] = eosvmin ;
        }
     }
 
-    if (eosvmax != 0.0) {
+    if (eosvmax != ZERO) {
        for (int zn=0; zn<numElem; ++zn) {
           if (vnewc[zn] > eosvmax)
              vnewc[zn] = eosvmax ;
@@ -2344,15 +2348,15 @@ void ApplyMaterialPropertiesForElems(Domain *domain)
 
     for (int zn=0; zn<numElem; ++zn) {
        float vc = domain->v[zn] ;
-       if (eosvmin != 0.0) {
+       if (eosvmin != ZERO) {
           if (vc < eosvmin)
              vc = eosvmin ;
        }
-       if (eosvmax != 0.0) {
+       if (eosvmax != ZERO) {
           if (vc > eosvmax)
              vc = eosvmax ;
        }
-       if (vc <= 0.0) {
+       if (vc <= ZERO) {
           exit(VolumeError) ;
        }
     }
@@ -2371,8 +2375,8 @@ void UpdateVolumesForElems(float *vnew, float *v,
       for (int i=0; i<length; ++i) {
          float tmpV = vnew[i] ;
 
-         if ( fabsf(tmpV - 1.0) < v_cut )
-            tmpV = 1.0 ;
+         if ( fabsf(tmpV - ONE) < v_cut )
+            tmpV = ONE ;
 
          v[i] = tmpV ;
       }
@@ -2403,16 +2407,16 @@ void CalcCourantConstraintForElems(int length, float *ss,
                                    float *vdov, float *arealg,
                                    float qqc, float *dtcourant)
 {
-   float dtcourant_tmp = 1.0e+20 ;
+   float dtcourant_tmp = 1.0e+20f ;
    int   courant_elem = -1 ;
 
-   float  qqc2 = 64.0 * qqc * qqc ;
+   float  qqc2 = 64.0f * qqc * qqc ;
 
    for (int indx=0; indx<length; ++indx) {
 
       float dtf = ss[indx] * ss[indx] ;
 
-      if ( vdov[indx] < 0. ) {
+      if ( vdov[indx] < ZERO ) {
 
          dtf = dtf
             + qqc2 * arealg[indx] * arealg[indx] * vdov[indx] * vdov[indx] ;
@@ -2424,7 +2428,7 @@ void CalcCourantConstraintForElems(int length, float *ss,
 
       /* determine minimum timestep with its corresponding elem */
 
-      if (vdov[indx] != 0.) {
+      if (vdov[indx] != ZERO) {
          if ( dtf < dtcourant_tmp ) {
             dtcourant_tmp = dtf ;
             courant_elem = indx ;
@@ -2445,12 +2449,12 @@ void CalcCourantConstraintForElems(int length, float *ss,
 void CalcHydroConstraintForElems(int length, float *vdov,
                                  float dvovmax, float *dthydro)
 {
-   float dthydro_tmp = 1.0e+20 ;
+   float dthydro_tmp = 1.0e+20f ;
    int hydro_elem = -1 ;
 
    for (int indx=0; indx<length; ++indx) {
-      if (vdov[indx] != 0.0) {
-         float dtdvov = dvovmax / (fabsf(vdov[indx])+1.0e-20) ;
+      if (vdov[indx] != ZERO) {
+         float dtdvov = dvovmax / (fabsf(vdov[indx])+1.0e-20f) ;
          if ( dthydro_tmp > dtdvov ) {
             dthydro_tmp = dtdvov ;
             hydro_elem = indx ;
@@ -2466,8 +2470,6 @@ void CalcHydroConstraintForElems(int length, float *vdov,
 }
 
 void CalcTimeConstraintsForElems(Domain *domain) {
-   /* evaluate time raint */
-   /* normally,  this call is on a per region basis */
    CalcCourantConstraintForElems(domain->numElem, domain->ss,
                                  domain->vdov, domain->arealg,
                                  domain->qqc, &domain->dtcourant) ;
@@ -2622,45 +2624,45 @@ int main(int argc, char *argv[])
    /* Basic Field Initialization */
 
    for (i=0; i<domElems; ++i) {
-      domain.e[i] = (0.0) ;
-      domain.p[i] = (0.0) ;
-      domain.q[i] = (0.0) ;
-      domain.v[i] = (1.0) ;
+      domain.e[i] = ZERO ;
+      domain.p[i] = ZERO ;
+      domain.q[i] = ZERO ;
+      domain.v[i] = ONE ;
    }
 
    for (i=0; i<domNodes; ++i) {
-      domain.xd[i] = (0.0) ;
-      domain.yd[i] = (0.0) ;
-      domain.zd[i] = (0.0) ;
+      domain.xd[i] = ZERO ;
+      domain.yd[i] = ZERO ;
+      domain.zd[i] = ZERO ;
    }
 
    for (i=0; i<domNodes; ++i) {
-      domain.xdd[i] = (0.0) ;
-      domain.ydd[i] = (0.0) ;
-      domain.zdd[i] = (0.0) ;
+      domain.xdd[i] = ZERO ;
+      domain.ydd[i] = ZERO ;
+      domain.zdd[i] = ZERO ;
    }
 
    /* initialize nodal coordinates */
 
    nidx = 0 ;
-   tz  = (0.) ;
+   tz  = ZERO ;
    for (plane=0; plane<edgeNodes; ++plane) {
-      ty = (0.0) ;
+      ty = ZERO ;
       for (row=0; row<edgeNodes; ++row) {
-         tx = (0.0) ;
+         tx = ZERO ;
          for (col=0; col<edgeNodes; ++col) {
             domain.x[nidx] = tx ;
             domain.y[nidx] = ty ;
             domain.z[nidx] = tz ;
             ++nidx ;
             // tx += ds ; /* may accumulate roundoff... */
-            tx = (1.125)*(float)(col+1)/(float)(edgeElems) ;
+            tx = 1.125f*(float)(col+1)/(float)(edgeElems) ;
          }
          // ty += ds ;  /* may accumulate roundoff... */
-         ty = (1.125)*(float)(row+1)/(float)(edgeElems) ;
+         ty = 1.125f*(float)(row+1)/(float)(edgeElems) ;
       }
       // tz += ds ;  /* may accumulate roundoff... */
-      tz = (1.125)*(float)(plane+1)/(float)(edgeElems) ;
+      tz = 1.125f*(float)(plane+1)/(float)(edgeElems) ;
    }
 
 
@@ -2689,46 +2691,46 @@ int main(int argc, char *argv[])
    }
 
    /* initialize material parameters */
-   domain.dtfixed = (-1.0e-7) ;
-   domain.deltatime = (1.0e-7) ;
-   domain.deltatimemultlb = (1.1) ;
-   domain.deltatimemultub = (1.2) ;
-   domain.stoptime  = (1.0e-2) ;
-   domain.dtcourant = (1.0e+20) ;
-   domain.dthydro   = (1.0e+20) ;
-   domain.dtmax     = (1.0e-2) ;
-   domain.time    = (0.) ;
+   domain.dtfixed = -1.0e-7f ;
+   domain.deltatime = 1.0e-7f ;
+   domain.deltatimemultlb = 1.1f ;
+   domain.deltatimemultub = 1.2f ;
+   domain.stoptime  = 1.0e-2f ;
+   domain.dtcourant = 1.0e+20f ;
+   domain.dthydro   = 1.0e+20f ;
+   domain.dtmax     = 1.0e-2f ;
+   domain.time    = ZERO ;
    domain.cycle   = 0 ;
 
-   domain.e_cut = (1.0e-7) ;
-   domain.p_cut = (1.0e-7) ;
-   domain.q_cut = (1.0e-7) ;
-   domain.u_cut = (1.0e-7) ;
-   domain.v_cut = (1.0e-10) ;
+   domain.e_cut = 1.0e-7f ;
+   domain.p_cut = 1.0e-7f ;
+   domain.q_cut = 1.0e-7f ;
+   domain.u_cut = 1.0e-7f ;
+   domain.v_cut = 1.0e-10f ;
 
-   domain.hgcoef      = (3.0) ;
-   domain.ss4o3       = (4.0)/(3.0) ;
+   domain.hgcoef      = 3.0f ;
+   domain.ss4o3       = 4.0f/3.0f ;
 
-   domain.qstop              =  (1.0e+12) ;
-   domain.monoq_max_slope    =  (1.0) ;
-   domain.monoq_limiter_mult =  (2.0) ;
-   domain.qlc_monoq          = (0.5) ;
-   domain.qqc_monoq          = (2.0)/(3.0) ;
-   domain.qqc                = (2.0) ;
+   domain.qstop              =  1.0e+12f ;
+   domain.monoq_max_slope    =  ONE ;
+   domain.monoq_limiter_mult =  2.0f ;
+   domain.qlc_monoq          = HALF ;
+   domain.qqc_monoq          = 2.0f/3.0f ;
+   domain.qqc                = 2.0f ;
 
-   domain.pmin =  (0.0) ;
-   domain.emin = (-1.0e+15) ;
+   domain.pmin =  ZERO ;
+   domain.emin = -1.0e+15f ;
 
-   domain.dvovmax =  (0.1) ;
+   domain.dvovmax =  0.1f ;
 
-   domain.eosvmax =  (1.0e+9) ;
-   domain.eosvmin =  (1.0e-9) ;
+   domain.eosvmax =  1.0e+9f ;
+   domain.eosvmin =  1.0e-9f ;
 
-   domain.refdens =  (1.0) ;
+   domain.refdens =  ONE ;
 
    /* initialize field data */
    for (i=0; i<domNodes; ++i) {
-      domain.nodalMass[i] = 0.0 ;
+      domain.nodalMass[i] = ZERO ;
    }
 
    for (i=0; i<domElems; ++i) {
@@ -2750,12 +2752,12 @@ int main(int argc, char *argv[])
       domain.elemMass[i] = volume ;
       for (j=0; j<8; ++j) {
          int idx = elemToNode[j] ;
-         domain.nodalMass[idx] += volume / (8.0) ;
+         domain.nodalMass[idx] += volume / 8.0f ;
       }
    }
 
    /* deposit energy */
-   domain.e[0] = (3.948746e+7) ;
+   domain.e[0] = 3.948746e+7f ;
 
    /* set up symmetry nodesets */
    nidx = 0 ;
