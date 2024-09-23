@@ -13,14 +13,14 @@ void fibv(int n)
 
 float factf(float n)
 {
-   if (n <= 1.0) return 1.0;
-   else return (n * factf(n-1.0)) ;
+   if (n <= 1.0) return 1.0f;
+   else return (n * factf(n-1.0f)) ;
 }
 
 float fibf(float n)
 {
-   if (n <= 1.0) return 1.0;
-   else return ( fibf(n-1.0) + fibf(n-2.0) ) ;
+   if (n <= 1.0) return 1.0f;
+   else return ( fibf(n-1.0f) + fibf(n-2.0f) ) ;
 }
 
 int fact(int n)
@@ -37,7 +37,7 @@ int fib(int n)
 
 inline float dot(float *a, float *b, int len)
 {
-   float sum = 0.0;
+   float sum = 0.0f;
    int i;
    for (i=0; i<len; ++i)
       sum += a[i]*b[i];
@@ -51,20 +51,20 @@ float norm(float *vec, int len)
 
 inline float sgn(float n)
 {
-   if (n > 0.0) return 1.0;
-   else if (n == 0.0) return 0.0;
-   else return -1.0;
+   if (n > 0.0f) return 1.0f;
+   else if (n == 0.0f) return 0.0f;
+   else return -1.0f;
 }
 
-// float vec[4] = { 1.0, 2.0, 3.0, 4.0 };
+// float vec[4] = { 1.0f, 2.0f, 3.0f, 4.0f };
 
-#define ftest -37373.0
+#define ftest -37373.0f
 
 int main()
 {
   float vec[4];
-  vec[0] = 1.0; vec[1] = 1.0;
-  vec[2] = 1.0; vec[3] = 1.0;
+  vec[0] = 1.0f; vec[1] = 1.0f;
+  vec[2] = 1.0f; vec[3] = 1.0f;
 
   int x0 =        fib(7) + inline fact(4);
   int x1 = inline fib(7) + inline fact(4);

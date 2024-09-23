@@ -8,7 +8,7 @@ int main()
    int r, c, k;
    for (r=0; r<SIZE; ++r) {
       for (c=0; c<SIZE; ++c) {
-         sum = 0.0;
+         sum = 0.0f;
          for (k=0; k<SIZE; ++k) {
             sum += A[r][k] * B[k][c];
          }

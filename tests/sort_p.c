@@ -69,7 +69,7 @@ int main()
 
    fbubblesort(val2, SORT_SIZE);
 
-   if (val1[0] == 1.0 && val1[SORT_SIZE-1] == (float) SORT_SIZE &&
+   if (val1[0] == 1.0f && val1[SORT_SIZE-1] == (float) SORT_SIZE &&
        val1[0] == val2[0] && val1[SORT_SIZE-1] == val2[SORT_SIZE-1])
       printf("passed\n");
 

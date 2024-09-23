@@ -63,8 +63,8 @@ sys	0m0.031s
 | Benchmark | Mc runtime | Mc+Squint | Gcc | Gcc -O1 | Gcc -03 |
 | --- | --- | --- | --- | --- | --- |
 | sieve (int) | 3.676s |  ***0.936s*** | 1.642s | 0.942s | 0.962s |
-| shock (float) | 39.192s | ***3.047s*** | 9.666s | 4.383s | 3.702s |
-| nbody_arr (float) | 40.43s | ***3.295s*** | 13.04s | 4.019s | 3.894s |
+| shock (float) | 39.192s | ***3.125s*** | 9.346s | 4.092s | 3.217s |
+| nbody_arr (float) | 40.43s | 3.29s | 12.28s | 3.25s | ***3.21s*** |
 
 Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
 
@@ -182,194 +182,172 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
 
 | gcc | Squint (this repo) | MC (private repo HPC compiler) |
 | --- | --- | --- |
-| ***186++ instructions*** | ***119 instructions*** | ***113 instructions*** |
+| ***164++ instructions*** | ***119 instructions*** | ***113 instructions*** |
 | ***??? inststructions/iter*** | ***119 instructions/iter*** | ***113 instructions/iter*** |
-| 105e0: b  10770 | 640: add  r0, r5, r3, lsl #2 | 5f0: mov  r0, #12 |
-| 105e4: mov  r0, r7 | 644: vldr  s1, [r0] | 5f4: mla  r0, r3, r0, r4 |
-| 105e8: mov  lr, r9 | 648: vldr  s0, [r0, #4] | 5f8: vldr  s1, [r0] |
-| 105ec: mov  ip, r8 | 64c: vadd.f32  s0, s1, s0 | 5fc: vldr  s0, [r0, #12] |
-| 105f0: vldr  s22, [lr] | 650: vmul.f32  s10, s3, s0 | 600: vadd.f32  s0, s1, s0 |
-| 105f4: vcvt.f64.f32  d7, s21 | 654: add  r0, r6, r3, lsl #2 | 604: vmul.f32  s9, s3, s0 |
-| 105f8: vadd.f32  s24, s28, s21 | 658: vldr  s1, [r0] | 608: vldr  s1, [r0, #4] |
-| 105fc: vldr  s23, [ip] | 65c: vldr  s0, [r0, #4] | 60c: vldr  s0, [r0, #16] |
-| 10600: vldr  s3, [r0] | 660: vadd.f32  s0, s1, s0 | 610: vadd.f32  s0, s1, s0 |
-| 10604: vcvt.f64.f32  d2, s22 | 664: vmul.f32  s9, s3, s0 | 614: vmul.f32  s8, s3, s0 |
-| 10608: vmul.f64  d7, d7, d6 | 668: add  r0, r7, r3, lsl #2 | 618: vldr  s1, [r0, #8] |
-| 1060c: vcmpe.f32  s24, #0.0 | 66c: vldr  s1, [r0] | 61c: vldr  s0, [r0, #20] |
-| 10610: vcvt.f64.f32  d3, s23 | 670: vldr  s0, [r0, #4] | 620: vadd.f32  s0, s1, s0 |
-| 10614: vcvt.f64.f32  d5, s3 | 674: vadd.f32  s0, s1, s0 | 624: vmul.f32  s11, s3, s0 |
-| 10618: vmul.f64  d4, d2, d9 | 678: vmul.f32  s12, s3, s0 | 628: vsub.f32  s6, s2, s4 |
-| 1061c: vcvt.f32.f64  s14, d7 | 67c: vsub.f32  s7, s2, s4 | 62c: vmul.f32  s1, s3, s8 |
-| 10620: vmrs  APSR_nzcv, fpscr | 680: vmul.f32  s1, s3, s9 | 630: vmul.f32  s1, s1, s8 |
-| 10624: vmul.f64  d4, d4, d2 | 684: vmul.f32  s1, s1, s9 | 634: vdiv.f32  s0, s1, s9 |
-| 10628: vmul.f32  s23, s23, s14 | 688: vdiv.f32  s0, s1, s10 | 638: vsub.f32  s0, s11, s0 |
-| 1062c: vmul.f32  s22, s22, s14 | 68c: vsub.f32  s0, s12, s0 | 63c: vmul.f32  s12, s6, s0 |
-| 10630: vdiv.f64  d2, d4, d3 | 690: vmul.f32  s13, s7, s0 | 640: vmul.f32  s1, s2, s12 |
-| 10634: vstr  s23, [r3] | 694: vmul.f32  s1, s2, s13 | 644: vdiv.f32  s0, s1, s9 |
-| 10638: vstr  s22, [r2] | 698: vdiv.f32  s0, s1, s10 | 648: vsqrt.f32  s15, s0 |
-| 1063c: vsub.f64  d5, d5, d2 | 69c: vsqrt.f32  s16, s0 | 64c: vdiv.f32  s13, s8, s9 |
-| 10640: vcvt.f32.f64  s10, d5 | 6a0: vdiv.f32  s14, s9, s10 | 650: vcmpe.f32  s13, #0.0 |
-| 10644: vsub.f32  s20, s3, s10 | 6a4: vcmpe.f32  s14, s5 | 654: vmrs  APSR_nzcv, fpscr |
-| 10648: vmul.f32  s20, s20, s14 | 6a8: vmrs APSR_nzcv, fpscr | 658: mov  r0, r3 |
-| 1064c: vstr  s20, [r1] | 6ac: mov  r0, r3 | 65c: bge  0x664 |
-| 10650: blt  1081c | 6b0: bge 0x6b8 | 660: add  r0, r3, #1 |
-| 10654: mov  r0, r7 | 6b4: add  r0, r3, #1 | 664: mov  r5, r0 |
-| 10658: mov  lr, r9 | 6b8: mov  r4, r0 | 668: mov  r0, #12 |
-| 1065c: mov  ip, r8 | 6bc: add  r0, r5, r4, lsl #2 | 66c: mla  r0, r5, r0, r4 |
-| 10660: vldr  s29, [lr] | 6c0: vldr  s10, [r0] | 670: vldr  s9, [r0] |
-| 10664: vmul.f32  s24, s24, s17 | 6c4: add  r0, r6, r4, lsl #2 | 674: vldr  s8, [r0, #4] |
-| 10668: vldr  s27, [ip] | 6c8: vldr  s9, [r0] | 678: vldr  s11, [r0, #8] |
-| 1066c: vldr  s26, [r0] | 6cc: add  r0, r7, r4, lsl #2 | 67c: vmul.f32  s1, s3, s8 |
-| 10670: vcvt.f64.f32  d5, s29 | 6d0: vldr  s12, [r0] | 680: vmul.f32  s1, s1, s8 |
-| 10674: vcvt.f64.f32  d3, s27 | 6d4: vmul.f32  s1, s3, s9 | 684: vdiv.f32  s0, s1, s9 |
-| 10678: vcvt.f64.f32  d7, s26 | 6d8: vmul.f32  s1, s1, s9 | 688: vsub.f32  s12, s11, s0 |
-| 1067c: vmul.f64  d4, d5, d9 | 6dc: vdiv.f32  s0, s1, s10 | 68c: vsub.f32  s0, s2, s4 |
-| 10680: vmul.f64  d5, d4, d5 | 6e0: vsub.f32  s13, s12, s0 | 690: vmul.f32  s10, s13, s0 |
-| 10684: vdiv.f64  d4, d5, d3 | 6e4: vsub.f32  s0, s2, s4 | 694: vmul.f32  s16, s10, s9 |
-| 10688: vsub.f64  d7, d7, d4 | 6e8: vmul.f32  s11, s14, s0 | 698: vmul.f32  s17, s10, s8 |
-| 1068c: vmul.f64  d7, d7, d6 | 6ec: vmul.f32  s17, s11, s10 | 69c: vsub.f32  s0, s11, s12 |
-| 10690: vcvt.f32.f64  s14, d7 | 6f0: vmul.f32  s18, s11, s9 | 6a0: vmul.f32  s18, s10, s0 |
-| 10694: vmul.f32  s15, s14, s25 | 6f4: vsub.f32  s0, s12, s13 | 6a4: vadd.f32  s1, s13, s15 |
-| 10698: vdiv.f32  s0, s15, s27 | 6f8: vmul.f32  s19, s11, s0 | 6a8: vcmpe.f32  s1, #0.0 |
-| 1069c: vcmp.f32  s0, #0.0 | 6fc: vadd.f32  s1, s14, s16 | 6ac: vmrs  APSR_nzcv, fpscr |
-| 106a0: vsqrt.f32  s15, s0 | 700: vcmpe.f32  s1, s5 | 6b0: mov  r0, r3 |
-| 106a4: vmrs  APSR_nzcv, fpscr | 704: vmrs APSR_nzcv, fpscr | 6b4: bge  0x6bc |
-| 106a8: bmi  10b48 | 708: mov  r0, r3 | 6b8: add  r0, r3, #1 |
-| 106ac: vadd.f32  s26, s26, s14 | 70c: bge 0x714 | 6bc: mov  r5, r0 |
-| 106b0: vmov.f32  s14, s29 | 710: add  r0, r3, #1 | 6c0: mov  r0, #12 |
-| 106b4: vsub.f32  s21, s21, s28 | 714: mov  r4, r0 | 6c4: mla  r0, r5, r0, r4 |
-| 106b8: vmla.f32  s23, s27, s24 | 718: add  r0, r5, r4, lsl #2 | 6c8: vldr  s9, [r0] |
-| 106bc: vmla.f32  s14, s27, s15 | 71c: vldr  s10, [r0] | 6cc: vldr  s8, [r0, #4] |
-| 106c0: vmla.f32  s26, s29, s15 | 720: add  r0, r6, r4, lsl #2 | 6d0: vldr  s11, [r0, #8] |
-| 106c4: vcmpe.f32  s21, #0.0 | 724: vldr  s9, [r0] | 6d4: vsub.f32  s6, s2, s4 |
-| 106c8: vmla.f32  s22, s14, s24 | 728: add  r0, r7, r4, lsl #2 | 6d8: vmul.f32  s1, s3, s8 |
-| 106cc: vmla.f32  s20, s26, s24 | 72c: vldr  s12, [r0] | 6dc: vmul.f32  s1, s1, s8 |
-| 106d0: vstr  s23, [r3] | 730: vsub.f32  s7, s2, s4 | 6e0: vdiv.f32  s0, s1, s9 |
-| 106d4: vmrs  APSR_nzcv, fpscr | 734: vmul.f32  s1, s3, s9 | 6e4: vsub.f32  s0, s11, s0 |
-| 106d8: vstr  s22, [r2] | 738: vmul.f32  s1, s1, s9 | 6e8: vmul.f32  s12, s6, s0 |
-| 106dc: vstr  s20, [r1] | 73c: vdiv.f32  s0, s1, s10 | 6ec: vadd.f32  s0, s13, s15 |
-| 106e0: bge  106f0 | 740: vsub.f32  s0, s12, s0 | 6f0: vmul.f32  s10, s3, s0 |
-| 106e4: mov  r7, r6 | 744: vmul.f32  s13, s7, s0 | 6f4: vmul.f32  s1, s2, s12 |
-| 106e8: mov  r9, r5 | 748: vadd.f32  s0, s14, s16 | 6f8: vdiv.f32  s0, s1, s9 |
-| 106ec: mov  r8, r4 | 74c: vmul.f32  s11, s3, s0 | 6fc: vsqrt.f32  s14, s0 |
-| 106f0: vldr  s27, [r9] | 750: vmul.f32  s1, s2, s13 | 700: vmla.f32  s16, s10, s9 |
-| 106f4: vmul.f32  s21, s21, s17 | 754: vdiv.f32  s0, s1, s10 | 704: vmul.f32  s0, s9, s14 |
-| 106f8: vldr  s26, [r8] | 758: vsqrt.f32  s15, s0 | 708: vadd.f32  s0, s8, s0 |
-| 106fc: vldr  s24, [r7] | 75c: vmla.f32  s17, s11, s10 | 70c: vmla.f32  s17, s10, s0 |
-| 10700: vcvt.f64.f32  d5, s27 | 760: vmul.f32  s0, s10, s15 | 710: vadd.f32  s5, s11, s12 |
-| 10704: vcvt.f64.f32  d3, s26 | 764: vadd.f32  s0, s9, s0 | 714: vmla.f32  s5, s8, s14 |
-| 10708: vcvt.f64.f32  d7, s24 | 768: vmla.f32  s18, s11, s0 | 718: vmla.f32  s18, s10, s5 |
-| 1070c: vmul.f64  d4, d5, d9 | 76c: vadd.f32  s6, s12, s13 | 71c: vsub.f32  s1, s13, s15 |
-| 10710: vmul.f64  d5, d4, d5 | 770: vmla.f32  s6, s9, s15 | 720: vcmpe.f32  s1, #0.0 |
-| 10714: vdiv.f64  d4, d5, d3 | 774: vmla.f32  s19, s11, s6 | 724: vmrs  APSR_nzcv, fpscr |
-| 10718: vsub.f64  d7, d7, d4 | 778: vsub.f32  s1, s14, s16 | 728: mov  r0, r3 |
-| 1071c: vmul.f64  d7, d7, d6 | 77c: vcmpe.f32  s1, s5 | 72c: bge  0x734 |
-| 10720: vcvt.f32.f64  s14, d7 | 780: vmrs APSR_nzcv, fpscr | 730: add  r0, r3, #1 |
-| 10724: vmul.f32  s15, s14, s25 | 784: mov  r0, r3 | 734: mov  r5, r0 |
-| 10728: vdiv.f32  s0, s15, s26 | 788: bge 0x790 | 738: mov  r0, #12 |
-| 1072c: vcmp.f32  s0, #0.0 | 78c: add  r0, r3, #1 | 73c: mla  r0, r5, r0, r4 |
-| 10730: vsqrt.f32  s28, s0 | 790: mov  r4, r0 | 740: vldr  s9, [r0] |
-| 10734: vmrs  APSR_nzcv, fpscr | 794: add  r0, r5, r4, lsl #2 | 744: vldr  s8, [r0, #4] |
-| 10738: bmi  10b14 | 798: vldr  s10, [r0] | 748: vldr  s11, [r0, #8] |
-| 1073c: vadd.f32  s24, s24, s14 | 79c: add  r0, r6, r4, lsl #2 | 74c: vsub.f32  s6, s2, s4 |
-| 10740: vmov.f32  s15, s27 | 7a0: vldr  s9, [r0] | 750: vmul.f32  s1, s3, s8 |
-| 10744: ldr  r0, [sp, #52]  ; 0x34 | 7a4: add  r0, r7, r4, lsl #2 | 754: vmul.f32  s1, s1, s8 |
-| 10748: vmla.f32  s23, s26, s21 | 7a8: vldr  s12, [r0] | 758: vdiv.f32  s0, s1, s9 |
-| 1074c: vmls.f32  s15, s26, s28 | 7ac: vsub.f32  s7, s2, s4 | 75c: vsub.f32  s0, s11, s0 |
-| 10750: cmp  r0, r4 | 7b0: vmul.f32  s1, s3, s9 | 760: vmul.f32  s12, s6, s0 |
-| 10754: vmls.f32  s24, s27, s28 | 7b4: vmul.f32  s1, s1, s9 | 764: vsub.f32  s0, s13, s15 |
-| 10758: vmla.f32  s22, s15, s21 | 7b8: vdiv.f32  s0, s1, s10 | 768: vmul.f32  s10, s3, s0 |
-| 1075c: vmla.f32  s20, s24, s21 | 7bc: vsub.f32  s0, s12, s0 | 76c: vmul.f32  s1, s2, s12 |
-| 10760: vstmia  r3!, {s23} | 7c0: vmul.f32  s13, s7, s0 | 770: vdiv.f32  s0, s1, s9 |
-| 10764: vstmia  r2!, {s22} | 7c4: vsub.f32  s0, s14, s16 | 774: vsqrt.f32  s14, s0 |
-| 10768: vstmia  r1!, {s20} | 7c8: vmul.f32  s11, s3, s0 | 778: mov  r0, #12 |
-| 1076c: beq  1085c ***EXIT LOOP*** | 7cc: vmul.f32  s1, s2, s13 | 77c: mla  r0, r3, r0, r6 |
-| 10770: mov  r9, r5 | 7d0: vdiv.f32  s0, s1, s10 | 780: vmla.f32  s16, s10, s9 |
-| 10774: add  r5, r5, #4 | 7d4: vsqrt.f32  s15, s0 | 784: vstr  s16, [r0] |
-| 10778: vldr  s20, [r4] | 7d8: add  r0, r8, r3, lsl #2 | 788: vmul.f32  s0, s9, s14 |
-| 1077c: mov  r8, r4 | 7dc: vmla.f32  s17, s11, s10 | 78c: vsub.f32  s0, s8, s0 |
-| 10780: add  r4, r4, #4 | 7e0: vstr  s17, [r0] | 790: vmla.f32  s17, s10, s0 |
-| 10784: vldr  s15, [r5] | 7e4: add  r0, r9, r3, lsl #2 | 794: vstr  s17, [r0, #4] |
-| 10788: mov  r7, r6 | 7e8: vmul.f32  s0, s10, s15 | 798: vadd.f32  s5, s11, s12 |
-| 1078c: add  r6, r6, #4 | 7ec: vsub.f32  s0, s9, s0 | 79c: vmls.f32  s5, s8, s14 |
-| 10790: vldr  s22, [r9] | 7f0: vmla.f32  s18, s11, s0 | 7a0: vmla.f32  s18, s10, s5 |
-| 10794: vldr  s11, [r4] | 7f4: vstr  s18, [r0] | 7a4: vstr  s18, [r0, #8] |
-| 10798: vldr  s14, [r6, #-4] | 7f8: add  r0, sl, r3, lsl #2 | 7a8: add  r3, r3, #1 |
-| 1079c: vadd.f32  s22, s22, s15 | 7fc: vadd.f32  s6, s12, s13 | 7ac: cmp  r3, r7 |
-| 107a0: vldr  d6, [pc, #144] | 800: vmls.f32  s6, s9, s15 | 7b0: blt  0x5f0 |
-| 107a4: vadd.f32  s20, s20, s11 | 804: vmla.f32  s19, s11, s6 | |
-| 107a8: vldr  s15, [r6] | 808: vstr  s19, [r0] | |
-| 107ac: vmul.f32  s22, s22, s17 | 80c: add  r3, r3, #1 | |
-| 107b0: vsub.f64  d6, d15, d6 | 810: ldr  r0, [fp, #32] | |
-| 107b4: vmul.f32  s20, s20, s17 | 814: cmp  r3, r0 | |
-| 107b8: vadd.f32  s14, s14, s15 | 818: blt 0x640 | |
-| 107bc: vcvt.f64.f32  d5, s22 | | |
-| 107c0: vcvt.f64.f32  d3, s20 | | |
-| 107c4: vmul.f32  s14, s14, s17 | | |
-| 107c8: vmul.f64  d4, d5, d9 | | |
-| 107cc: vcvt.f64.f32  d7, s14 | | |
-| 107d0: vmul.f64  d4, d4, d5 | | |
-| 107d4: vdiv.f64  d5, d4, d3 | | |
-| 107d8: vsub.f64  d7, d7, d5 | | |
-| 107dc: vmul.f64  d7, d7, d6 | | |
-| 107e0: vcvt.f32.f64  s14, d7 | | |
-| 107e4: vmul.f32  s14, s14, s25 | | |
-| 107e8: vdiv.f32  s0, s14, s20 | | |
-| 107ec: vcmp.f32  s0, #0.0 | | |
-| 107f0: vsqrt.f32  s28, s0 | | |
-| 107f4: vmrs  APSR_nzcv, fpscr | | |
-| 107f8: bmi  10ae8 | | |
-| 107fc: vdiv.f32  s21, s22, s20 | | |
-| 10800: vcmpe.f32  s21, #0.0 | | |
-| 10804: vmrs  APSR_nzcv, fpscr | | |
-| 10808: bge  105e4 | | |
-| 1080c: mov  r0, r6 | | |
-| 10810: mov  lr, r5 | | |
-| 10814: mov  ip, r4 | | |
-| 10818: b  105f0 | | |
-| 1081c: mov  r0, r6 | | |
-| 10820: mov  lr, r5 | | |
-| 10824: mov  ip, r4 | | |
-| 10828: b  10660 | | |
-| 10ae8: str  r1, [sp, #84] | | |
-| 10aec: strd  r2, [sp, #88] | | |
-| 10af0: bl  1043c <sqrtf@plt> | | |
-| 10af4: ldr  r3, [pc, #-676] | | |
-| 10af8: vldr  d7, [pc, #136] | | |
-| 10afc: ldr  r1, [sp, #84] | | |
-| 10b00: vldr  s25, [r3, #4] | | |
-| 10b04: ldrd  r2, [sp, #88] | | |
-| 10b08: vcvt.f64.f32  d15, s25 | | |
-| 10b0c: vsub.f64  d6, d15, d7 | | |
-| 10b10: b  107fc | | |
-| 10b14: vstr  s14, [sp, #84] | | |
-| 10b18: str  r1, [sp, #88] | | |
-| 10b1c: strd  r2, [sp, #92] | | |
-| 10b20: bl  1043c <sqrtf@plt> | | |
-| 10b24: ldr  r3, [pc, #100] | | |
-| 10b28: vldr  d7, [pc, #88] | | |
-| 10b2c: ldr  r1, [sp, #88] | | |
-| 10b30: vldr  s25, [r3, #4] | | |
-| 10b34: ldrd  r2, [sp, #92] | | |
-| 10b38: vcvt.f64.f32  d15, s25 | | |
-| 10b3c: vsub.f64  d6, d15, d7 | | |
-| 10b40: vldr  s14, [sp, #84] | | |
-| 10b44: b  1073c | | |
-| 10b48: vstr  s14, [sp, #84] | | |
-| 10b4c: vstr  s15, [sp, #88] | | |
-| 10b50: str  r1, [sp, #92] | | |
-| 10b54: strd  r2, [sp, #96] | | |
-| 10b58: bl  1043c <sqrtf@plt> | | |
-| 10b5c: ldr  r3, [pc, #44] | | |
-| 10b60: vldr  d7, [pc, #32] | | |
-| 10b64: ldr  r1, [sp, #92] | | |
-| 10b68: vldr  s25, [r3, #4] | | |
-| 10b6c: ldrd  r2, [sp, #96] | | |
-| 10b70: vcvt.f64.f32  d15, s25 | | |
-| 10b74: vsub.f64  d6, d15, d7 | | |
-| 10b78: vldr  s14, [sp, #84] | | |
-| 10b7c: vldr  s15, [sp, #88] | | |
-| 10b80: b  106ac | | |
+| 10d00: ea000060 b 10e88 | 640: add  r0, r5, r3, lsl #2 | 5f0: mov  r0, #12 |
+| 10d04: e1a00008 mov r0, r8 | 644: vldr  s1, [r0] | 5f4: mla  r0, r3, r0, r4 |
+| 10d08: e1a0c00a mov ip, sl | 648: vldr  s0, [r0, #4] | 5f8: vldr  s1, [r0] |
+| 10d0c: e1a03009 mov r3, r9 | 64c: vadd.f32  s0, s1, s0 | 5fc: vldr  s0, [r0, #12] |
+| 10d10: eddc6a00 vldr s13, [ip] | 650: vmul.f32  s10, s3, s0 | 600: vadd.f32  s0, s1, s0 |
+| 10d14: ee687a07 vmul.f32 s15, s16, s14 | 654: add  r0, r6, r3, lsl #2 | 604: vmul.f32  s9, s3, s0 |
+| 10d18: ee3c9a08 vadd.f32 s18, s24, s16 | 658: vldr  s1, [r0] | 608: vldr  s1, [r0, #4] |
+| 10d1c: e58d5004 str r5, [sp, #4] | 65c: vldr  s0, [r0, #4] | 60c: vldr  s0, [r0, #16] |
+| 10d20: edd35a00 vldr s11, [r3] | 660: vadd.f32  s0, s1, s0 | 610: vadd.f32  s0, s1, s0 |
+| 10d24: e1a03004 mov r3, r4 | 664: vmul.f32  s9, s3, s0 | 614: vmul.f32  s8, s3, s0 |
+| 10d28: ed907a00 vldr s14, [r0] | 668: add  r0, r7, r3, lsl #2 | 618: vldr  s1, [r0, #8] |
+| 10d2c: ee266aa8 vmul.f32 s12, s13, s17 | 66c: vldr  s1, [r0] | 61c: vldr  s0, [r0, #20] |
+| 10d30: ee265aa7 vmul.f32 s10, s13, s15 | 670: vldr  s0, [r0, #4] | 620: vadd.f32  s0, s1, s0 |
+| 10d34: eeb59ac0 vcmpe.f32 s18, #0.0 | 674: vadd.f32  s0, s1, s0 | 624: vmul.f32  s11, s3, s0 |
+| 10d38: ee654aa7 vmul.f32 s9, s11, s15 | 678: vmul.f32  s12, s3, s0 | 628: vsub.f32  s6, s2, s4 |
+| 10d3c: ee266a26 vmul.f32 s12, s12, s13 | 67c: vsub.f32  s7, s2, s4 | 62c: vmul.f32  s1, s3, s8 |
+| 10d40: eef1fa10 vmrs APSR_nzcv, fpscr | 680: vmul.f32  s1, s3, s9 | 630: vmul.f32  s1, s1, s8 |
+| 10d44: edc64a00 vstr s9, [r6] | 684: vmul.f32  s1, s1, s9 | 634: vdiv.f32  s0, s1, s9 |
+| 10d48: ed855a00 vstr s10, [r5] | 688: vdiv.f32  s0, s1, s10 | 638: vsub.f32  s0, s11, s0 |
+| 10d4c: eec66a25 vdiv.f32 s13, s12, s11 | 68c: vsub.f32  s0, s12, s0 | 63c: vmul.f32  s12, s6, s0 |
+| 10d50: ee776a66 vsub.f32 s13, s14, s13 | 690: vmul.f32  s13, s7, s0 | 640: vmul.f32  s1, s2, s12 |
+| 10d54: ee377a66 vsub.f32 s14, s14, s13 | 694: vmul.f32  s1, s2, s13 | 644: vdiv.f32  s0, s1, s9 |
+| 10d58: ee677a27 vmul.f32 s15, s14, s15 | 698: vdiv.f32  s0, s1, s10 | 648: vsqrt.f32  s15, s0 |
+| 10d5c: edc47a00 vstr s15, [r4] | 69c: vsqrt.f32  s16, s0 | 64c: vdiv.f32  s13, s8, s9 |
+| 10d60: ba00006e blt 10f20 | 6a0: vdiv.f32  s14, s9, s10 | 650: vcmpe.f32  s13, #0.0 |
+| 10d64: e1a00008 mov r0, r8 | 6a4: vcmpe.f32  s14, s5 | 654: vmrs  APSR_nzcv, fpscr |
+| 10d68: e1a0e00a mov lr, sl | 6a8: vmrs APSR_nzcv, fpscr | 658: mov  r0, r3 |
+| 10d6c: e1a0c009 mov ip, r9 | 6ac: mov  r0, r3 | 65c: bge  0x664 |
+| 10d70: ed9eba00 vldr s22, [lr] | 6b0: bge 0x6b8 | 660: add  r0, r3, #1 |
+| 10d74: ee299a28 vmul.f32 s18, s18, s17 | 6b4: add  r0, r3, #1 | 664: mov  r5, r0 |
+| 10d78: eddcba00 vldr s23, [ip] | 6b8: mov  r4, r0 | 668: mov  r0, #12 |
+| 10d7c: edd09a00 vldr s19, [r0] | 6bc: add  r0, r5, r4, lsl #2 | 66c: mla  r0, r5, r0, r4 |
+| 10d80: ee2b7a28 vmul.f32 s14, s22, s17 | 6c0: vldr  s10, [r0] | 670: vldr  s9, [r0] |
+| 10d84: eddb7a01 vldr s15, [fp, #4] | 6c4: add  r0, r6, r4, lsl #2 | 674: vldr  s8, [r0, #4] |
+| 10d88: ee277a0b vmul.f32 s14, s14, s22 | 6c8: vldr  s9, [r0] | 678: vldr  s11, [r0, #8] |
+| 10d8c: ee776aea vsub.f32 s13, s15, s21 | 6cc: add  r0, r7, r4, lsl #2 | 67c: vmul.f32  s1, s3, s8 |
+| 10d90: ee87aa2b vdiv.f32 s20, s14, s23 | 6d0: vldr  s12, [r0] | 680: vmul.f32  s1, s1, s8 |
+| 10d94: ee39aaca vsub.f32 s20, s19, s20 | 6d4: vmul.f32  s1, s3, s9 | 684: vdiv.f32  s0, s1, s9 |
+| 10d98: ee2aaa26 vmul.f32 s20, s20, s13 | 6d8: vmul.f32  s1, s1, s9 | 688: vsub.f32  s12, s11, s0 |
+| 10d9c: ee677a8a vmul.f32 s15, s15, s20 | 6dc: vdiv.f32  s0, s1, s10 | 68c: vsub.f32  s0, s2, s4 |
+| 10da0: ee870aab vdiv.f32 s0, s15, s23 | 6e0: vsub.f32  s13, s12, s0 | 690: vmul.f32  s10, s13, s0 |
+| 10da4: eeb50a40 vcmp.f32 s0, #0.0 | 6e4: vsub.f32  s0, s2, s4 | 694: vmul.f32  s16, s10, s9 |
+| 10da8: eef1cac0 vsqrt.f32 s25, s0 | 6e8: vmul.f32  s11, s14, s0 | 698: vmul.f32  s17, s10, s8 |
+| 10dac: eef1fa10 vmrs APSR_nzcv, fpscr | 6ec: vmul.f32  s17, s11, s10 | 69c: vsub.f32  s0, s11, s12 |
+| 10db0: 4a000076 bmi 10f90 | 6f0: vmul.f32  s18, s11, s9 | 6a0: vmul.f32  s18, s10, s0 |
+| 10db4: edd67a00 vldr s15, [r6] | 6f4: vsub.f32  s0, s12, s13 | 6a4: vadd.f32  s1, s13, s15 |
+| 10db8: eeb07a4b vmov.f32 s14, s22 | 6f8: vmul.f32  s19, s11, s0 | 6a8: vcmpe.f32  s1, #0.0 |
+| 10dbc: ee799a8a vadd.f32 s19, s19, s20 | 6fc: vadd.f32  s1, s14, s16 | 6ac: vmrs  APSR_nzcv, fpscr |
+| 10dc0: ee388a4c vsub.f32 s16, s16, s24 | 700: vcmpe.f32  s1, s5 | 6b0: mov  r0, r3 |
+| 10dc4: ee0b7aac vmla.f32 s14, s23, s25 | 704: vmrs APSR_nzcv, fpscr | 6b4: bge  0x6bc |
+| 10dc8: ee4b7a89 vmla.f32 s15, s23, s18 | 708: mov  r0, r3 | 6b8: add  r0, r3, #1 |
+| 10dcc: ee4b9a2c vmla.f32 s19, s22, s25 | 70c: bge 0x714 | 6bc: mov  r5, r0 |
+| 10dd0: eeb58ac0 vcmpe.f32 s16, #0.0 | 710: add  r0, r3, #1 | 6c0: mov  r0, #12 |
+| 10dd4: eef1fa10 vmrs APSR_nzcv, fpscr | 714: mov  r4, r0 | 6c4: mla  r0, r5, r0, r4 |
+| 10dd8: edc67a00 vstr s15, [r6] | 718: add  r0, r5, r4, lsl #2 | 6c8: vldr  s9, [r0] |
+| 10ddc: edd57a00 vldr s15, [r5] | 71c: vldr  s10, [r0] | 6cc: vldr  s8, [r0, #4] |
+| 10de0: ee477a09 vmla.f32 s15, s14, s18 | 720: add  r0, r6, r4, lsl #2 | 6d0: vldr  s11, [r0, #8] |
+| 10de4: edc57a00 vstr s15, [r5] | 724: vldr  s9, [r0] | 6d4: vsub.f32  s6, s2, s4 |
+| 10de8: edd47a00 vldr s15, [r4] | 728: add  r0, r7, r4, lsl #2 | 6d8: vmul.f32  s1, s3, s8 |
+| 10dec: ee497a89 vmla.f32 s15, s19, s18 | 72c: vldr  s12, [r0] | 6dc: vmul.f32  s1, s1, s8 |
+| 10df0: edc47a00 vstr s15, [r4] | 730: vsub.f32  s7, s2, s4 | 6e0: vdiv.f32  s0, s1, s9 |
+| 10df4: aa000002 bge 10e04 | 734: vmul.f32  s1, s3, s9 | 6e4: vsub.f32  s0, s11, s0 |
+| 10df8: e1a08001 mov r8, r1 | 738: vmul.f32  s1, s1, s9 | 6e8: vmul.f32  s12, s6, s0 |
+| 10dfc: e1a0a002 mov sl, r2 | 73c: vdiv.f32  s0, s1, s10 | 6ec: vadd.f32  s0, s13, s15 |
+| 10e00: e1a09007 mov r9, r7 | 740: vsub.f32  s0, s12, s0 | 6f0: vmul.f32  s10, s3, s0 |
+| 10e04: ed9aaa00 vldr s20, [sl] | 744: vmul.f32  s13, s7, s0 | 6f4: vmul.f32  s1, s2, s12 |
+| 10e08: ee288a28 vmul.f32 s16, s16, s17 | 748: vadd.f32  s0, s14, s16 | 6f8: vdiv.f32  s0, s1, s9 |
+| 10e0c: ed99ba00 vldr s22, [r9] | 74c: vmul.f32  s11, s3, s0 | 6fc: vsqrt.f32  s14, s0 |
+| 10e10: ed989a00 vldr s18, [r8] | 750: vmul.f32  s1, s2, s13 | 700: vmla.f32  s16, s10, s9 |
+| 10e14: ee2a7a28 vmul.f32 s14, s20, s17 | 754: vdiv.f32  s0, s1, s10 | 704: vmul.f32  s0, s9, s14 |
+| 10e18: eddb7a01 vldr s15, [fp, #4] | 758: vsqrt.f32  s15, s0 | 708: vadd.f32  s0, s8, s0 |
+| 10e1c: ee277a0a vmul.f32 s14, s14, s20 | 75c: vmla.f32  s17, s11, s10 | 70c: vmla.f32  s17, s10, s0 |
+| 10e20: ee776aea vsub.f32 s13, s15, s21 | 760: vmul.f32  s0, s10, s15 | 710: vadd.f32  s5, s11, s12 |
+| 10e24: eec79a0b vdiv.f32 s19, s14, s22 | 764: vadd.f32  s0, s9, s0 | 714: vmla.f32  s5, s8, s14 |
+| 10e28: ee799a69 vsub.f32 s19, s18, s19 | 768: vmla.f32  s18, s11, s0 | 718: vmla.f32  s18, s10, s5 |
+| 10e2c: ee699aa6 vmul.f32 s19, s19, s13 | 76c: vadd.f32  s6, s12, s13 | 71c: vsub.f32  s1, s13, s15 |
+| 10e30: ee677aa9 vmul.f32 s15, s15, s19 | 770: vmla.f32  s6, s9, s15 | 720: vcmpe.f32  s1, #0.0 |
+| 10e34: ee870a8b vdiv.f32 s0, s15, s22 | 774: vmla.f32  s19, s11, s6 | 724: vmrs  APSR_nzcv, fpscr |
+| 10e38: eeb50a40 vcmp.f32 s0, #0.0 | 778: vsub.f32  s1, s14, s16 | 728: mov  r0, r3 |
+| 10e3c: eef1bac0 vsqrt.f32 s23, s0 | 77c: vcmpe.f32  s1, s5 | 72c: bge  0x734 |
+| 10e40: eef1fa10 vmrs APSR_nzcv, fpscr | 780: vmrs APSR_nzcv, fpscr | 730: add  r0, r3, #1 |
+| 10e44: 4a000049 bmi 10f70 | 784: mov  r0, r3 | 734: mov  r5, r0 |
+| 10e48: edd67a00 vldr s15, [r6] | 788: bge 0x790 | 738: mov  r0, #12 |
+| 10e4c: eeb07a4a vmov.f32 s14, s20 | 78c: add  r0, r3, #1 | 73c: mla  r0, r5, r0, r4 |
+| 10e50: ee399a29 vadd.f32 s18, s18, s19 | 790: mov  r4, r0 | 740: vldr  s9, [r0] |
+| 10e54: e59d0000 ldr r0, [sp] | 794: add  r0, r5, r4, lsl #2 | 744: vldr  s8, [r0, #4] |
+| 10e58: ee0b7a6b vmls.f32 s14, s22, s23 | 798: vldr  s10, [r0] | 748: vldr  s11, [r0, #8] |
+| 10e5c: ee4b7a08 vmla.f32 s15, s22, s16 | 79c: add  r0, r6, r4, lsl #2 | 74c: vsub.f32  s6, s2, s4 |
+| 10e60: ee0a9a6b vmls.f32 s18, s20, s23 | 7a0: vldr  s9, [r0] | 750: vmul.f32  s1, s3, s8 |
+| 10e64: e1570000 cmp r7, r0 | 7a4: add  r0, r7, r4, lsl #2 | 754: vmul.f32  s1, s1, s8 |
+| 10e68: ece67a01 vstmia r6!, {s15} | 7a8: vldr  s12, [r0] | 758: vdiv.f32  s0, s1, s9 |
+| 10e6c: edd57a00 vldr s15, [r5] | 7ac: vsub.f32  s7, s2, s4 | 75c: vsub.f32  s0, s11, s0 |
+| 10e70: ee477a08 vmla.f32 s15, s14, s16 | 7b0: vmul.f32  s1, s3, s9 | 760: vmul.f32  s12, s6, s0 |
+| 10e74: ece57a01 vstmia r5!, {s15} | 7b4: vmul.f32  s1, s1, s9 | 764: vsub.f32  s0, s13, s15 |
+| 10e78: edd37a00 vldr s15, [r3] | 7b8: vdiv.f32  s0, s1, s10 | 768: vmul.f32  s10, s3, s0 |
+| 10e7c: ee497a08 vmla.f32 s15, s18, s16 | 7bc: vsub.f32  s0, s12, s0 | 76c: vmul.f32  s1, s2, s12 |
+| 10e80: ece47a01 vstmia r4!, {s15} | 7c0: vmul.f32  s13, s7, s0 | 770: vdiv.f32  s0, s1, s9 |
+| 10e84: 0a000029 beq 10f30 ***EXIT LOOP*** | 7c4: vsub.f32  s0, s14, s16 | 774: vsqrt.f32  s14, s0 |
+| 10e88: e1a0a002 mov sl, r2 | 7c8: vmul.f32  s11, s3, s0 | 778: mov  r0, #12 |
+| 10e8c: e2822004 add r2, r2, #4 | 7cc: vmul.f32  s1, s2, s13 | 77c: mla  r0, r3, r0, r6 |
+| 10e90: ed979a00 vldr s18, [r7] | 7d0: vdiv.f32  s0, s1, s10 | 780: vmla.f32  s16, s10, s9 |
+| 10e94: e1a09007 mov r9, r7 | 7d4: vsqrt.f32  s15, s0 | 784: vstr  s16, [r0] |
+| 10e98: e2877004 add r7, r7, #4 | 7d8: add  r0, r8, r3, lsl #2 | 788: vmul.f32  s0, s9, s14 |
+| 10e9c: edd27a00 vldr s15, [r2] | 7dc: vmla.f32  s17, s11, s10 | 78c: vsub.f32  s0, s8, s0 |
+| 10ea0: e1a08001 mov r8, r1 | 7e0: vstr  s17, [r0] | 790: vmla.f32  s17, s10, s0 |
+| 10ea4: e2811004 add r1, r1, #4 | 7e4: add  r0, r9, r3, lsl #2 | 794: vstr  s17, [r0, #4] |
+| 10ea8: edda9a00 vldr s19, [sl] | 7e8: vmul.f32  s0, s10, s15 | 798: vadd.f32  s5, s11, s12 |
+| 10eac: ed977a00 vldr s14, [r7] | 7ec: vsub.f32  s0, s9, s0 | 79c: vmls.f32  s5, s8, s14 |
+| 10eb0: ed516a01 vldr s13, [r1, #-4] | 7f0: vmla.f32  s18, s11, s0 | 7a0: vmla.f32  s18, s10, s5 |
+| 10eb4: ee799aa7 vadd.f32 s19, s19, s15 | 7f4: vstr  s18, [r0] | 7a4: vstr  s18, [r0, #8] |
+| 10eb8: eddb5a01 vldr s11, [fp, #4] | 7f8: add  r0, sl, r3, lsl #2 | 7a8: add  r3, r3, #1 |
+| 10ebc: ee399a07 vadd.f32 s18, s18, s14 | 7fc: vadd.f32  s6, s12, s13 | 7ac: cmp  r3, r7 |
+| 10ec0: edd17a00 vldr s15, [r1] | 800: vmls.f32  s6, s9, s15 | 7b0: blt  0x5f0 |
+| 10ec4: ee699aa8 vmul.f32 s19, s19, s17 | 804: vmla.f32  s19, s11, s6 | |
+| 10ec8: ee357aea vsub.f32 s14, s11, s21 | 808: vstr  s19, [r0] | |
+| 10ecc: ee299a28 vmul.f32 s18, s18, s17 | 80c: add  r3, r3, #1 | |
+| 10ed0: ee766aa7 vadd.f32 s13, s13, s15 | 810: ldr  r0, [fp, #32] | |
+| 10ed4: ee296aa8 vmul.f32 s12, s19, s17 | 814: cmp  r3, r0 | |
+| 10ed8: ee266a29 vmul.f32 s12, s12, s19 | 818: blt 0x640 | |
+| 10edc: eec67a09 vdiv.f32 s15, s12, s18 | | |
+| 10ee0: ee567aa8 vnmls.f32 s15, s13, s17 | | |
+| 10ee4: ee677a87 vmul.f32 s15, s15, s14 | | |
+| 10ee8: ee677aa5 vmul.f32 s15, s15, s11 | | |
+| 10eec: ee870a89 vdiv.f32 s0, s15, s18 | | |
+| 10ef0: eeb50a40 vcmp.f32 s0, #0.0 | | |
+| 10ef4: eeb1cac0 vsqrt.f32 s24, s0 | | |
+| 10ef8: eef1fa10 vmrs APSR_nzcv, fpscr | | |
+| 10efc: 4a000013 bmi 10f50 | | |
+| 10f00: ee898a89 vdiv.f32 s16, s19, s18 | | |
+| 10f04: eeb58ac0 vcmpe.f32 s16, #0.0 | | |
+| 10f08: eef1fa10 vmrs APSR_nzcv, fpscr | | |
+| 10f0c: aaffff7c bge 10d04 | | |
+| 10f10: e1a00001 mov r0, r1 | | |
+| 10f14: e1a0c002 mov ip, r2 | | |
+| 10f18: e1a03007 mov r3, r7 | | |
+| 10f1c: eaffff7b b 10d10 | | |
+| 10f20: e1a00001 mov r0, r1 | | |
+| 10f24: e1a0e002 mov lr, r2 | | |
+| 10f28: e1a0c007 mov ip, r7 | | |
+| 10f2c: eaffff8f b 10d70 | | |
+| 10f50: e58d2004 str r2, [sp, #4] | | |
+| 10f54: e58d1008 str r1, [sp, #8] | | |
+| 10f58: ebfffd37 bl 1043c <sqrtf@plt> | | |
+| 10f5c: eddb7a01 vldr s15, [fp, #4] | | |
+| 10f60: e59d2004 ldr r2, [sp, #4] | | |
+| 10f64: e59d1008 ldr r1, [sp, #8] | | |
+| 10f68: ee377aea vsub.f32 s14, s15, s21 | | |
+| 10f6c: eaffffe3 b 10f00 | | |
+| 10f70: e58d3004 str r3, [sp, #4] | | |
+| 10f74: e58d2008 str r2, [sp, #8] | | |
+| 10f78: e58d100c str r1, [sp, #12] | | |
+| 10f7c: ebfffd2e bl 1043c <sqrtf@plt> | | |
+| 10f80: e59d3004 ldr r3, [sp, #4] | | |
+| 10f84: e59d2008 ldr r2, [sp, #8] | | |
+| 10f88: e59d100c ldr r1, [sp, #12] | | |
+| 10f8c: eaffffad b 10e48 | | |
+| 10f90: e58d3004 str r3, [sp, #4] | | |
+| 10f94: e58d2008 str r2, [sp, #8] | | |
+| 10f98: e58d100c str r1, [sp, #12] | | |
+| 10f9c: ebfffd26 bl 1043c <sqrtf@plt> | | |
+| 10fa0: e59d3004 ldr r3, [sp, #4] | | |
+| 10fa4: e59d2008 ldr r2, [sp, #8] | | |
+| 10fa8: e59d100c ldr r1, [sp, #12] | | |
+| 10fac: eaffff80 b 10db4 | | |
 
 By the end of 2030, I expect to have automatic vectorization and/or parallelization working
 in my HPC compiler.  The HPC extensions/restrictions make it "natural" to manage

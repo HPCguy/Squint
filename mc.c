@@ -544,7 +544,10 @@ new_block_def:
       else if (tk >= '0' && tk <= '9') {
          tk = Num; // token is char or int
          tkv.i = strtoul((pp = p - 1), &p, 0); // octal, decimal, hex parsing
-         if (*p == '.') { tkv.f = strtof(pp, &p); tk = NumF; } // float
+         if (*p == '.') { // float
+            tkv.f = strtof(pp, &p); tk = NumF;
+            if (*p == 'f') ++p; // floating const has 'f' suffix
+         }
          return;
       }
       switch (tk) {

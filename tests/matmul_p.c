@@ -10,7 +10,7 @@ int main()
    for (r=0; r<SIZE; ++r) {
       a = &A[r][0];
       for (c=0; c<SIZE; ++c) {
-         sum = 0.0;
+         sum = 0.0f;
          bc = b + c;
          for (k=SIZE; k > 0; --k) {
             sum += *a++ * *bc;

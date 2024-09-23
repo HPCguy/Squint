@@ -24,8 +24,8 @@
 #include <stdio.h>
 #include <math.h>
 
-#define gammaa        1.4142135
-#define gammaInverse  0.70710678
+#define gammaa        1.4142135f
+#define gammaInverse  0.70710678f
 
 
 /**************************************************************************
@@ -56,12 +56,12 @@ void InitializeShockTubeMesh(int numElem, float *mass, float *momentum,
    int i;
    int midTube = numElem / 2;
 
-   float massInitial     = 1.0;
+   float massInitial     = 1.0f;
    float pressureInitial = gammaInverse;
-   float energyInitial   = pressureInitial/(gammaa-1.0);
+   float energyInitial   = pressureInitial/(gammaa-1.0f);
 
-   float pressureRatio = 0.4;
-   float densityRatio = 0.7; 
+   float pressureRatio = 0.4f;
+   float densityRatio = 0.7f;
 
    float *m = mass, *e = energy, *p = pressure;
    for (i = 0; i < midTube; ++i) {
@@ -72,7 +72,7 @@ void InitializeShockTubeMesh(int numElem, float *mass, float *momentum,
 
    massInitial     = massInitial * densityRatio;
    pressureInitial = pressureInitial * pressureRatio;
-   energyInitial   = pressureInitial/(gammaa - 1.0);
+   energyInitial   = pressureInitial/(gammaa - 1.0f);
 
    for (i = midTube; i < numElem; ++i) {
       *m++ = massInitial;
@@ -82,7 +82,7 @@ void InitializeShockTubeMesh(int numElem, float *mass, float *momentum,
 
    m = momentum;
    for (i = 0; i < numElem; ++i) {
-      *m++ = 0.0;
+      *m++ = 0.0f;
    }
 }
 
@@ -122,11 +122,11 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
 #endif
 
       /* calculate face centered quantities */
-      float massf =     0.5 * ( m[upWind] +  m[downWind]);
-      float momentumf = 0.5 * (mo[upWind] + mo[downWind]);
-      float energyf =   0.5 * ( e[upWind] +  e[downWind]);
-      float pressuref = (gammaa - 1.0) *
-                         (energyf - 0.5*momentumf*momentumf/massf);
+      float massf =     0.5f * ( m[upWind] +  m[downWind]);
+      float momentumf = 0.5f * (mo[upWind] + mo[downWind]);
+      float energyf =   0.5f * ( e[upWind] +  e[downWind]);
+      float pressuref = (gammaa - 1.0f) *
+                        (energyf - 0.5f*momentumf*momentumf/massf);
       float c = sqrtf(gammaa*pressuref/massf);
       float v = momentumf/massf;
 
@@ -137,35 +137,36 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
 
       /* OK, calculate face quantities */
 
-      contributor = ((v >= 0.0) ? upWind : downWind);
+      contributor = ((v >= 0.0f) ? upWind : downWind);
       massf     =  m[contributor];
       momentumf = mo[contributor];
       energyf   =  e[contributor];
-      pressuref = energyf - 0.5*momentumf*momentumf/massf;
-      ev = v*(gammaa - 1.0);
+      pressuref = energyf - 0.5f*momentumf*momentumf/massf;
+      ev = v*(gammaa - 1.0f);
 
       f0__ = ev*massf;
       f1__ = ev*momentumf;
       f2__ = ev*(energyf - pressuref);
 
-      contributor = ((v + c >= 0.0) ? upWind : downWind);
+      contributor = ((v + c >= 0.0f) ? upWind : downWind);
       massf     =  m[contributor];
       momentumf = mo[contributor];
       energyf   =  e[contributor];
-      pressuref = (gammaa - 1.0)*(energyf - 0.5*momentumf*momentumf/massf);
-      ev = 0.5*(v + c);
+      pressuref = (gammaa - 1.0f)*(energyf - 0.5f*momentumf*momentumf/massf);
+      ev = 0.5f*(v + c);
       cLocal = sqrtf(gammaa*pressuref/massf);
 
       f0__ += ev*massf;
       f1__ += ev*(momentumf + massf*cLocal);
       f2__ += ev*(energyf + pressuref + momentumf*cLocal);
 
-      contributor = ((v - c >= 0.0) ? upWind : downWind);
+      contributor = ((v - c >= 0.0f) ? upWind : downWind);
       massf     =  m[contributor];
       momentumf = mo[contributor];
       energyf   =  e[contributor];
-      pressuref = (gammaa - 1.0)*(energyf - 0.5*momentumf*momentumf/massf); ++m;
-      ev = 0.5*(v - c); ++mo;
+      pressuref = (gammaa - 1.0f)*(energyf - 0.5f*momentumf*momentumf/massf);
+      ++m;
+      ev = 0.5f*(v - c); ++mo;
       cLocal = sqrtf(gammaa*pressuref/massf); ++e;
 
       f0__ += ev*massf;
@@ -210,7 +211,7 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
       m_  -= gammaInverse*(f0_[downWind] - f0_[upWind])*dtdx; ++f0_;
       mo_ -= gammaInverse*(f1_[downWind] - f1_[upWind])*dtdx; ++f1_;
       e_  -= gammaInverse*(f2_[downWind] - f2_[upWind])*dtdx; ++f2_;
-      *++p   = (gammaa - 1.0) * (e_ - 0.5*mo_*(*mo++ = mo_)/(*m++ = m_));
+      *++p   = (gammaa - 1.0f) * (e_ - 0.5f*mo_*(*mo++ = mo_)/(*m++ = m_));
       *e++ = e_;
    }
 }
@@ -270,9 +271,9 @@ int main(void)
 
    InitializeShockTubeMesh(numElems+1, mass, momentum, energy, pressure);
 
-   float time = 0.0;
-   float dx = 1.0 / (float) numElems;
-   float dt = 0.4 * dx;
+   float time = 0.0f;
+   float dx = 1.0f / (float) numElems;
+   float dt = 0.4f * dx;
    int currCycle = 0;
 
    for (currCycle=0; currCycle<numTotalCycles; ++currCycle)
