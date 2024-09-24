@@ -2360,9 +2360,9 @@ static void apply_peepholes8_1(int *instInfo, int *funcBegin, int *funcEnd)
                if (xform && (instInfo[scan-funcBegin] & RI_bb) != RI_bb) {
                   int *inst = &instInfo[scan-funcBegin];
                   int *rxd = find_def(instInfo, inst-1, rc, S_BACK);
-                  if (rxd && rxd < bdst) {
+                  if (rxd && rxd < &instInfo[bdst-funcBegin]) {
                      int *rxu = find_use(instInfo, inst-1, rc, S_BACK);
-                     if (rxu < bdst) { // simple loop counter, no dependency
+                     if (rxu < &instInfo[bdst-funcBegin]) { // one inst loop counter
                         scanm1 = scan - 1; // rn <<= 12;
                         while (scanm1 > bdst) {
                            if ((*inst & RI_bb) || // jump target
