@@ -161,7 +161,7 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
       massf = mass[contributor];
       momentumf = momentum[contributor];
       energyf = energy[contributor];
-      pressuref = (gammaa - 1.0f)*(energyf - 0.5*momentumf*momentumf/massf);
+      pressuref = (gammaa - 1.0f)*(energyf - 0.5f*momentumf*momentumf/massf);
       ev = 0.5f*(v - c);
       cLocal = sqrtf(gammaa*pressuref/massf);
 

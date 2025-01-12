@@ -13,13 +13,13 @@ void fibv(int n)
 
 float factf(float n)
 {
-   if (n <= 1.0) return 1.0f;
+   if (n <= 1.0f) return 1.0f;
    else return (n * factf(n-1.0f)) ;
 }
 
 float fibf(float n)
 {
-   if (n <= 1.0) return 1.0f;
+   if (n <= 1.0f) return 1.0f;
    else return ( fibf(n-1.0f) + fibf(n-2.0f) ) ;
 }
 

@@ -479,7 +479,8 @@ inline void SumElemFaceNormal(float *normalX0, float *normalY0, float *normalZ0,
 void CalcElemNodeNormals(float *pfx, float *pfy, float *pfz,
                          float *x, float *y, float *z)
 {
-   for (int i = 0 ; i < 8 ; ++i) {
+   int i;
+   for (i = 0 ; i < 8 ; ++i) {
       pfx[i] = ZERO;
       pfy[i] = ZERO;
       pfz[i] = ZERO;

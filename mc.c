@@ -25,15 +25,22 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dlfcn.h>
+#include <stdint.h>
 
 #define SMALL_TBL_SZ 256
 
 #ifdef __MC__
 float strtof(char *s, char **e);
+char *strrchr(char *s, int c);
 #endif
 
 #ifdef SQUINT_SO
-void squint_opt(int *begin, int *end);
+int squint_opt(int *begin, int *end);
+#ifdef UINTPTR_MAX
+#if ((UINTPTR_MAX & 0x100000000) != 0)
+#include "squint.c"
+#endif
+#endif
 #endif
 
 char *freep, *p, *lp; // current position in source code
@@ -435,10 +442,6 @@ int ef_getidx(char *name) // get cache index of external function
 
 inline void expr(int lev);
 
-/* parse next token
- * 1. store data into id and then set the id to current lexcial form
- * 2. set tk to appropriate type
- */
 void eol2semi(char *ss) // preprocessor support
 {
    char *s;
@@ -447,15 +450,15 @@ void eol2semi(char *ss) // preprocessor support
    if (*s) *s = ';';
 }
 
+/* parse next token
+ * 1. store data into id and then set the id to current lexcial form
+ * 2. set tk to appropriate type
+ */
 void next()
 {
    char *pp;
    int t;
 
-   /* using loop to ignore whitespace characters, but characters that
-    * cannot be recognized by the lexical analyzer are considered blank
-    * characters, such as '@'.
-    */
 text_sub:
    while ((tk = *p)) {
       ++p;
@@ -466,8 +469,6 @@ text_sub:
                 (*p >= '0' && *p <= '9') || (*p == '_') || (*p == '$'))
             tk = tk * 147 + *p++;
          tk = (tk << 6) + (p - pp);  // hash plus symbol length
-         // hash value is used for fast comparison. Since it is inaccurate,
-         // we have to validate the memory content as well.
          int nlen = p - pp;
 
          for (id = sym; id < symk; ++id) { // check for keywords
@@ -539,14 +540,12 @@ new_block_def:
          id->chain = 0;
          return;
       }
-      /* Calculate the constant */
-      // first byte is a digit, and it is considered a numerical value
       else if (tk >= '0' && tk <= '9') {
          tk = Num; // token is char or int
          tkv.i = strtoul((pp = p - 1), &p, 0); // octal, decimal, hex parsing
          if (*p == '.') { // float
             tkv.f = strtof(pp, &p); tk = NumF;
-            if (*p == 'f') ++p; // floating const has 'f' suffix
+            if ((*p | 0x20) == 'f') ++p; // floating const has 'f' suffix
          }
          return;
       }
@@ -667,8 +666,6 @@ new_block_def:
                case '0': tkv.i = '\0'; break; // an int with value 0
                }
             }
-            // if it is double quotes (string literal), it is considered as
-            // a string, copying characters to data
             if (tk == '"') *data++ = tkv.i;
          }
          ++p;
@@ -924,8 +921,7 @@ do_inln_func:
          next(); return;
       }
       sbegin = 0;
-      // function call
-      if (tk == '(') {
+      if (tk == '(') { // function call
          int fidx, tsi, *saven = 0;
          char *psave, *ts[52];
          if (d == symlh) { // move ext func Ids to global sym table
@@ -1163,20 +1159,16 @@ resolve_fnproto:
          }
       }
       break;
-   // directly take an immediate value as the expression value
-   // IMM recorded in emit sequence
    case Num : *--n = tkv.i; *--n = Num;  next(); ty = INT; break;
    case NumF: *--n = tkv.i; *--n = NumF; next(); ty = FLOAT; break;
    case '"': // string, as a literal in data segment
       *--n = tkv.i; *--n = Num; next();
       // continuous `"` handles C-style multiline text such as `"abc" "def"`
       while (tk == '"') next();
+      if (data == (char *) n[1]) *data++ = 0; // handle empty string
       data = (char *) (((int) data + sizeof(int)) & (-sizeof(int)));
       ty = CHAR + PTR;
       break;
-   /* SIZEOF_expr -> 'sizeof' '(' 'TYPE' ')'
-    * FIXME: not support "sizeof (Id)".
-    */
    case Sizeof:
       next();
       if (tk != '(') fatal("open parenthesis expected in sizeof");
@@ -1201,7 +1193,6 @@ resolve_fnproto:
                fatal("bad struct/union type");
             ty = id->type; next(); break;
          }
-         // multi-level pointers, plus `PTR` for each level
          while (tk == Mul) { next(); ty += PTR; }
       }
       if (tk != ')') fatal("close parenthesis expected in sizeof");
@@ -1210,11 +1201,9 @@ resolve_fnproto:
       *--n = (ty & 3) ?
              (((ty - PTR) >= PTR) ? sizeof(int) : tsize[(ty - PTR) >> 2]) :
              ((ty >= PTR) ? sizeof(int) : tsize[ty >> 2]); *--n = Num;
-      // just one dimension supported at the moment
-      if (d != 0 && (ty & 3)) n[1] *= t;
+      if (d && (ty & 3)) n[1] *= t;
       ty = INT;
       break;
-   // Type cast or parenthesis
    case '(':
       next();
       if ((tk >= Char && tk <= Union) || tk == TypeId) {
@@ -1233,7 +1222,6 @@ resolve_fnproto:
                fatal("bad struct/union type");
             t = id->type; next(); break;
          }
-         // t: pointer
          while (tk == Mul) { next(); t += PTR; }
          if (tk != ')') fatal("bad cast");
          next();
@@ -1267,9 +1255,6 @@ resolve_fnproto:
       ty -= PTR; *--n = ty; *--n = Load;
       break;
    case And: // "&", take the address operation
-      /* when "token" is a variable, it takes the address first and
-       * then LI/LC, so `--e` becomes the address of "a".
-       */
       attq = 1; next(); if (tk == Id && parg) id->flags |= (8 | 32 | 64);
       expr(Inc);
       if (*n != Load) fatal("bad address-of");
@@ -2165,7 +2150,7 @@ void gen(int *n)
       *e = (int) (e + 7); *++e = PSH; i = *cas; *cas = (int) e;
       gen((int *) n[1]); // condition
       if (*(e - 1) != IMM) fatal("case label not a numeric literal");
-      *++e = SUB; *++e = BNZ; cas = ++e; *e = i + e[-3];
+      *++e = SUB; *++e = BNZ; cas = ++e; *e = i + *(e - 3);
       if (*(int *) n[2] == Switch) a = cas;
       gen((int *) n[2]); // expression
       if (a != 0) cas = a;
@@ -2253,7 +2238,6 @@ void loc_array_decl(int ct, int ext[3], int *dims, int *et, int *size)
    *et = gen_etype(ext, *dims);
 }
 
-// statement parsing (syntax analysis, except for declarations)
 void stmt(int ctx)
 {
    struct ident_s *dd, *td, *osymh, *osymt;
@@ -2409,7 +2393,7 @@ do_typedef:
                      ty = (j + PTR) | nf;
                      ++tokloc;
                   }
-                  sz = (sz + 3) & -4;
+                  sz = (sz + (sizeof(int) - 1)) & -sizeof(int);
                   m->offset = i;
                   m->type = ty;
                   m->next = members[bt >> 2];
@@ -2428,10 +2412,6 @@ do_typedef:
          }
          break;
       }
-      /* parse statement such as 'int a, b, c;'
-       * "enum" finishes by "tk == ';'", so the code below will be skipped.
-       * While current token is not statement end or block end.
-       */
       b = 0; ++inDecl;
       while (tk != ';' && tk != '}' && tk != ',' && tk != ')') {
          ty = bt;
@@ -2631,7 +2611,7 @@ unwind_func:
             if (tdef) {
                dd->tk = TypeId; goto next_type;
             }
-            sz = (sz + 3) & -4;
+            sz = (sz + (sizeof(int) - 1)) & -sizeof(int);
             if (ctx == Loc && sz > osize) {
                osize = sz; oline = line; oname = dd->name;
             }
@@ -4090,6 +4070,10 @@ int main(int argcc, char **argvv)
    int poolsz = 4 * 1024 * 1024; // arbitrary size
    char **argv;
 
+#ifdef SQUINT_SO
+   peephole = 1;
+#endif
+
    labt = lab; // initialize label Ids
 
    if (!(sym = symk = symgt = (struct ident_s *) malloc(poolsz)))
@@ -4164,8 +4148,16 @@ int main(int argcc, char **argvv)
          ma = 1 - ma; --argc; ++argv;
       }
       else if ((*argv)[1] == 'o') {
+#ifdef UINTPTR_MAX
+#if ((UINTPTR_MAX & 0x100000000) != 0)
+         die("Only JIT execution allowed on 64-bit OS");
+#endif
+#endif
          elf = 1; --argc; ++argv;
-         if (argc < 1) die("no output file argument");
+         if (argc < 1 || **argv == '-') die("no output file argument");
+         char *suffix = strrchr(*argv, '.');
+         if (suffix && suffix[1] == 'c')
+            die("won't create executable with .c suffix");
          if ((elf_fd = open(*argv, _O_CREAT | _O_WRONLY, 0775)) < 0) {
             printf("could not open(%s)\n", *argv); return -1;
          }
