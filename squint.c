@@ -2131,7 +2131,7 @@ fallback:
             else if (((*scan & RI_Rd) >> 12) == (*scanp1 & RI_Rm) &&
                      ((*scan & RI_Sd) >> 17) == (*scanp1 & 0x20)) {
                scanp2 = active_inst(scanp1, 1); // skip for func return value
-               if (*scanp2 == 0xe8bd8000 || *scanp2 == 0xe28bd000) continue;
+               if (*scanp2 == 0xe8bd8800 || *scanp2 == 0xe28bd000) continue;
                rdu = &finfo[scanp1-funcBegin];
                // verify scanp1 last use of Rn before next def, otherwise skip
                rn = ((*scanp1 & RI_Rn) >> 15) + ((*scanp1 & 0x80) >> 7);
@@ -2391,6 +2391,34 @@ static void apply_peepholes8_1(int *instInfo, int *funcBegin, int *funcEnd)
       }
    }
 }
+
+static void apply_peepholes9(int *instInfo, int *funcBegin, int *funcEnd)
+{
+   int isFP, *scan, *scanm1, *scanm2;
+
+   create_inst_info(instInfo, funcBegin, funcEnd);
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
+   for (scan = funcBegin; scan < funcEnd; ++scan) {
+      scan = skip_nop(scan, S_FWD);
+      if (*scan == 0xe28bd000) { // add sp, fp, #0
+         scanm1 = active_inst(scan, -1);
+         if ((instInfo[scanm1 - funcBegin] & RI_bb) == 0 &&
+             ((*scanm1 & 0xfff0ffff) == 0xe1a00000 ||  // mov r0, rX
+              (*scanm1 & 0xfffff0d0) == 0xeeb00040)) { // vmov s0, sX
+            scanm2 = active_inst(scanm1, -1);
+            if ((*scanm2 & (7 << 25)) <= (1 << 25) ||
+                (isFP = ((*scanm2 & (15 << 24)) == (14 << 24)))) { // DP op
+               *scanm2 &= isFP ? 0xffbf0fff :
+                  ((instInfo[scanm2 - funcBegin] & RI_RdDest) ?
+                   0xffff0fff : 0xfff0ffff);
+               *scanm1 = NOP;
+            }
+         }
+      }
+   }
+}
+
 static int apply_ptr_cleanup(int *instInfo, int *funcBegin, int *funcEnd,
                              int base)
 {
@@ -3956,10 +3984,23 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
    int offset[REN_BUF];
    int count[REN_BUF];
    int i, j, numReg = 0;
-   int memMask = dofloat ? 0xff2f0f00 : 0x0f2f0000;
-   int memInst = dofloat ? 0xed0b0a00 : 0x050b0000;
+   int memMask, altMask;
+   int memInst, altInst;
    int lb = 1 << 20; // load bit
    int maxReg = dofloat ? 28 : NUM_USABLE_REG;
+
+   if (dofloat) {
+      memMask = 0xff2f0f00;
+      altMask = 0x0f2f0000;
+      memInst = 0xed0b0a00;
+      altInst = 0x050b0000;
+   }
+   else {
+      memMask = 0x0f2f0000;
+      altMask = 0xff2f0f00;
+      memInst = 0x050b0000;
+      altInst = 0xed0b0a00;
+   }
 
    for (i=0; i<REN_BUF; ++i) count[i] = 0;
 
@@ -3968,7 +4009,7 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
       scan = skip_nop(scan, S_FWD);
 
       if ((*scan & memMask) == memInst) { // load/store [fp, #X]
-         int off = dofloat ? (*scan & 0xff) : (*scan & 0xfff);
+         int off = dofloat ? ((*scan & 0xff)*4) : (*scan & 0xfff);
          if ((*scan & (1<<23)) == 0) off = -off;
          for (i = 0; i < numReg; ++i) {
             if (offset[i] == off) break;
@@ -3978,7 +4019,38 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
             offset[numReg++] = off;
          }
          ++count[i];
+         count[i] |= ((dofloat ? 2 : 1) << 29);
       }
+      else if ((*scan & altMask) == altInst) { // load/store [fp, #X]
+         int off = dofloat ? (*scan & 0xfff) : ((*scan & 0xff)*4);
+         if ((*scan & (1<<23)) == 0) off = -off;
+         for (i = 0; i < numReg; ++i) {
+            if (offset[i] == off) break;
+         }
+         if (i == numReg) {
+            if (numReg == REN_BUF) break;
+            offset[numReg++] = off;
+         }
+         // cross-access disqualifies xform
+         count[i] |= ((dofloat ? 1 : 2) << 29);
+      }
+   }
+
+   for (i=0; i<numReg; ++i) {
+      // This test is 'too conservative' and can discard block scope
+      // loc-var declarations where 'sibling' scopes have an int
+      // declared in one scope overlap a float declared in the other.
+
+      if ((count[i] & (3 << 29)) != ((dofloat ? 2 : 1) << 29)) {
+         --numReg;
+         for(int j = i; j < numReg; ++j) {
+            offset[j] = offset[j+1];
+            count[j] = count[j+1];
+         }
+         --i;
+      }
+      else
+         count[i] &= 0x0fffffff;
    }
 
    /* discard any frame variables that are not trivial */
@@ -3987,7 +4059,7 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
 
       if ((*scan & 0xffffff00) == 0xe28b0000 || // add r0, fp, #X
           (*scan & 0xffffff00) == 0xe24b0000) { // sub r0, fp, #X
-         int off = dofloat ? ((*scan & 0xff) / 4) : (*scan & 0xff);
+         int off = (*scan & 0xff);
          if ((*scan & 0xffffff00) == 0xe24b0000) {
             off = -off;
          }
@@ -4047,7 +4119,11 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
 
       numReg = j;
    }
-   else numReg = i;
+   else {
+      numReg = i;
+
+      for (i=0; i<numReg; ++i) offset[i] >>= 2;
+   }
 
    if (numReg == 0) return base;
 
@@ -4327,6 +4403,7 @@ int squint_opt(int *begin, int *end)
 
          apply_peepholes8(tmpbuf, funcBegin, retAddr, flow, fhigh);
          apply_peepholes8_1(tmpbuf, funcBegin, retAddr);
+         apply_peepholes9(tmpbuf, funcBegin, retAddr);
 
          // if (noFloatConst)
          //    simplify_frame(funcBegin, retAddr);

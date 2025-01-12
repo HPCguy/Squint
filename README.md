@@ -3,14 +3,16 @@
 ## Introduction
 Short summary: This repo contains a highly functional, but not quite
 complete, C compiler (mc.c) that supports JIT execution, ELF executable
-generation, and peephole optimization.  mc.c is a follow on to the AMaCC
-compiler.  See the AMaCC documentation referenced below for more information.
+generation, dynamic linking, and peephole optimization.  mc.c is a follow-on
+to the AMaCC compiler.  See the AMaCC documentation referenced below for
+more information.
 
-This compiler was developed on a Raspberry Pi computer running 32 bit Buster Linux.
-See the "Discussion" tab above for instructions on using this compiler
-with an ARM Chromebook.
+This compiler was developed on a Raspberry Pi computer running 32 bit
+Buster Linux.  See the "Discussion" tab above for instructions on using
+this compiler with an ARM Chromebook.
 
-The MC C compiler found in this repository is a subset of ***the full MC HPC compiler which is
+The MC C compiler found in this repository is a subset of
+***the full MC HPC compiler which is
 being developed offline.  That said, results from the full MC HPC compiler
 are shown [below](#assembly-language-quality)***.
 
@@ -20,9 +22,9 @@ This compiler supports the following features beyond AMaCC:
 
 * Array declarations and initializers. (e.g. float foo[4][4] = { { 0.0, ... }, { 0.0 ... }, ... };
 
-* The Squint peephole optimizer that ***roughly halves the number of executable
-instructions in compiled code***.  The tests/sieve.c
-benchmark provides an optimization example, and runs roughly
+* The Squint peephole optimizer that
+***roughly halves the number of executable instructions in compiled code***.
+The tests/sieve.c benchmark provides an optimization example, and runs roughly
 ***4x faster after peephole optimization***.
 
 * Greatly improved type checking, error checking, and IR code generation (try -si option).
