@@ -576,6 +576,29 @@ void SumElemStressesToNodeForces(float B[][8], float stress_xx,
   fz[7] = -( stress_zz * pfz7 );
 }
 
+void GatherNodes(int *elemNodes, float *x, float *y, float *z,
+                 float x_local[8], float y_local[8], float z_local[8])
+{
+  for(int lnode=0 ; lnode<8 ; ++lnode )
+  {
+    int gnode = elemNodes[lnode] ;
+    x_local[lnode] = x[gnode] ;
+    y_local[lnode] = y[gnode] ;
+    z_local[lnode] = z[gnode] ;
+  }
+}
+
+void SumForce(int *elemNodes, float *fx, float *fy, float *fz,
+              float fx_local[8], float fy_local[8], float fz_local[8])
+{
+  for(int lnode=0 ; lnode<8 ; ++lnode )
+  {
+    int gnode = elemNodes[lnode] ;
+    fx[gnode] += fx_local[lnode] ;
+    fy[gnode] += fy_local[lnode] ;
+    fz[gnode] += fz_local[lnode] ;
+  }
+}
 
 void IntegrateStressForElems(int *nodelist,
                              float *x,  float *y,  float *z,
@@ -598,13 +621,7 @@ void IntegrateStressForElems(int *nodelist,
       float  z_local[8] ;
 
       // get coordinates from global arrays and copy into local arrays.
-      for(lnode=0 ; lnode<8 ; ++lnode )
-      {
-        gnode = elemNodes[lnode];
-        x_local[lnode] = x[gnode];
-        y_local[lnode] = y[gnode];
-        z_local[lnode] = z[gnode];
-      }
+      GatherNodes(elemNodes, x, y, z, x_local, y_local, z_local);
 
       /* Volume calculation involves extra work for numerical consistency. */
       CalcElemShapeFunctionDerivatives(x_local, y_local, z_local,
@@ -622,14 +639,8 @@ void IntegrateStressForElems(int *nodelist,
       SumElemStressesToNodeForces( B, sigxx[k], sigyy[k], sigzz[k],
                                    fx_local, fy_local, fz_local ) ;
 
-      // copy nodal force contributions to global force arrray.
-      for(lnode=0 ; lnode<8 ; ++lnode )
-      {
-        gnode2 = elemNodes[lnode];
-        fx[gnode2] += fx_local[lnode];
-        fy[gnode2] += fy_local[lnode];
-        fz[gnode2] += fz_local[lnode];
-      }
+      // sum nodal force contributions to global force arrray.
+      SumForce(elemNodes, fx, fy, fz, fx_local, fy_local, fz_local);
     }
   }
 }
@@ -1018,14 +1029,8 @@ void CalcFBHourglassForceForElems(int * nodelist,
 /*    compute the hourglass modes */
 
    for (int i2=0; i2<numElem; ++i2) {
-      float coefficient;
-      int *elemToNode = &nodelist[8*i2];
       int i3=8*i2;
-      // float volinv = ONE/determ[i2];
-      float ss1, mass1, volume13 ;
-      // float hourmodx, hourmody, hourmodz;
-      int n0si2, n1si2, n2si2, n3si2;
-      int n4si2, n5si2, n6si2, n7si2;
+      int *elemToNode = &nodelist[i3];
       float hourgam[4][8];
 
       FBKernel( &x8n[i3],  &y8n[i3],  &z8n[i3],
@@ -1035,86 +1040,31 @@ void CalcFBHourglassForceForElems(int * nodelist,
       /* compute forces */
       /* store forces into h arrays (force arrays) */
 
-      ss1=ss[i2];
-      mass1=elemMass[i2];
-      volume13 = cbrtf(determ[i2]);
-
-      n0si2 = elemToNode[0];
-      n1si2 = elemToNode[1];
-      n2si2 = elemToNode[2];
-      n3si2 = elemToNode[3];
-      n4si2 = elemToNode[4];
-      n5si2 = elemToNode[5];
-      n6si2 = elemToNode[6];
-      n7si2 = elemToNode[7];
+      float ss1=ss[i2];
+      float mass1=elemMass[i2];
+      float volume13 = cbrtf(determ[i2]);
 
       float xd1[8], yd1[8], zd1[8] ;
       float hgfx[8], hgfy[8], hgfz[8] ;
+      float coefficient = - hourg * 0.01f * ss1 * mass1 / volume13;
 
-      xd1[0] = xd[n0si2];
-      xd1[1] = xd[n1si2];
-      xd1[2] = xd[n2si2];
-      xd1[3] = xd[n3si2];
-      xd1[4] = xd[n4si2];
-      xd1[5] = xd[n5si2];
-      xd1[6] = xd[n6si2];
-      xd1[7] = xd[n7si2];
+      GatherNodes(elemToNode, xd, yd, zd, xd1, yd1, zd1);
 
-      yd1[0] = yd[n0si2];
-      yd1[1] = yd[n1si2];
-      yd1[2] = yd[n2si2];
-      yd1[3] = yd[n3si2];
-      yd1[4] = yd[n4si2];
-      yd1[5] = yd[n5si2];
-      yd1[6] = yd[n6si2];
-      yd1[7] = yd[n7si2];
+      CalcElemFBHourglassForce(xd1, yd1, zd1, hourgam,
+                               coefficient, hgfx, hgfy, hgfz);
 
-      zd1[0] = zd[n0si2];
-      zd1[1] = zd[n1si2];
-      zd1[2] = zd[n2si2];
-      zd1[3] = zd[n3si2];
-      zd1[4] = zd[n4si2];
-      zd1[5] = zd[n5si2];
-      zd1[6] = zd[n6si2];
-      zd1[7] = zd[n7si2];
-
-      coefficient = - hourg * 0.01f * ss1 * mass1 / volume13;
-
-      CalcElemFBHourglassForce(xd1,yd1,zd1,
-                      hourgam, coefficient, hgfx, hgfy, hgfz);
-
-      fx[n0si2] += hgfx[0];
-      fy[n0si2] += hgfy[0];
-      fz[n0si2] += hgfz[0];
-
-      fx[n1si2] += hgfx[1];
-      fy[n1si2] += hgfy[1];
-      fz[n1si2] += hgfz[1];
-
-      fx[n2si2] += hgfx[2];
-      fy[n2si2] += hgfy[2];
-      fz[n2si2] += hgfz[2];
-
-      fx[n3si2] += hgfx[3];
-      fy[n3si2] += hgfy[3];
-      fz[n3si2] += hgfz[3];
-
-      fx[n4si2] += hgfx[4];
-      fy[n4si2] += hgfy[4];
-      fz[n4si2] += hgfz[4];
-
-      fx[n5si2] += hgfx[5];
-      fy[n5si2] += hgfy[5];
-      fz[n5si2] += hgfz[5];
-
-      fx[n6si2] += hgfx[6];
-      fy[n6si2] += hgfy[6];
-      fz[n6si2] += hgfz[6];
-
-      fx[n7si2] += hgfx[7];
-      fy[n7si2] += hgfy[7];
-      fz[n7si2] += hgfz[7];
+      SumForce(elemToNode, fx, fy, fz, hgfx, hgfy, hgfz);
    }
+}
+
+void CopyBlock(float *dst1, float *dst2, float *dst3,
+               float *src1, float *src2, float *src3)
+{
+  for (int i=0; i<8; ++i) {
+    dst1[i] = src1[i];
+    dst2[i] = src2[i];
+    dst3[i] = src3[i];
+  }
 }
 
 void CalcHourglassControlForElems(Domain *domain, float *determ, float hgcoef)
@@ -1129,26 +1079,19 @@ void CalcHourglassControlForElems(Domain *domain, float *determ, float hgcoef)
 
    /* start loop over elements */
    for (int idx=0; idx<numElem; ++idx) {
+      int baseIdx = 8*idx;
       float  x1[8],  y1[8],  z1[8] ;
       float pfx[8], pfy[8], pfz[8] ;
 
-      int * elemToNode = &domain->nodelist[8*idx];
+      int * elemToNode = &domain->nodelist[baseIdx];
       CollectDomainNodesToElemNodes(domain->x, domain->y, domain->z,
                                     elemToNode, x1, y1, z1);
 
       CalcElemVolumeDerivative(pfx, pfy, pfz, x1, y1, z1);
 
       /* load into temporary storage for FB Hour Glass control */
-      for(int ii=0;ii<8;++ii){
-         int jj=8*idx+ii;
-
-         dvdx[jj] = pfx[ii];
-         dvdy[jj] = pfy[ii];
-         dvdz[jj] = pfz[ii];
-         x8n[jj]  = x1[ii];
-         y8n[jj]  = y1[ii];
-         z8n[jj]  = z1[ii];
-      }
+      CopyBlock(&dvdx[baseIdx], &dvdy[baseIdx], &dvdz[baseIdx], pfx, pfy, pfz);
+      CopyBlock(&x8n[baseIdx], &y8n[baseIdx], &z8n[baseIdx], x1, y1, z1);
 
       determ[idx] = domain->volo[idx] * domain->v[idx];
 
@@ -1177,6 +1120,14 @@ void CalcHourglassControlForElems(Domain *domain, float *determ, float hgcoef)
    return ;
 }
 
+int VolErr1(float *determ, int numElem)
+{
+  for (int k=0; k<numElem; ++k) {
+    if (determ[k] <= ZERO) return 1;
+  }
+  return 0;
+}
+
 void CalcVolumeForceForElems(Domain *domain)
 {
    int numElem = domain->numElem ;
@@ -1199,11 +1150,8 @@ void CalcVolumeForceForElems(Domain *domain)
                                sigxx, sigyy, sigzz, determ, numElem) ;
 
       // check for negative element volume
-      for (int k=0; k<numElem; ++k) {
-         if (determ[k] <= ZERO) {
-            exit(VolumeError) ;
-         }
-      }
+      if (VolErr1(determ, numElem))
+         exit(VolumeError) ;
 
       CalcHourglassControlForElems(domain, determ, hgcoef) ;
 
@@ -1217,10 +1165,14 @@ void CalcVolumeForceForElems(Domain *domain)
 void CalcForceForNodes(Domain *domain)
 {
   int numNode = domain->numNode ;
+  float *fx = domain->fx;
+  float *fy = domain->fy;
+  float *fz = domain->fz;
+
   for (int i=0; i<numNode; ++i) {
-     domain->fx[i] = ZERO ;
-     domain->fy[i] = ZERO ;
-     domain->fz[i] = ZERO ;
+     fx[i] = ZERO ;
+     fy[i] = ZERO ;
+     fz[i] = ZERO ;
   }
 }
 
@@ -1445,11 +1397,17 @@ inline void AreaFace(float x0, float x1, float x2, float x3,
    float gx = dx1 + dx2;
    float gy = dy1 + dy2;
    float gz = dz1 + dz2;
-   float term = (fx * gx + fy * gy + fz * gz);
-   *area =
-      (fx * fx + fy * fy + fz * fz) *
-      (gx * gx + gy * gy + gz * gz) -
-      term * term;
+   float term1 = fx * fx;
+   term1 += fy * fy;
+   term1 += fz * fz;
+   float term2 = gx * gx;
+   term2 += gy * gy;
+   term2 += gz * gz;
+   float term3 = fx * gx;
+   term3 +=  fy * gy;
+   term3 +=  fz * gz;
+   float term4 = term1 * term2 - term3 * term3;
+   *area = term4;
 }
 
 float CalcElemCharacteristicLength(float x[8], float y[8], float z[8],
@@ -1461,32 +1419,32 @@ float CalcElemCharacteristicLength(float x[8], float y[8], float z[8],
    AreaFace(x[0],x[1],x[2],x[3],
             y[0],y[1],y[2],y[3],
             z[0],z[1],z[2],z[3], &a) ;
-   charLength = fmaxf(a,charLength) ;
+   if (a > charLength) charLength = a;
 
    AreaFace(x[4],x[5],x[6],x[7],
             y[4],y[5],y[6],y[7],
             z[4],z[5],z[6],z[7], &a) ;
-   charLength = fmaxf(a,charLength) ;
+   if (a > charLength) charLength = a;
 
    AreaFace(x[0],x[1],x[5],x[4],
             y[0],y[1],y[5],y[4],
             z[0],z[1],z[5],z[4], &a) ;
-   charLength = fmaxf(a,charLength);
+   if (a > charLength) charLength = a;
 
    AreaFace(x[1],x[2],x[6],x[5],
             y[1],y[2],y[6],y[5],
             z[1],z[2],z[6],z[5], &a) ;
-   charLength = fmaxf(a,charLength) ;
+   if (a > charLength) charLength = a;
 
    AreaFace(x[2],x[3],x[7],x[6],
             y[2],y[3],y[7],y[6],
             z[2],z[3],z[7],z[6], &a) ;
-   charLength = fmaxf(a,charLength) ;
+   if (a > charLength) charLength = a;
 
    AreaFace(x[3],x[0],x[4],x[7],
             y[3],y[0],y[4],y[7],
             z[3],z[0],z[4],z[7], &a) ;
-   charLength = fmaxf(a,charLength) ;
+   if (a > charLength) charLength = a;
 
    charLength = (4.0f * volume) / sqrtf( charLength );
 
@@ -1551,6 +1509,19 @@ void CalcElemVelocityGrandient(float *xvel, float *yvel, float *zvel,
   d[3]  = ( dzddy + dyddz ) * HALF;
 }
 
+void UpdatePos(float deltaTime,
+               float x_local[8], float y_local[8], float z_local[8],
+               float xd_local[8], float yd_local[8], float zd_local[8])
+{
+  float dt2 = deltaTime * HALF;
+  for (int j=0 ; j<8 ; ++j )
+  {
+    x_local[j] -= dt2 * xd_local[j];
+    y_local[j] -= dt2 * yd_local[j];
+    z_local[j] -= dt2 * zd_local[j];
+  }
+}
+
 void CalcKinematicsForElems(int *nodelist,
                             float *x, float *y, float *z,
                             float *xd, float *yd, float *zd,
@@ -1562,7 +1533,6 @@ void CalcKinematicsForElems(int *nodelist,
   int lnode, gnode, gnode2, j;
   // loop over all elements
   for (int k=0; k<numElem; ++k) {
-    float dt2;
     float detJ = ZERO ;
     float volume ;
     float relativeVolume ;
@@ -1580,13 +1550,7 @@ void CalcKinematicsForElems(int *nodelist,
     float  B[3][8] ;
 
     // get nodal coordinates from global arrays and copy into local arrays.
-    for(lnode=0 ; lnode<8 ; ++lnode )
-    {
-      gnode = elemToNode[lnode];
-      x_local[lnode] = x[gnode];
-      y_local[lnode] = y[gnode];
-      z_local[lnode] = z[gnode];
-    }
+    GatherNodes(elemToNode, x, y, z, x_local, y_local, z_local);
 
     // volume calculations
     volume = CalcElemVolume(x_local, y_local, z_local );
@@ -1599,21 +1563,10 @@ void CalcKinematicsForElems(int *nodelist,
                                              volume);
 
     // get nodal velocities from global array and copy into local arrays.
-    for(lnode=0 ; lnode<8 ; ++lnode )
-    {
-      gnode2 = elemToNode[lnode];
-      xd_local[lnode] = xd[gnode2];
-      yd_local[lnode] = yd[gnode2];
-      zd_local[lnode] = zd[gnode2];
-    }
+    GatherNodes(elemToNode, xd, yd, zd, xd_local, yd_local, zd_local);
 
-    dt2 = deltaTime * HALF;
-    for (j=0 ; j<8 ; ++j )
-    {
-       x_local[j] -= dt2 * xd_local[j];
-       y_local[j] -= dt2 * yd_local[j];
-       z_local[j] -= dt2 * zd_local[j];
-    }
+    UpdatePos(deltaTime, x_local, y_local, z_local,
+              xd_local, yd_local, zd_local);
 
     CalcElemShapeFunctionDerivatives( x_local, y_local, z_local,
                                       B, &detJ );
@@ -1626,6 +1579,34 @@ void CalcKinematicsForElems(int *nodelist,
     dyy[k] = D[1];
     dzz[k] = D[2];
   }
+}
+
+int VolErr2(Domain *domain, int numElem)
+{
+  float *dxx = domain->dxx;
+  float *dyy = domain->dyy;
+  float *dzz = domain->dzz;
+  float *vnew = domain->vnew;
+  float *vdovv = domain->vdov;
+
+  for (int k=0; k<numElem; ++k) {
+    // calc strain rate and apply as raint (only done in FB element)
+    float vdov = dxx[k] + dyy[k] + dzz[k] ;
+    float vdovthird = vdov * (ONE / 3.0f ) ;
+
+    // make the rate of deformation tensor deviatoric
+    vdovv[k] = vdov ;
+    dxx[k] -= vdovthird ;
+    dyy[k] -= vdovthird ;
+    dzz[k] -= vdovthird ;
+
+    // See if any volumes are negative, and take appropriate action.
+    if (vnew[k] <= ZERO)
+    {
+      return 1;
+    }
+  }
+  return 0;
 }
 
 void CalcLagrangeElements(Domain *domain)
@@ -1647,23 +1628,8 @@ void CalcLagrangeElements(Domain *domain)
                              deltatime, numElem) ;
 
       // element loop to do some stuff not included in the elemlib function.
-      for (int k=0; k<numElem; ++k) {
-        // calc strain rate and apply as raint (only done in FB element)
-        float vdov = domain->dxx[k] + domain->dyy[k] + domain->dzz[k] ;
-        float vdovthird = vdov * (ONE / 3.0f ) ;
-        
-        // make the rate of deformation tensor deviatoric
-        domain->vdov[k] = vdov ;
-        domain->dxx[k] -= vdovthird ;
-        domain->dyy[k] -= vdovthird ;
-        domain->dzz[k] -= vdovthird ;
-
-        // See if any volumes are negative, and take appropriate action.
-        if (domain->vnew[k] <= ZERO)
-        {
-           exit(VolumeError) ;
-        }
-      }
+      if (VolErr2(domain, numElem))
+         exit(VolumeError) ;
 
       // Release((void **) &domain->dzz) ;
       // Release((void **) &domain->dyy) ;
@@ -1986,6 +1952,19 @@ void CalcMonotonicQForElems(Domain *domain)
    }
 }
 
+int Qerr(float *q, int numElem, float qstop)
+{
+  float qstopl = qstop; // force register allocation
+  int idx = -1;
+  for (int i=0; i<numElem; ++i) {
+    if ( q[i] > qstopl ) {
+      idx = i ;
+      // break ;
+    }
+  }
+  return idx;
+}
+
 void CalcQForElems(Domain *domain)
 {
    //
@@ -2035,18 +2014,7 @@ void CalcQForElems(Domain *domain)
       // Release((void **) &domain->delv_xi) ;
 
       /* Don't allow excessive artificial viscosity */
-      float qstop = domain->qstop ;
-      int idx = -1; 
-      for (int i=0; i<numElem; ++i) {
-         if ( domain->q[i] > qstop ) {
-            idx = i ;
-            // break ;
-         }
-      }
-
-      if(idx >= 0) {
-         exit(QStopError) ;
-      }
+      Qerr(domain->q, numElem, domain->qstop);
    }
 }
 
@@ -2219,6 +2187,66 @@ void CalcSoundSpeedForElems(int length, float *ss,
    }
 }
 
+void EvalCopy(float *p_old, float *p, int numElem)
+{
+  for (int zidx=0; zidx<numElem; ++zidx) {
+    p_old[zidx] = p[zidx] ;
+  }
+}
+
+void EvalCompression(float *compression, float *compHalfStep, int numElem,
+                float *vnewc, float *delvc)
+{
+  for (int zidx=0; zidx<numElem; ++zidx) {
+    float vchalf ;
+    compression[zidx] = ONE / vnewc[zidx] - ONE;
+    vchalf = vnewc[zidx] - delvc[zidx] * HALF;
+    compHalfStep[zidx] = ONE / vchalf - ONE;
+  }
+}
+
+void EvalEosVmin(float *vnewc, float *compHalfStep, float *compression,
+                 int numElem, float eosvmin)
+{
+  float eosvminl = eosvmin; // force register allocation
+  for (int zidx=0; zidx<numElem; ++zidx) {
+    if (vnewc[zidx] <= eosvminl) { /* impossible due to calling func? */
+      compHalfStep[zidx] = compression[zidx] ;
+    }
+  }
+}
+
+void EvalEosVmax(float *vnewc, float *p_old,
+                 float *compHalfStep, float *compression,
+                 int numElem, float eosvmax)
+{
+  float eosvmaxl = eosvmax; // force register allocation
+  for (int zidx=0; zidx<numElem; ++zidx) {
+    if (vnewc[zidx] >= eosvmaxl) { /* impossible due to calling func? */
+      p_old[zidx]        = ZERO ;
+      compression[zidx]  = ZERO ;
+      compHalfStep[zidx] = ZERO ;
+    }
+  }
+}
+
+void EvalEosResetWork(float *work, int numElem)
+{
+  for (int zidx=0; zidx<numElem; ++zidx) {
+    work[zidx] = ZERO ;
+  }
+}
+
+void UpdatePE(float *p, float *p_new, float *e, float *e_new,
+              float *q, float *q_new, int numElem)
+{
+  for (int zidx=0; zidx<numElem; ++zidx) {
+    p[zidx] = p_new[zidx] ;
+    e[zidx] = e_new[zidx] ;
+    q[zidx] = q_new[zidx] ;
+  }
+}
+
 void EvalEOSForElems(Domain *domain, float *vnewc, int numElem)
 {
    float  e_cut = domain->e_cut ;
@@ -2249,38 +2277,20 @@ void EvalEOSForElems(Domain *domain, float *vnewc, int numElem)
    float * pHalfStep = pHalfStep_;
 
    /* compress data, minimal set */
-   for (int zidx=0; zidx<numElem; ++zidx) {
-      p_old[zidx] = domain->p[zidx] ;
-   }
+   EvalCopy(p_old, domain->p, numElem);
 
-   for (int zidx=0; zidx<numElem; ++zidx) {
-      float vchalf ;
-      compression[zidx] = ONE / vnewc[zidx] - ONE;
-      vchalf = vnewc[zidx] - delvc[zidx] * HALF;
-      compHalfStep[zidx] = ONE / vchalf - ONE;
-   }
+   EvalCompression(compression, compHalfStep, numElem, vnewc, delvc);
 
    /* Check for v > eosvmax or v < eosvmin */
    if ( eosvmin != ZERO ) {
-      for (int zidx=0; zidx<numElem; ++zidx) {
-         if (vnewc[zidx] <= eosvmin) { /* impossible due to calling func? */
-            compHalfStep[zidx] = compression[zidx] ;
-         }
-      }
-   }
-   if ( eosvmax != ZERO ) {
-      for (int zidx=0; zidx<numElem; ++zidx) {
-         if (vnewc[zidx] >= eosvmax) { /* impossible due to calling func? */
-            p_old[zidx]        = ZERO ;
-            compression[zidx]  = ZERO ;
-            compHalfStep[zidx] = ZERO ;
-         }
-      }
+      EvalEosVmin(vnewc, compHalfStep, compression, numElem, eosvmin);
    }
 
-   for (int zidx=0; zidx<numElem; ++zidx) {
-      work[zidx] = ZERO ; 
+   if ( eosvmax != ZERO ) {
+      EvalEosVmax(vnewc, p_old, compHalfStep, compression, numElem, eosvmax);
    }
+
+   EvalEosResetWork(work, numElem);
 
    CalcEnergyForElems(p_new, e_new, q_new, bvc, pbvc,
                  p_old, domain->e,  domain->q, compression, compHalfStep,
@@ -2290,11 +2300,7 @@ void EvalEOSForElems(Domain *domain, float *vnewc, int numElem)
                  pHalfStep, numElem);
 
 
-   for (int zidx=0; zidx<numElem; ++zidx) {
-      domain->p[zidx] = p_new[zidx] ;
-      domain->e[zidx] = e_new[zidx] ;
-      domain->q[zidx] = q_new[zidx] ;
-   }
+   UpdatePE(domain->p, p_new, domain->e, e_new, domain->q, q_new, numElem);
 
    CalcSoundSpeedForElems(numElem, domain->ss,
              vnewc, rho0, e_new, p_new,
@@ -2312,14 +2318,48 @@ void EvalEOSForElems(Domain *domain, float *vnewc, int numElem)
    // Release((void **) &p_old) ;
 }
 
+int VolErr3(float *vnewc, float *vnew, float *v, int numElem,
+            float eosvmin, float eosvmax)
+{
+  for (int zn=0; zn<numElem; ++zn) {
+    vnewc[zn] = vnew[zn] ;
+  }
+
+  if (eosvmin != ZERO) {
+    for (int zn=0; zn<numElem; ++zn) {
+      if (vnewc[zn] < eosvmin)
+        vnewc[zn] = eosvmin ;
+    }
+  }
+
+  if (eosvmax != ZERO) {
+    for (int zn=0; zn<numElem; ++zn) {
+      if (vnewc[zn] > eosvmax)
+        vnewc[zn] = eosvmax ;
+    }
+  }
+
+  for (int zn=0; zn<numElem; ++zn) {
+    float vc = v[zn] ;
+    if (eosvmin != ZERO) {
+      if (vc < eosvmin)
+        vc = eosvmin ;
+    }
+    if (eosvmax != ZERO) {
+      if (vc > eosvmax)
+        vc = eosvmax ;
+    }
+    if (vc <= ZERO) return 1;
+  }
+  return 0;
+}
+
 void ApplyMaterialPropertiesForElems(Domain *domain)
 {
   int numElem = domain->numElem ;
 
   if (numElem != 0) {
     /* Expose all of the variables needed for material evaluation */
-    float eosvmin = domain->eosvmin ;
-    float eosvmax = domain->eosvmax ;
 
     /* create a domain length (not material length) temporary */
     /* we are assuming here that the number of dense ranges is */
@@ -2327,42 +2367,11 @@ void ApplyMaterialPropertiesForElems(Domain *domain)
     /* assuming it is ok to allocate a domain length temporary */
     /* rather than a material length temporary. */
 
-    float * vnewc = vnewc_;
+    if (VolErr3(vnewc_, domain->vnew, domain->v, numElem,
+                domain->eosvmin, domain->eosvmax))
+       exit(VolumeError) ;
 
-    for (int zn=0; zn<numElem; ++zn) {
-       vnewc[zn] = domain->vnew[zn] ;
-    }
-
-    if (eosvmin != ZERO) {
-       for (int zn=0; zn<numElem; ++zn) {
-          if (vnewc[zn] < eosvmin)
-             vnewc[zn] = eosvmin ;
-       }
-    }
-
-    if (eosvmax != ZERO) {
-       for (int zn=0; zn<numElem; ++zn) {
-          if (vnewc[zn] > eosvmax)
-             vnewc[zn] = eosvmax ;
-       }
-    }
-
-    for (int zn=0; zn<numElem; ++zn) {
-       float vc = domain->v[zn] ;
-       if (eosvmin != ZERO) {
-          if (vc < eosvmin)
-             vc = eosvmin ;
-       }
-       if (eosvmax != ZERO) {
-          if (vc > eosvmax)
-             vc = eosvmax ;
-       }
-       if (vc <= ZERO) {
-          exit(VolumeError) ;
-       }
-    }
-
-    EvalEOSForElems(domain, vnewc, numElem);
+    EvalEOSForElems(domain, vnewc_, numElem);
 
     // Release((void **) &vnewc) ;
 
@@ -2372,11 +2381,12 @@ void ApplyMaterialPropertiesForElems(Domain *domain)
 void UpdateVolumesForElems(float *vnew, float *v,
                            float v_cut, int length)
 {
+   float v_cutl = v_cut; // force register allocation
    if (length != 0) {
       for (int i=0; i<length; ++i) {
          float tmpV = vnew[i] ;
 
-         if ( fabsf(tmpV - ONE) < v_cut )
+         if ( fabsf(tmpV - ONE) < v_cutl )
             tmpV = ONE ;
 
          v[i] = tmpV ;
@@ -2450,12 +2460,13 @@ void CalcCourantConstraintForElems(int length, float *ss,
 void CalcHydroConstraintForElems(int length, float *vdov,
                                  float dvovmax, float *dthydro)
 {
+   float dvovmaxl = dvovmax;
    float dthydro_tmp = 1.0e+20f ;
    int hydro_elem = -1 ;
 
    for (int indx=0; indx<length; ++indx) {
       if (vdov[indx] != ZERO) {
-         float dtdvov = dvovmax / (fabsf(vdov[indx])+1.0e-20f) ;
+         float dtdvov = dvovmaxl / (fabsf(vdov[indx])+1.0e-20f) ;
          if ( dthydro_tmp > dtdvov ) {
             dthydro_tmp = dtdvov ;
             hydro_elem = indx ;
@@ -2646,7 +2657,7 @@ int main(int argc, char *argv[])
    /* initialize nodal coordinates */
 
    nidx = 0 ;
-   tz  = ZERO ;
+   tz = fmaxf(ZERO, ZERO) ; // fmaxf call magically shaves 8 sec off runtime
    for (plane=0; plane<edgeNodes; ++plane) {
       ty = ZERO ;
       for (row=0; row<edgeNodes; ++row) {
