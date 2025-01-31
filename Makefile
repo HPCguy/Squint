@@ -30,7 +30,7 @@ $(BIN)-so: $(BIN).c $(PEEP).c
 	$(Q)$(ARM_CC) -shared -o lib$(PEEP).so $(PEEP).o
 	$(Q)$(ARM_CC) -DSQUINT_SO -g $(CFLAGS) $(CURR_DIR)/lib$(PEEP).so -o $@ $< -ldl
 	else
-	$(Q)$(ARM_CC) -DSQUINT_SO -g $(CFLAGS) -o $@ $< -ldl
+	$(Q)$(ARM_CC) -DSQUINT_SO -DARM64OS -g $(CFLAGS) -o $@ $< -ldl
 	fi
 
 $(BIN)-native: $(BIN).c

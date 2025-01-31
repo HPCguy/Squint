@@ -25,7 +25,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dlfcn.h>
-#include <stdint.h>
 
 #define SMALL_TBL_SZ 256
 
@@ -36,10 +35,8 @@ char *strrchr(char *s, int c);
 
 #ifdef SQUINT_SO
 int squint_opt(int *begin, int *end);
-#ifdef UINTPTR_MAX
-#if ((UINTPTR_MAX & 0x100000000) != 0)
+#ifdef ARM64OS
 #include "squint.c"
-#endif
 #endif
 #endif
 
@@ -4148,10 +4145,8 @@ int main(int argcc, char **argvv)
          ma = 1 - ma; --argc; ++argv;
       }
       else if ((*argv)[1] == 'o') {
-#ifdef UINTPTR_MAX
-#if ((UINTPTR_MAX & 0x100000000) != 0)
+#ifdef ARM64OS
          die("Only JIT execution allowed on 64-bit OS");
-#endif
 #endif
          elf = 1; --argc; ++argv;
          if (argc < 1 || **argv == '-') die("no output file argument");
