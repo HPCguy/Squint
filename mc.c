@@ -729,33 +729,39 @@ void typecheck(int op, int tl, int tr)
    if (tl >= PTR)  pt += 2; // is pointer?
    if (tr >= PTR)  pt += 1;
 
-   if (tl < FLOAT) it += 2; // is int?
-   if (tr < FLOAT) it += 1;
+   if ((tl & 0xc) < FLOAT) it += 2; // is int?
+   if ((tr & 0xc) < FLOAT) it += 1;
 
    if (tl > ATOM_TYPE && tl < PTR) st += 2; // is struct/union?
    if (tr > ATOM_TYPE && tr < PTR) st += 1;
 
    if ((tl ^ tr) & (PTR | PTR2)) { // operation on different pointer levels
       if (op == Add && pt != 3 && (it & ~pt)) ; // ptr + int or int + ptr ok
-      else if (op == Sub && pt == 2 && it == 1) ; // ptr - int ok
+      else if (op == Sub && pt == 2 && (it & 1)) ; // ptr - int ok
       else if (op == Assign && pt == 2 && *n == Num && n[1] == 0) ; // ok
       else if (op >= Eq && op <= Le && *n == Num && n[1] == 0) ; // ok
       else fatal("bad pointer arithmetic or cast needed");
    }
-   else if (pt == 3 && op != Assign && op != Sub &&
+   else if (pt == 3) {
+      if ((tl ^ tr) == 0) { // pointers to same type
+         if (op != Assign && op != Sub &&
             (op < Eq || op > Le)) // pointers to same type
-      fatal("bad pointer arithmetic");
+         fatal("bad pointer arithmetic");
+      }
+      else
+         fatal("pointer cast needed");
+   }
 
    if (pt == 0 && op != Assign && (it == 1 || it == 2))
       fatal("cast operation needed");
 
-   if (pt == 0 && st != 0)
-      fatal("illegal operation with dereferenced struct");
+   if (pt == 0 && (st || ((tl | tr) & 3)))
+      fatal("illegal operation with dereferenced struct or tensor");
 }
 
 void bitopcheck(int tl, int tr)
 {
-   if (tl >= FLOAT || tr >= FLOAT)
+   if (tl >= FLOAT || tr >= FLOAT || ((tl | tr) & 3))
       fatal("bit operation on non-int types");
 }
 
@@ -1225,11 +1231,15 @@ resolve_fnproto:
          expr(Inc); // cast has precedence as Inc(++)
          if (t != ty && (t == FLOAT || ty == FLOAT)) {
             if (t == FLOAT && ty < FLOAT) { // int to float
-               if (*n == Num) { *n = NumF; c1 = &n[1]; c1->f = (float) c1->i; }
+               if (*n == Num) {
+                  *n = NumF; c1 = (union conv *) &n[1]; c1->f = (float) c1->i;
+               }
                else { b = n; *--n = ITOF; *--n = (int) b; *--n = CastF; }
             }
             else if (t < FLOAT && ty == FLOAT) { // float to int
-               if (*n == NumF) { *n = Num; c1 = &n[1]; c1->i = (int) c1->f; }
+               if (*n == NumF) {
+                  *n = Num; c1 = (union conv *) &n[1]; c1->i = (int) c1->f;
+               }
                else { b = n; *--n = FTOI; *--n = (int) b; *--n = CastF; }
             }
             else fatal("explicit cast required");
@@ -1432,7 +1442,7 @@ resolve_fnproto:
          next(); expr(Ge); typecheck(Eq, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1];
+               c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f == c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
             }
@@ -1449,7 +1459,7 @@ resolve_fnproto:
          next(); expr(Ge); typecheck(Ne, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1];
+               c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f != c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
             }
@@ -1466,7 +1476,7 @@ resolve_fnproto:
          next(); expr(Shl); typecheck(Ge, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1];
+               c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f >= c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
             }
@@ -1483,7 +1493,7 @@ resolve_fnproto:
          next(); expr(Shl); typecheck(Lt, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1];
+               c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f < c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
             }
@@ -1500,7 +1510,7 @@ resolve_fnproto:
          next(); expr(Shl); typecheck(Gt, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1];
+               c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f > c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
             }
@@ -1517,7 +1527,7 @@ resolve_fnproto:
          next(); expr(Shl); typecheck(Le, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1];
+               c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f <= c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
             }
@@ -1568,7 +1578,8 @@ resolve_fnproto:
          if (ty == FLOAT) {
             switch(elideZero(a, b, t, NumF)) {
                case 0: *--n = (int) b; *--n = AddF; break;
-               case 1: c1 = &n[1]; c2 = &b[1]; c2->f += c1->f; n += 2;
+               case 1: c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
+                       c2->f += c1->f; n += 2;
             }
          }
          else if ((*n == Num && n[1] == 0) ||
@@ -1602,7 +1613,8 @@ careful_addition:
          typecheck(Sub, t, ty);
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) { 
-               c1 = &n[1]; c2 = &b[1]; c2->f -= c1->f; n += 2;
+               c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
+               c2->f -= c1->f; n += 2;
             }
             else if (*n == NumF && n[1] == 0) n += 2;
             // else if (*b == NumF && b[1] == 0)  do Fneg
@@ -1676,7 +1688,8 @@ careful_addition:
 mod1_to_mul0:
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1] ; c2->f *= c1->f; n += 2;
+               c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1] ;
+               c2->f *= c1->f; n += 2;
             }
             else if (*b == NumF && b[1] == 0 && !hasSideEffect(n, b)) n = b;
             // else if (*n == NumF && n[1] == 0 && !hasSideEffect(b, ?)) {
@@ -1722,7 +1735,8 @@ mod1_to_mul0:
          }
          if (ty == FLOAT) {
             if (*n == NumF && *b == NumF) {
-               c1 = &n[1]; c2 = &b[1] ; c2->f /= c1->f; n += 2;
+               c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
+               c2->f /= c1->f; n += 2;
             }
             else { *--n = (int) b; *--n = DivF; }
          }
@@ -4188,7 +4202,7 @@ int main(int argcc, char **argvv)
       printf("could not open(%s)\n", *argv); return -1;
    }
 
-   if (!(text = le = e = (char *) malloc(poolsz)))
+   if (!(text = le = e = (int *) malloc(poolsz)))
       die("could not allocate text area");
    if (!(members = (struct member_s **)
                    malloc(SMALL_TBL_SZ * sizeof(struct member_s *))))
