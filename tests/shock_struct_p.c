@@ -170,12 +170,12 @@ void ComputeFaceInfo(int numFace, struct con *cv, struct flux *fl)
       cLocal = sqrtf(gammaa*pressuref/massf);
 
       f0_ += ev*massf;
-      f1_ += ev*(momentumf - massf*cLocal);
-      f2_ += ev*(energyf + pressuref - momentumf*cLocal);
-
       fl_->f0 = f0_;
+      f1_ += ev*(momentumf - massf*cLocal);
       fl_->f1 = f1_;
+      f2_ += ev*(energyf + pressuref - momentumf*cLocal);
       fl_->f2 = f2_;
+
       ++fl_;
    }
 }
@@ -194,7 +194,7 @@ void UpdateElemInfo(int numElem, struct con *cv, float *pressure,
 {
    struct con *cv_ = &cv[1];
    struct flux *fl_ = &fl[1];
-   float *p = pressure;
+   float *p = pressure+1;
 
    for (int i = numElem - 1; i > 0; --i)
    {
@@ -212,10 +212,10 @@ void UpdateElemInfo(int numElem, struct con *cv, float *pressure,
       m_  -= gammaInverse*(fl_[downWind].f0 - fl_[upWind].f0)*dtdx;
       mo_ -= gammaInverse*(fl_[downWind].f1 - fl_[upWind].f1)*dtdx;
       e_  -= gammaInverse*(fl_[downWind].f2 - fl_[upWind].f2)*dtdx;
-      *++p = (gammaa - 1.0f) *
-             (e_ - 0.5f*mo_*(cv_->mom = mo_)/(cv_->mass = m_));
       ++fl_;
-      cv_->energy = e_;
+      *p++ = (gammaa - 1.0f) *
+             ((cv_->energy = e_) - 0.5f*mo_*(cv_->mom = mo_) /
+              (cv_->mass = m_));
       ++cv_;
    }
 }
