@@ -170,11 +170,10 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
       cLocal = sqrtf(gammaa*pressuref/massf); ++e;
 
       f0__ += ev*massf;
-      f1__ += ev*(momentumf - massf*cLocal);
-      f2__ += ev*(energyf + pressuref - momentumf*cLocal);
-
       *f0_++ = f0__;
+      f1__ += ev*(momentumf - massf*cLocal);
       *f1_++ = f1__;
+      f2__ += ev*(energyf + pressuref - momentumf*cLocal);
       *f2_++ = f2__;
    }
 }
@@ -193,7 +192,7 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
                                  float *f0, float *f1, float *f2, float dtdx)
 {
    float *f0_ = &f0[1], *f1_ = &f1[1], *f2_ = &f2[1];
-   float *m = &mass[1], *mo = &momentum[1], *e = &energy[1], *p = pressure;
+   float *m = &mass[1], *mo = &momentum[1], *e = &energy[1], *p = &pressure[1];
 
    for (int i = numElem - 1; i > 0; --i)
    {
@@ -211,8 +210,8 @@ void UpdateElemInfo(int numElem, float *mass, float *momentum,
       m_  -= gammaInverse*(f0_[downWind] - f0_[upWind])*dtdx; ++f0_;
       mo_ -= gammaInverse*(f1_[downWind] - f1_[upWind])*dtdx; ++f1_;
       e_  -= gammaInverse*(f2_[downWind] - f2_[upWind])*dtdx; ++f2_;
-      *++p   = (gammaa - 1.0f) * (e_ - 0.5f*mo_*(*mo++ = mo_)/(*m++ = m_));
-      *e++ = e_;
+      *p++   = (gammaa - 1.0f) *
+               ((*e++ = e_) - 0.5f*mo_*(*mo++ = mo_)/(*m++ = m_));
    }
 }
 
