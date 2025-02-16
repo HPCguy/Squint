@@ -1104,7 +1104,7 @@ static void apply_peepholes3(int *instInfo, int *funcBegin, int *funcEnd)
 // optimize negative imm offset load.  Optimize for vcmpe rx, #0.0.
 static void apply_peepholes3_2(int *funcBegin, int *funcEnd)
 {
-   int *scan, *scanm1, *scanp1, *scanp2, *scanp3, off;
+   int *scan, *scanm1, *scanp1, *scanp2, *scanp3, off, isFP;
 
    funcEnd -= 3;
    for (scan = funcBegin; scan < funcEnd; ++scan) {
@@ -1115,15 +1115,26 @@ static void apply_peepholes3_2(int *funcBegin, int *funcEnd)
          if (*scanm1 == 0xe52d0004 && *scanp1 == 0xe49d1004) { // psh r0 pop r1
             scanp2 = active_inst(scanp1, 1);
             scanp3 = active_inst(scanp2, 1);
-            // check for add r0,r1,r0 ; vldr s0, [r0]
-            if (*scanp2 == 0xe0810000 &&
-                (*scanp3 & 0xff7fff00) == 0xed100a00) {
-               off = (*scanp3 & 0xff)*((*scanp3 & (1<<23)) ? 1 : -1) -
-                     (((*scan & 0xff) + 1) / 4);
-               if (off > -256 && off < 256) {
-                  *scanp3 = (*scanp3 & 0xff7fff00) |
-                     ((off >= 0) ? (off | (1<<23)) : -off);
-                  *scanm1 = *scan = *scanp1 = *scanp2 = NOP;
+            if (*scanp2 == 0xe0810000 &&                        // add r0,r1,r0
+                ((isFP = (*scanp3 & 0xff2fff00) == 0xed000a00)  // vldr|str
+                    || (*scanp3 & 0xff2ff000) == 0xe5000000)) { // (ldr|str)[b]
+               off = isFP ? ((*scanp3 & 0xff)*4) : (*scanp3 & 0xfff);
+               off = off * ((*scanp3 & (1<<23)) ? 1 : -1) -
+                     ((*scan & 0xff) + 1);
+               if (isFP) {
+                  off /= 4;
+                  if (off > -256 && off < 256) {
+                     *scanp3 = (*scanp3 & 0xff7fff00) |
+                               ((off >= 0) ? (off | (1<<23)) : -off);
+                     *scanm1 = *scan = *scanp1 = *scanp2 = NOP;
+                  }
+               }
+               else {
+                  if (off > -4096 && off < 4096) {
+                     *scanp3 = (*scanp3 & 0xff7ff000) |
+                               ((off >= 0) ? (off | (1<<23)) : -off);
+                     *scanm1 = *scan = *scanp1 = *scanp2 = NOP;
+                  }
                }
             }
          }
@@ -1670,9 +1681,9 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
 
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
-      if ((*scan & 0xff200000) == 0xe5000000 ||          // (ldr|str)[b]
-          (isFP = (*scan & 0xff200f00) == 0xed000a00)) { // vldr|str
-         if (isFP && (*scan & 0xff) > 1) continue;
+      if (((isFP = (*scan & 0xff200f00) == 0xed000a00) // vldr|str
+              && ((*scan & 0xff) < 2))            ||  // zero offset
+          (*scan & 0xff200000) == 0xe5000000) {        // (ldr|str)[b]
          rn = (*scan & RI_Rn) >> 16;
          if (rn >= NUM_USABLE_REG) continue;
          info = &instInfo[scan-funcBegin];
@@ -1683,6 +1694,9 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
          if (rdt <= info) continue;
          inst = funcBegin[rdd-instInfo];
          if (isFP && (inst & 0xff) != 4) continue;
+         scanm1 = active_inst(&funcBegin[rdd-instInfo],-1);
+         if ((instInfo[scanm1-funcBegin] & RI_memOp) == RI_frameW &&
+             (inst & RI_Rd) == (*scanm1 & RI_Rd)) continue;
          if ((isAdd = (inst & 0xfff00f00) == 0xe2800000) || // add #X
              (inst & 0xfff00f00) == 0xe2400000) {           // sub #X
             off = isFP ? ((*scan & 0xff) * 4) : (*scan & 0xfff);
@@ -1713,7 +1727,7 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
                }
             }
             else if (off == 0) { // post inc/dec
-               inst2 = *(scanm1 = active_inst(&funcBegin[rdd-instInfo],-1));
+               inst2 = *scanm1;
                if ((isSub = (inst2 & 0xfff00f00) == 0xe2400000) || // sub #X
                    (inst2 & 0xfff00f00) == 0xe2800000) {           // add #X
                   if ((inst2 & RI_Rn) == (inst & RI_Rn) &&
@@ -2583,8 +2597,8 @@ static void apply_peepholes9(int *instInfo, int *funcBegin, int *funcEnd)
              ((*scanm1 & 0xfff0ffff) == 0xe1a00000 ||  // mov r0, rX
               (*scanm1 & 0xfffff0d0) == 0xeeb00040)) { // vmov s0, sX
             scanm2 = active_inst(scanm1, -1);
-            if ((*scanm2 & (7 << 25)) <= (1 << 25) ||
-                (isFP = ((*scanm2 & (15 << 24)) == (14 << 24)))) { // DP op
+            if ((isFP = ((*scanm2 & (15 << 24)) == (14 << 24))) || // DP op
+                (*scanm2 & (7 << 25)) <= (1 << 25)) {
                *scanm2 &= isFP ? 0xffbf0fff :
                   ((instInfo[scanm2 - funcBegin] & RI_RdDest) ?
                    0xffff0fff : 0xfff0ffff);
@@ -3187,7 +3201,7 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
    }
 
    if (branchCount != 0) {
-      memblk = malloc(3*branchCount*4);
+      memblk = malloc(3*branchCount*sizeof(int)); // 3 arrays
       branchAddr = memblk;
       branchTarget = branchAddr + branchCount;
       permutation = branchTarget + branchCount;
@@ -3611,10 +3625,6 @@ static void create_pushpop_map2(int *instInfo, int *funcBegin, int *funcEnd)
       int *pushp1 = &instInfo[(pair[i].push-funcBegin)+1];
       int *r1push1u = find_use(instInfo, pushp1, 1, S_FWD);
       int *r1push1d = find_def(instInfo, pushp1, 1, S_FWD);
-      for (scan = pair[i].push + 1; scan < pair[i].pop; ++scan) {
-         if (*scan == NOP11 && !is_const(scan)) break; // func call
-      }
-      if (scan != pair[i].pop) continue; // skip regions with func call
 
       /* if r1 not used or defined between push and pop... */
       if (r1push1d == pop && r1push1u > pop) {
@@ -3649,8 +3659,7 @@ static void create_pushpop_map2(int *instInfo, int *funcBegin, int *funcEnd)
 // pointer optimizations, mirroring apply_peepholes7
 static void create_pushpop_map2b(int *instInfo, int *funcBegin, int *funcEnd)
 {
-   int isAdd, isSub, lev = 0;
-   int maxlev = 0;
+   int isFP, isAdd, isSub, lev = 0;
    int *stack[10];
    int *scan;
    int np = 0;
@@ -3674,7 +3683,6 @@ static void create_pushpop_map2b(int *instInfo, int *funcBegin, int *funcEnd)
             pair[np].push = stack[lev];
             pair[np].pop  = scan;
             pair[np].lev  = lev;
-            if (lev > maxlev) maxlev = lev;
             if (++np == 2000) {
                printf("pushpop overflow\n");
                exit(-1);
@@ -3690,8 +3698,9 @@ static void create_pushpop_map2b(int *instInfo, int *funcBegin, int *funcEnd)
 
    for (int i = 0; i < np; ++i) {
       int *popp1 = active_inst(pair[i].pop, 1);
-      if ((*popp1 & 0xff200f00) != 0xed000a00   // not vldr|str
-            || (*popp1 & 0xff))                 // or non-zero offset
+      if (!(((isFP = (*popp1 & 0xff200f00) == 0xed000a00) // vldr|str
+              && ((*popp1 & 0xff) == 0))           ||     // zero offset
+            (*popp1 & 0xff200000) == 0xe5000000))         // (ldr|str)[b]
          continue;
 
       int *pop = pair[i].pop;
@@ -3701,49 +3710,78 @@ static void create_pushpop_map2b(int *instInfo, int *funcBegin, int *funcEnd)
       if (scan != pop) continue; // skip regions with func call
 
       pop = &instInfo[pop-funcBegin];
-      int reg = (*pair[i].push & RI_Rd) >> 12;
-      int *pushp1 = &instInfo[(pair[i].push-funcBegin)+1];
-      int *r1push1u = find_use(instInfo, pushp1, reg, S_FWD);
-      int *r1push1d = find_def(instInfo, pushp1, reg, S_FWD);
-      if (r1push1d == 0) r1push1d = &instInfo[funcEnd-funcBegin];
+      int *scanm1 = active_inst(pair[i].push, -1);
+      int inst = *scanm1;
+      int *scanm2 = active_inst(scanm1,-1);
+      int inst2 = *scanm2;
+      if (((isAdd = (inst & 0xfff00f00) == 0xe2800000) || // add #X
+          (inst & 0xfff00f00) == 0xe2400000) &&           // sub #X
+          (inst & RI_Rd) == (*pair[i].push & RI_Rd)) {
+         if ((instInfo[scanm2-funcBegin] & RI_memOp) == RI_frameW &&
+             (inst & RI_Rd) == (*scanm2 & RI_Rd)) continue;
+         int reg = (*pair[i].push & RI_Rn) >> 16;
+         int *pushp1 = &instInfo[(pair[i].push-funcBegin)+1];
+         int *r1push1u = find_use(instInfo, pushp1, reg, S_FWD);
+         int *r1push1d = find_def(instInfo, pushp1, reg, S_FWD);
+         if (r1push1d == 0) r1push1d = &instInfo[funcEnd-funcBegin];
 
-      /* if rx not used or defined between push and pop... */
-      if (r1push1d > pop && (!r1push1u || r1push1u >= r1push1d)) {
-         int *scanm1 = active_inst(pair[i].push, -1);
-         int inst = *scanm1;
-         if ((isAdd = (inst & 0xfff00f00) == 0xe2800000) || // add #X
-             (inst & 0xfff00f00) == 0xe2400000) {           // sub #X
+         /* if rx not used or defined between push and pop... */
+         if (r1push1d > pop && (!r1push1u || r1push1u >= r1push1d)) {
+            int off = isFP ? ((*popp1 & 0xff) * 4) : (*popp1 & 0xfff);
             if ((inst & RI_Rn) == ((inst & RI_Rd) << 4) &&
                 (inst & RI_Rd) == (reg << 12)) { // pre inc/dec
-               if (isAdd)
-                  *popp1 = (*popp1 & ~RI_Rn) | (inst & RI_Rn);
-               else {
-                  *popp1 = (*popp1 & 0xff70ff00) |
-                          (inst & RI_Rn) | (1 << 21) | 1;
-                  *scanm1 = NOP;
-               }
+               if (off == 0) {
+                  if (isFP) {
+                     if (isAdd)
+                        *popp1 = (*popp1 & ~RI_Rn) | (inst & RI_Rn);
+                     else {
+                        *popp1 = (*popp1 & 0xff70ff00) |
+                                 (inst & RI_Rn) | (1 << 21) | 1;
+                        *scanm1 = NOP;
+                     }
 
-               *pair[i].pop = NOP; *pair[i].push = NOP;
+                  }
+                  else {
+                     *popp1 = (*popp1 & 0xff70f000) | (inst & RI_Rn) |
+                             ((isAdd ? 5 : 1) << 21) | (inst & 0xff);
+                     *scanm1 = NOP;
+                  }
+                  *pair[i].pop = NOP; *pair[i].push = NOP;
+               }
+               else if (off * ((*popp1 & (1 << 23)) ? 1 : -1) +
+                        (inst & 0xff) * (isAdd ? 1 : -1) == 0) { // post
+                  if (!isFP || isAdd) {
+                     *popp1 = (*popp1 & ~RI_Rn) |
+                              (inst & RI_Rn) | 3 << 23;  // post inc/dec
+                     if (isFP) *popp1 |= (1 << 21);
+                     *scanm1 = NOP;
+                     *pair[i].pop = NOP; *pair[i].push = NOP;
+                  }
+               }
             }
-            else { // post inc/dec
-               int *scanm2 = active_inst(scanm1,-1);
-               int inst2 = *scanm2;
+            else if (off == 0) { // post inc/dec
                if ((isSub = (inst2 & 0xfff00f00) == 0xe2400000) || // sub #X
                    (inst2 & 0xfff00f00) == 0xe2800000) {           // add #X
                   if ((inst2 & RI_Rn) == (inst & RI_Rn) &&
                       (inst2 & RI_Rn) == ((inst2 & RI_Rd) << 4) &&
                       (inst & 0xff) == (inst2 & 0xff) && isSub == isAdd) {
-                     if (isSub) {
-                        *popp1 = (*popp1 & ~RI_Rn) |
-                                 (*scanm2 & RI_Rn) | 0x8000001;
-                        *scanm1 = NOP;
+                     if (isFP) {
+                        if (isSub) {
+                           *popp1 = (*popp1 & ~RI_Rn) |
+                                    (*scanm2 & RI_Rn) | 0x8000001;
+                           *scanm1 = NOP;
+                        }
+                        else {
+                           *popp1 = (*popp1 & 0xfe70ff00) | (inst & RI_Rn) |
+                                    ((isAdd ? 0 : 1) << 23) | (1 << 21) | 1;
+                           *scanm2 = *scanm1 = NOP;
+                        }
                      }
                      else {
-                        *popp1 = (*popp1 & 0xfe70ff00) | (inst & RI_Rn) |
-                                 ((isAdd ? 0 : 1) << 23) | (1 << 21) | 1;
+                        *popp1 = (*popp1 & 0xfe70f000) | (inst & 0x000f00ff) |
+                                 ((isAdd ? 0 : 1) << 23);
                         *scanm2 = *scanm1 = NOP;
                      }
-
                      *pair[i].pop = NOP; *pair[i].push = NOP;
                   }
                }
@@ -3982,38 +4020,52 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
    return (max_used == 0) ? base : (max_used + 1);
 }
 
-// get rid of spurious FP push/pops which remain after advanced optimization
-static void create_pushpop_map4(int *instInfo, int *funcBegin, int *funcEnd)
+// get rid of spurious push/pops which remain after advanced optimization
+static void create_pushpop_map4(int *instInfo, int *funcBegin, int *funcEnd,
+                                int dofloat)
 {
+   int guard;
    int i, lev = 0;
-   int maxlev = 0;
    int *stack[10];
    int *scan;
    int np = 0;
 
-   create_inst_info_f(instInfo, funcBegin, funcEnd);
+   if (dofloat)
+      create_inst_info_f(instInfo, funcBegin, funcEnd);
+   else
+      create_inst_info(instInfo, funcBegin, funcEnd);
 
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
-      if ((*scan & 0xffbf0fff) == 0xed2d0a01 && // vpush {s0}
+      guard = dofloat ?
+              ((*scan & 0xffbf0fff) == 0xed2d0a01) : // vpush {sN}
+              ((*scan & 0xffff0fff) == 0xe52d0004 && // push {r[0-10]}
+               (*scan & RI_Rd) < (NUM_USABLE_REG << 12));
+
+      if (guard &&
           *(scan-1) != NOP1 &&
-          *(scan+3) != 0xe3a0780f &&
-          *(scan+6) != 0xe3a0780f) {
+          *(scan+3) != 0xe3a0780f && // mov r7, #983040
+          *(scan+6) != 0xe3a0780f) { // mc specific hack
          stack[lev] = scan;
          ++lev;
       }
-      else if (*scan == 0xecfd0a01 && // vpop {s1}
-               *(scan-1) != NOP1) {
-         --lev;
-         if (scan != stack[lev]+1) {
-            pair[np].push = stack[lev];
-            pair[np].pop  = scan;
-            pair[np].lev  = lev;
-            if (lev > maxlev) maxlev = lev;
-            if (++np == 2000) {
-               printf("pushpop overflow\n");
-               exit(-1);
+      else {
+         guard = dofloat ? (*scan == 0xecfd0a01) : // vpop {s1}
+                 ((*scan & 0xffff0fff) == 0xe49d0004 && // pop {r[0-10]}
+                  (*scan & RI_Rd) < (NUM_USABLE_REG << 12));
+
+
+         if (guard && *(scan-1) != NOP1) {
+            --lev;
+            if (scan != stack[lev]+1) {
+               pair[np].push = stack[lev];
+               pair[np].pop  = scan;
+               pair[np].lev  = lev;
+               if (++np == 2000) {
+                  printf("pushpop overflow\n");
+                  exit(-1);
+               }
             }
          }
       }
@@ -4033,8 +4085,10 @@ static void create_pushpop_map4(int *instInfo, int *funcBegin, int *funcEnd)
 
       pop  = &instInfo[pop-funcBegin];
 
-      int reg = ((*pair[i].push & RI_Rd) >> 11) |
-                ((*pair[i].push & RI_Sd) ? 1 : 0);
+      int reg = dofloat ?
+                (((*pair[i].push & RI_Rd) >> 11) |
+                 ((*pair[i].push & RI_Sd) ? 1 : 0)) :
+                 ((*pair[i].push & RI_Rd) >> 12);
 
       int *pushp1 = &instInfo[(pair[i].push-funcBegin)+1];
       int *rxpush1d = find_def(instInfo, pushp1, reg, S_FWD);
@@ -4042,18 +4096,30 @@ static void create_pushpop_map4(int *instInfo, int *funcBegin, int *funcEnd)
       /* if reg not re-defined between push and pop... */
       if (!rxpush1d || rxpush1d > pop) {
 
+         int popr = dofloat ? 1 : ((*pair[i].pop & RI_Rd) >> 12);
          pushp1 = &instInfo[(pair[i].pop-funcBegin)+1];
-         int *r1push1d = find_def(instInfo, pushp1, 1, S_FWD);
+         int *r1push1d = find_def(instInfo, pushp1, popr, S_FWD);
+         if (r1push1d == 0) r1push1d = &instInfo[funcEnd-funcBegin];
+         int *r1push1u = find_use(instInfo, r1push1d, popr, S_BACK);
+         rxpush1d = find_def(instInfo, pushp1, reg, S_FWD);
+         if (rxpush1d == 0) rxpush1d = &instInfo[funcEnd-funcBegin];
 
-         if (rxpush1d < r1push1d) {
+         if (r1push1u > rxpush1d) {
             printf("code generation error\n");
             exit(-1);
          }
 
-         int *r1push1u = find_use(instInfo, pushp1, 1, S_FWD);
+         r1push1d = r1push1u;
+         r1push1u = find_use(instInfo, pushp1, popr, S_FWD);
          do {
-            reg_rename_f(reg, 1, r1push1u, &funcBegin[r1push1u-instInfo]);
-            r1push1u = find_use(instInfo, r1push1u+1, 1, S_FWD);
+            if (dofloat)
+               reg_rename_f(reg, popr, r1push1u,
+                            &funcBegin[r1push1u-instInfo]);
+            else
+               reg_rename(reg, popr, r1push1u,
+                            &funcBegin[r1push1u-instInfo]);
+
+            r1push1u = find_use(instInfo, r1push1u+1, popr, S_FWD);
          } while (r1push1u && r1push1u <= r1push1d);
 
          *pair[i].push = NOP;
@@ -4397,7 +4463,7 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
    int lb = 1 << 20; // load bit
    int maxReg = dofloat ? 28 : NUM_USABLE_REG;
 
-   int **loopRec = (int **) malloc((funcEnd-funcBegin+2)*sizeof(int *));
+   int **loopRec = (int **) malloc((funcEnd-funcBegin)*sizeof(int *)/2);
    int numLoop = find_loop(loopRec, funcBegin, funcEnd);
 
    if (dofloat) {
@@ -4574,7 +4640,7 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
       for (i=0; i<numReg; ++i) offset[i] >>= 2;
    }
 
-   if (numReg == 0) return base;
+   if (numReg == 0) { free(loopRec); return base; }
 
    if (base + numReg > maxReg) numReg = maxReg - base;
 
@@ -4847,7 +4913,8 @@ int squint_opt(int *begin, int *end)
          create_pushpop_map2b(tmpbuf, funcBegin, funcEnd);
          ibase = create_pushpop_map3(tmpbuf, funcBegin, retAddr, ibase, 0);
          apply_peepholes7(tmpbuf, funcBegin, retAddr);
-         create_pushpop_map4(tmpbuf, funcBegin, funcEnd);
+         create_pushpop_map4(tmpbuf, funcBegin, funcEnd, 0);
+         create_pushpop_map4(tmpbuf, funcBegin, funcEnd, 1);
          apply_peepholes7_5(tmpbuf, funcBegin, retAddr);
          apply_peepholes7_7(funcBegin, retAddr);
 
@@ -4885,7 +4952,7 @@ int squint_opt(int *begin, int *end)
 
 int main(int argc, char *argv[])
 {
-   int fd;
+   int fd, retVal = 0;
    int offset, length;
    int *mem;
 
@@ -4908,41 +4975,39 @@ int main(int argc, char *argv[])
 
    if ((fd = open(argv[1], O_RDWR)) < 0) {
       printf("could not open file %s\n", argv[1]);
-      exit(-1);
+      retVal = -2;
    }
 
-   if (lseek(fd, (off_t) offset, SEEK_SET) != offset) {
+   else if (lseek(fd, (off_t) offset, SEEK_SET) != offset) {
       printf("could not seek to offset %x in file %s.\n", offset, argv[1]);
-      exit(-1);
+      retVal = -1;
    }
 
-   if (read(fd, mem, (size_t)length) != length) {
+   else if (read(fd, mem, (size_t)length) != length) {
       printf("could not read %x bytes from file %s.\n", length, argv[1]);
-      exit(-1);
+      retVal = -1;
    }
 
-   if (!squint_opt(mem, mem + length/4)) {
+   else if (!squint_opt(mem, mem + length/4)) {
       printf("Compile with mc -Op flag to enable peephole optimizer\n");
-      close(fd);
-      exit(0);
    }
 
-   if (lseek(fd, (off_t) offset, SEEK_SET) != offset) {
+   else if (lseek(fd, (off_t) offset, SEEK_SET) != offset) {
       printf("could not seek to offset %x in file %s.\n", offset, argv[1]);
-      exit(-1);
+      retVal = -1;
    }
 
-   if (write(fd, mem, (size_t)length) != length) {
+   else if (write(fd, mem, (size_t)length) != length) {
       printf("error occured attempting to write file %s\n", argv[1]);
-      exit(-1);
+      retVal = -1;
    }
 
-   close(fd);
+   if (retVal != -2) close(fd);
    free(mem);
 
    printf("executable file %s was optimized.\n", argv[1]);
 
-   return 0;
+   return retVal;
 }
 
 #endif

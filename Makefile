@@ -71,6 +71,9 @@ bench: $(EXEC)
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/lulesh-opt $(TEST_DIR)/extra/lulesh.c
 	$(Q) scripts/peep $(OBJ_DIR)/lulesh-opt -e
 	$(Q) time $(ARM_EXEC) $(OBJ_DIR)/lulesh-opt
+	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/lulesh_p-opt $(TEST_DIR)/extra/lulesh_p.c
+	$(Q) scripts/peep $(OBJ_DIR)/lulesh_p-opt -e
+	$(Q) time $(ARM_EXEC) $(OBJ_DIR)/lulesh_p-opt
 	$(VECHO) "\n\n"
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/nbody_arr-opt $(TEST_DIR)/extra/nbody_arr.c
 	$(Q) scripts/peep $(OBJ_DIR)/nbody_arr-opt -e
