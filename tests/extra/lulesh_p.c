@@ -73,7 +73,7 @@ float fmaxf(float x, float y);
 #define ONE  1.0f
 #define HALF 0.5f
 
-// #define LULESH_SHOW_PROGRESS 1
+#define LULESH_SHOW_PROGRESS 0
 
 enum { VolumeError = -1, QStopError = -2 } ;
 
@@ -2890,12 +2890,12 @@ int main(int argc, char *argv[])
       TimeIncrement(&domain) ;
       LagrangeLeapFrog(&domain) ;
       /* problem->commNodes->Transfer(CommNodes::syncposvel) ; */
-#ifdef LULESH_SHOW_PROGRESS
+#if LULESH_SHOW_PROGRESS
       printf("time = %e, dt=%e\n",
              (float)(domain.time), (float)(domain.deltatime) ) ;
 #endif
    }
-#ifndef LULESH_SHOW_PROGRESS
+#if !LULESH_SHOW_PROGRESS
       printf("time = %e, dt=%e\n",
              (float)(domain.time), (float)(domain.deltatime) ) ;
 #endif
