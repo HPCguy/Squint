@@ -641,12 +641,12 @@ static void create_inst_info_f(int *instInfo, int *funcBegin, int *funcEnd)
       }
       // order is important
       if ((*scan & 0xffbf0fff) == 0xecbd0a01 || // vpop Fd
-          (*scan & 0xff300f00) == 0xed100a00)   // vldr
+          (*scan & 0xfe100f00) == 0xec100a00)   // vldr
          *rInfo = RI_RdAct | RI_RdDest | ((*scan & 0x7000) * 2) |
                   ((*scan & RI_Sd) >> 10) | ((*scan & 0x8000) << 7);
       else if (*scan == 0xed2d0a01) // vpush s0
          *rInfo = RI_RdAct;
-      else if ((*scan & 0xff300f00) == 0xed000a00) // vstr
+      else if ((*scan & 0xfe100f00) == 0xec000a00) // vstr
          *rInfo = RI_RdAct | ((*scan & 0x7000) * 2) |
                   ((*scan & RI_Sd) >> 10) | ((*scan & 0x8000) << 7);
       else if ((*scan & 0xffbf0fd0) == 0xeeb00a40) // vmov Fd, Fm
@@ -1063,7 +1063,7 @@ avoid_nest: ;
    funcEnd += 6;
 }
 
-// peephole optimization for x++ operation
+// get rid of unused postincrement-operator cruft, e.g. for(;; i++)
 static void apply_peepholes3(int *instInfo, int *funcBegin, int *funcEnd)
 {
    int *scan;
@@ -1074,7 +1074,6 @@ static void apply_peepholes3(int *instInfo, int *funcBegin, int *funcEnd)
    funcEnd -= 5;
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
-      // get rid of unused postincrement-operator cruft
       info = instInfo[scan-funcBegin];
       if (info & RI_hasD) {
          int *next, *nextDef, *nextUse;
@@ -1682,7 +1681,7 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
    for (scan = funcBegin; scan < funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
       if (((isFP = (*scan & 0xff200f00) == 0xed000a00) // vldr|str
-              && ((*scan & 0xff) < 2))            ||  // zero offset
+              && ((*scan & 0xff) < 2))            ||   // zero offset
           (*scan & 0xff200000) == 0xe5000000) {        // (ldr|str)[b]
          rn = (*scan & RI_Rn) >> 16;
          if (rn >= NUM_USABLE_REG) continue;
@@ -1735,20 +1734,56 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
                       (inst & 0xff) == (inst2 & 0xff) && isSub == isAdd) {
                      // make sure rn for ldr|str inst
                      // is not used before next def
+                     int patch = 0;
+                     int *oldscan;
                      rdu2 = find_use(instInfo, info+1, rn, S_FWD);
                      rdd2 = find_def(instInfo, info+1, rn, S_FWD);
                      if (rdd2 == 0) rdd2 = &instInfo[funcEnd-funcBegin];
-                     if (rdu2 != 0 && rdu2 <= rdd2) continue;
+                     if (rdu2 != 0 && rdu2 <= rdd2) {
+                        // check for compound-assign -- last use is a store
+                        rdu2 = find_use(instInfo, rdd2, rn, S_BACK);
+                        int *str = &funcBegin[rdu2 - instInfo];
+                        int inst3 = *str;
+                        if (((*scan & 0xff300000) == 0xe5100000 && // ldr
+                             (inst3 & 0xff300000) == 0xe5000000) ||
+                            ((*scan & 0xff300f00) == 0xed100a00 && // vldr
+                             (inst3 & 0xff300f00) == 0xed000a00)) {
+                           if (!(isFP && isSub && *(str-1) != NOP)) {
+                              patch = 1;
+                              *scan = (*scan & ~RI_Rn) | (inst2 & RI_Rn);
+                              instInfo[scan-funcBegin] &= ~RI_Rn;
+                              instInfo[scan-funcBegin] |= (inst2 & RI_Rn);
+                              oldscan = scan;
+                              scan = str;
+                           }
+                           else
+                              continue;
+                        }
+                        else
+                           continue;
+                     }
+
                      if (isFP) {
                         if (isSub) {
                            *scan = (*scan & ~RI_Rn) |
-                                   (*scanm1 & RI_Rn) | 0x8000001;
+                                   (*scanm1 & RI_Rn) | 0x00800001;
+                           instInfo[scan-funcBegin] &= ~RI_Rn;
+                           instInfo[scan-funcBegin] |= (*scanm1 & RI_Rn);
                            funcBegin[rdd-instInfo] = NOP;
                            *rdd &= RI_bb;
+
+                           if (patch) {
+                              *(scan-1) = inst2;
+                              *scanm1 = NOP;
+                              create_inst_info(instInfo, funcBegin, funcEnd);
+                              create_bb_info(instInfo, funcBegin, funcEnd);
+                           }
                         }
                         else {
                            *scan = (*scan & 0xfe70ff00) | (inst & RI_Rn) |
                                    ((isAdd ? 0 : 1) << 23) | (1 << 21) | 1;
+                           instInfo[scan-funcBegin] &= ~RI_Rn;
+                           instInfo[scan-funcBegin] |= (inst & RI_Rn);
                            funcBegin[rdd-instInfo] = *scanm1 = NOP;
                            *rdd &= RI_bb;
                            instInfo[scanm1-funcBegin] &= RI_bb;
@@ -1757,9 +1792,15 @@ static void apply_peepholes7(int *instInfo, int *funcBegin, int *funcEnd)
                      else {
                         *scan = (*scan & 0xfe70f000) | (inst & 0x000f00ff) |
                                 ((isAdd ? 0 : 1) << 23);
+                        instInfo[scan-funcBegin] &= ~RI_Rn;
+                        instInfo[scan-funcBegin] |= (inst & RI_Rn);
                         funcBegin[rdd-instInfo] = *scanm1 = NOP;
                         *rdd &= RI_bb;
                         instInfo[scanm1-funcBegin] &= RI_bb;
+                     }
+
+                     if (patch) {
+                        scan = oldscan+1;
                      }
                   }
                }
@@ -2457,6 +2498,7 @@ static void apply_peepholes8_1(int *instInfo, int *funcBegin, int *funcEnd)
                      int *rxu = find_use(instInfo, inst-1, rc, S_BACK);
                      if (rxu < &instInfo[bdst-funcBegin]) {
                         // one inst loop counter
+                        int *scantmp;
                         scanm1 = scan - 1;
                         inst = &instInfo[scanm1-funcBegin];
                         while (scanm1 > bdst) {
@@ -2468,8 +2510,21 @@ static void apply_peepholes8_1(int *instInfo, int *funcBegin, int *funcEnd)
                            }
                            --scanm1; --inst;
                         }
+                        if ((*inst & RI_bb) && scanm1 > bdst) {
+                           scantmp = scanm1-1;
+                           while (is_nop(*scantmp) && scantmp > bdst) --scantmp;
+                           if (scantmp == bdst) scanm1 = bdst;
+                        }
+                        scantmp = scanm1;
                         while (!is_nop(*scanm1) && scanm1 < scan) ++scanm1;
-                        if (scanm1 != scan) {
+                        if (scanm1 - scantmp == 1 &&
+                            (instInfo[bdst-funcBegin] & RI_memOp)
+                                                        != RI_instR) {
+                           *scanm1 = *scantmp;
+                           *scantmp = *scan;
+                           *scan = NOP;
+                        }
+                        else if (scanm1 != scan) {
                            *scanm1 = *scan;
                            *scan = NOP;
                         }
@@ -3768,7 +3823,7 @@ static void create_pushpop_map2b(int *instInfo, int *funcBegin, int *funcEnd)
                      if (isFP) {
                         if (isSub) {
                            *popp1 = (*popp1 & ~RI_Rn) |
-                                    (*scanm2 & RI_Rn) | 0x8000001;
+                                    (*scanm2 & RI_Rn) | 0x00800001;
                            *scanm1 = NOP;
                         }
                         else {
