@@ -453,104 +453,108 @@ void eol2semi(char *ss) // preprocessor support
  */
 void next()
 {
+   char *s = p;
    char *pp;
+   int tl;
    int t;
+   struct ident_s *il;
 
 text_sub:
-   while ((tk = *p)) {
-      ++p;
-      if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') ||
-          (tk == '_') || (tk == '$')) {
-         pp = p - 1;
-         while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-                (*p >= '0' && *p <= '9') || (*p == '_') || (*p == '$'))
-            tk = tk * 147 + *p++;
-         tk = (tk << 6) + (p - pp);  // hash plus symbol length
-         int nlen = p - pp;
+   while ((tl = *s)) {
+      ++s;
+      if ((tl >= 'a' && tl <= 'z') || (tl >= 'A' && tl <= 'Z') ||
+          (tl == '_') || (tl == '$')) {
+         pp = s - 1;
+         while ((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
+                (*s >= '0' && *s <= '9') || (*s == '_') || (*s == '$'))
+            tl = tl * 147 + *s++;
+         tl = (tl << 6) + (s - pp);  // hash plus symbol length
+         int nlen = s - pp;
 
-         for (id = sym; id < symk; ++id) { // check for keywords
-            if (tk == id->hash && id->name[nlen] == 0 &&
-                !memcmp(id->name, pp, nlen)) {
-               tk = id->tk;
-               return;
+         for (il = sym; il < symk; ++il) { // check for keywords
+            if (tl == il->hash && il->name[nlen] == 0 &&
+                !memcmp(il->name, pp, nlen)) {
+               tl = il->tk; id = il;
+               goto ret;
             }
          }
          if (tokloc) {
-            for (id = symlh; id < symlt; ++id) { // local ids
-               if (tk == id->hash && id->name[nlen] == 0 &&
-                   !memcmp(id->name, pp, nlen)) {
+            for (il = symlh; il < symlt; ++il) { // local ids
+               if (tl == il->hash && il->name[nlen] == 0 &&
+                   !memcmp(il->name, pp, nlen)) {
                   if (tokloc == 2) {
-                     if (id->val > lds[ldn])
+                     if (il->val > lds[ldn])
                         fatal("redefinition of var within scope");
                      else {
                         printf("%s: var %s decl hides previous decl\n",
-                               linestr(), id->name);
+                               linestr(), il->name);
                         goto new_block_def;
                      }
                   }
-                  if (id->tsub && !mns) {
-                     if (id->val & 1) { // recursive
+                  if (il->tsub && !mns) {
+                     if (il->val & 1) { // recursive
                         // handle recursion
-                        if (id->val == 3) { id->val = 1; continue; }
-                        else id->val = 3;
+                        if (il->val == 3) { il->val = 1; continue; }
+                        else il->val = 3;
                      }
                      if (numpts == INL_LEV) fatal("inline level exceeded");
                      tsline[numpts] = 0;
-                     pts[numpts++] = p; p = id->tsub;
+                     pts[numpts++] = s; s = il->tsub; // id = il;
                      goto text_sub;
                   }
-                  tk = id->tk;
-                  return;
+                  tl = il->tk; id = il;
+                  goto ret;
                }
             }
          }
          if (tokloc < 2) {
-            for (id = symk; id < symgt; ++id) { // global ids
-               if (tk == id->hash && id->name[nlen] == 0 &&
-                   !memcmp(id->name, pp, nlen)) {
-                  tk = id->tk;
-                  return;
+            for (il = symk; il < symgt; ++il) { // global ids
+               if (tl == il->hash && il->name[nlen] == 0 &&
+                   !memcmp(il->name, pp, nlen)) {
+                  tl = il->tk; id = il;
+                  goto ret;
                }
             }
          }
          if (tokloc) {
-            for (id = lab; id < labt; ++id) { // labels
-               if (tk == id->hash && id->name[nlen] == 0 &&
-                   !memcmp(id->name, pp, nlen)) {
-                  tk = id->tk;
-                  return;
+            for (il = lab; il < labt; ++il) { // labels
+               if (tl == il->hash && il->name[nlen] == 0 &&
+                   !memcmp(il->name, pp, nlen)) {
+                  tl = il->tk; id = il;
+                  goto ret;
                }
             }
          }
          // At this point, pre-existing symbol name was not found.
 new_block_def:
-         id = tokloc ? --symlh : symgt++;
-         id->name = idp;
+         il = tokloc ? --symlh : symgt++;
+         il->name = idp;
          memcpy(idp, pp, nlen); idp[nlen] = 0;
          idp = (char *) (((int) idp + nlen + 1 + sizeof(int)) &
                          (-sizeof(int)));
-         id->hash = tk;
-         tk = id->tk = Id;  // token type identifier
-         id->class = id->val = id->type = id->etype = 0;
-         id->tsub = 0;
-         id->flags = 0;
-         id->chain = 0;
-         return;
+         il->hash = tl;
+         tl = il->tk = Id;  // token type identifier
+         il->class = il->val = il->type = il->etype = 0;
+         il->tsub = 0;
+         il->flags = 0;
+         il->chain = 0;
+         id = il;
+         goto ret;
       }
-      else if (tk >= '0' && tk <= '9') {
-         tk = Num; // token is char or int
-         tkv.i = strtoul((pp = p - 1), &p, 0); // octal, decimal, hex parsing
-         if (*p == '.') { // float
-            tkv.f = strtof(pp, &p); tk = NumF;
-            if ((*p | 0x20) == 'f') ++p; // floating const has 'f' suffix
+      else if (tl >= '0' && tl <= '9') {
+         tl = Num; // token is char or int
+         tkv.i = strtoul((pp = s - 1), &s, 0); // octal, decimal, hex parsing
+         if (*s == '.') { // float
+            tkv.f = strtof(pp, &s); tl = NumF;
+            if ((*s | 0x20) == 'f') ++s; // floating const has 'f' suffix
          }
-         return;
+         goto ret;
       }
-      switch (tk) {
+      switch (tl) {
       case '\n':
-         if (lp < p && !numpts) {
-            if (src) printf("%d: %.*s", line, p - lp, lp);
-            lp = p;
+         if (lp < s && !numpts) {
+            if (src) printf("%d: %.*s", line, s - lp, lp);
+            lp = s;
          }
          ++line;
       case ' ':
@@ -560,34 +564,35 @@ new_block_def:
       case '\r':
          break;
       case '/':
-         if (*p == '/') { // comment
-            while (*p != 0 && *p != '\n') ++p;
-         } else if (*p == '*') { // C-style multiline comments
+         if (*s == '/') { // comment
+            while (*s != 0 && *s != '\n') ++s;
+         } else if (*s == '*') { // C-style multiline comments
             t = 0;
-            for (++p; (*p != 0) && (t == 0); ++p) {
-               pp = p + 1;
-               if (*p == '\n') ++line;
-               else if (*p == '*' && *pp == '/') t = 1;
+            for (++s; (*s != 0) && (t == 0); ++s) {
+               pp = s + 1;
+               if (*s == '\n') ++line;
+               else if (*s == '*' && *pp == '/') t = 1;
             }
-            ++p;
+            ++s;
          } else {
-            if (*p == '=') { ++p; tk = DivAssign; }
-            else tk = Div; return;
+            if (*s == '=') { ++s; tl = DivAssign; }
+            else tl = Div; goto ret;
          }
          break;
       case '#': // skip include statements, and most preprocessor directives
-         if (!strncmp(p, "define", 6)) {
-            p += 6; next(); if (!ppactive) break;
-            if (tk == Id) {
+         if (!strncmp(s, "define", 6)) {
+            s += 6; p = s; next(); s = p; tl = tk; if (!ppactive) break;
+            if (tl == Id) {
                struct ident_s *ndd = id;
                int *nbase = n;
                if (ndd->class != 0) fatal("can't redefine preprocessor symbol");
-               while (*p == ' ') ++p;
-               if (*p == '\n') {    // no value assigned
+               while (*s == ' ') ++s;
+               if (*s == '\n') {    // no value assigned
                   ndd->class = Num; ndd->type = INT;
                   break;
                }
-               eol2semi(p); next(); expr(Cond); *--p = '\n';
+               eol2semi(s);
+               p = s; next(); expr(Cond); s = p; tl = tk ; *--s = '\n';
                if ((nbase - n) == 2 && (*n == Num || *n == NumF)) {
                   ndd->class = *n; ndd->val = n[1];
                   ndd->type = (*n == Num) ? INT : FLOAT;
@@ -601,60 +606,61 @@ new_block_def:
                fatal("Bad #define syntax");
             }
          }
-         else if ((t = !strncmp(p, "ifdef", 5)) || !strncmp(p, "ifndef", 6)) {
-            p += 6; next();
-            if (tk != Id) fatal("No identifier");
+         else if ((t = !strncmp(s, "ifdef", 5)) || !strncmp(s, "ifndef", 6)) {
+            s += 6; p = s; next(); s = p; tl = tk;
+            if (tl != Id) fatal("No identifier");
             ++pplev;
             if (ppactive &&
                (((id->class == Num || id->class == NumF) ^ t) & 1)) {
                int *nbase = n; ppactive = 0;
                t = pplevt; pplevt = pplev - 1;
-               do next(); while (pplev != pplevt);
-               pplevt = t;
+               do { p = s; next(); s = p; } while (pplev != pplevt);
+               tl = tk; pplevt = t;
                n = nbase; ppactive = 1;
             }
          }
-         else if (!strncmp(p, "if", 2)) {
+         else if (!strncmp(s, "if", 2)) {
             int *nbase = n;
-            p += 2;
+            s += 2;
             ++pplev;
             if (!ppactive) break;
-            eol2semi(p); next(); expr(Cond); *--p = '\n';
+            eol2semi(s);
+            p = s; next(); expr(Cond); s = p; tl = tk; *--s = '\n';
             if ((nbase - n) == 2 && (*n == Num || *n == NumF)) {
                t = n[1]; n += 2;
                if (t == 0) { // throw away code inside of #if
                   t = pplevt; pplevt = pplev - 1; ppactive = 0;
-                  do next(); while (pplev != pplevt);
-                  pplevt = t;
+                  do { p = s; next(); s = p; } while (pplev != pplevt);
+                  tl = tk; pplevt = t;
                   n = nbase; ppactive = 1;
                }
             }
             else
                fatal("#if expression does not evaluate to const value");
          }
-         else if(!strncmp(p, "endif", 5)) {
-            p += 5;
+         else if(!strncmp(s, "endif", 5)) {
+            s += 5;
             if (--pplev < 0) fatal("preprocessor context nesting error");
-            if (pplev == pplevt) return;
+            if (pplev == pplevt) goto ret;
          }
-         else if (!strncmp(p, "else", 4) || !strncmp(p, "elif", 4)) {
-            p += 4;
+         else if (!strncmp(s, "else", 4) || !strncmp(s, "elif", 4)) {
+            s += 4;
             if (ppactive) fatal("#else/elif not supported in preprocessor");
          }
-         else if (!strncmp(p, "error", 5)) {
-            p += 5;
+         else if (!strncmp(s, "error", 5)) {
+            s += 5;
             if (ppactive) fatal ("#error encountered");
          }
          else {
-            while (*p && *p != '\n') ++p;
+            while (*s && *s != '\n') ++s;
          }
          break;
       case '\'': // quotes start with character (string)
       case '"':
          pp = data;
-         while (*p != 0 && *p != tk) {
-            if ((tkv.i = *p++) == '\\') {
-               switch (tkv.i = *p++) {
+         while (*s != 0 && *s != tl) {
+            if ((tkv.i = *s++) == '\\') {
+               switch (tkv.i = *s++) {
                case 'n': tkv.i = '\n'; break; // new line
                case 't': tkv.i = '\t'; break; // horizontal tab
                case 'v': tkv.i = '\v'; break; // vertical tab
@@ -663,54 +669,58 @@ new_block_def:
                case '0': tkv.i = '\0'; break; // an int with value 0
                }
             }
-            if (tk == '"') *data++ = tkv.i;
+            if (tl == '"') *data++ = tkv.i;
          }
-         ++p;
-         if (tk == '"') tkv.i = (int) pp; else tk = Num;
-         return;
-      case '=': if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return;
-      case '*': if (*p == '=') { ++p; tk = MulAssign; }
-                else tk = Mul; return;
-      case '+': if (*p == '+') { ++p; tk = Inc; }
-                else if (*p == '=') { ++p; tk = AddAssign; }
-                else tk = Add; return;
-      case '-': if (*p == '-') { ++p; tk = Dec; }
-                else if (*p == '>') { ++p; tk = Arrow; }
-                else if (*p == '=') { ++p; tk = SubAssign; }
-                else tk = Sub; return;
-      case '[': tk = Bracket; return;
-      case '&': if (*p == '&') { ++p; tk = Lan; }
-                else if (*p == '=') { ++p; tk = AndAssign; }
-                else tk = And; return;
-      case '!': if (*p == '=') { ++p; tk = Ne; } return;
-      case '<': if (*p == '=') { ++p; tk = Le; }
-                else if (*p == '<') {
-                   ++p; if (*p == '=') { ++p ; tk = ShlAssign; } else tk = Shl;
+         ++s;
+         if (tl == '"') tkv.i = (int) pp; else tl = Num;
+         goto ret;
+      case '=': if (*s == '=') { ++s; tl = Eq; } else tl = Assign; goto ret;
+      case '*': if (*s == '=') { ++s; tl = MulAssign; }
+                else tl = Mul; goto ret;
+      case '+': if (*s == '+') { ++s; tl = Inc; }
+                else if (*s == '=') { ++s; tl = AddAssign; }
+                else tl = Add; goto ret;
+      case '-': if (*s == '-') { ++s; tl = Dec; }
+                else if (*s == '>') { ++s; tl = Arrow; }
+                else if (*s == '=') { ++s; tl = SubAssign; }
+                else tl = Sub; goto ret;
+      case '[': tl = Bracket; goto ret;
+      case '&': if (*s == '&') { ++s; tl = Lan; }
+                else if (*s == '=') { ++s; tl = AndAssign; }
+                else tl = And; goto ret;
+      case '!': if (*s == '=') { ++s; tl = Ne; } goto ret;
+      case '<': if (*s == '=') { ++s; tl = Le; }
+                else if (*s == '<') {
+                   ++s; if (*s == '=') { ++s ; tl = ShlAssign; } else tl = Shl;
                 }
-                else tk = Lt; return;
-      case '>': if (*p == '=') { ++p; tk = Ge; }
-                else if (*p == '>') {
-                   ++p; if (*p == '=') { ++p ; tk = ShrAssign; } else tk = Shr;
+                else tl = Lt; goto ret;
+      case '>': if (*s == '=') { ++s; tl = Ge; }
+                else if (*s == '>') {
+                   ++s; if (*s == '=') { ++s ; tl = ShrAssign; } else tl = Shr;
                 }
-                else tk = Gt; return;
-      case '|': if (*p == '|') { ++p; tk = Lor; }
-                else if (*p == '=') { ++p; tk = OrAssign; }
-                else tk = Or; return;
-      case '^': if (*p == '=') { ++p; tk = XorAssign; } else tk = Xor; return;
-      case '%': if (*p == '=') { ++p; tk = ModAssign; }
-                else tk = Mod; return;
-      case '?': tk = Cond; return;
-      case '.': tk = Dot; return;
-      case ':': if (*p == '=') { ++p; tk = Alias; } return;
-      default: return;
+                else tl = Gt; goto ret;
+      case '|': if (*s == '|') { ++s; tl = Lor; }
+                else if (*s == '=') { ++s; tl = OrAssign; }
+                else tl = Or; goto ret;
+      case '^': if (*s == '=') { ++s; tl = XorAssign; } else tl = Xor; goto ret;
+      case '%': if (*s == '=') { ++s; tl = ModAssign; }
+                else tl = Mod; goto ret;
+      case '?': tl = Cond; goto ret;
+      case '.': tl = Dot; goto ret;
+      case ':': if (*s == '=') { ++s; tl = Alias; } goto ret;
+      default: goto ret;
       }
    }
 
    if (numpts != 0) {
-      p = pts[--numpts];
+      s = pts[--numpts];
       if (tsline[numpts] != 0) line = tsline[numpts];
       goto text_sub;
    }
+
+ret:
+   p = s; tk = tl;
+   return;
 }
 
 int popcount32(int ii)
