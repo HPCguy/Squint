@@ -395,6 +395,10 @@ void fatal(char *msg)
    printf("%s: %s\n", linestr(), msg); exit(-1);
 }
 
+/**************************************************
+ ******   Shared library function support    ******
+ **************************************************/
+
 void ef_add(char *name, int addr) // add external function
 {
    ef_cache[ef_count] = (struct ef_s *) malloc(sizeof(struct ef_s)) ;
@@ -436,6 +440,10 @@ int ef_getidx(char *name) // get cache index of external function
    }
    return i;
 }
+
+/**************************************************
+ ******             Lexer                    ******
+ **************************************************/
 
 inline void expr(int lev);
 
@@ -723,6 +731,10 @@ ret:
    return;
 }
 
+/**************************************************
+ ******        Utility functions             ******
+ **************************************************/
+
 int popcount32(int ii)
 {
    int i;
@@ -790,41 +802,6 @@ int tensor_size(int dim, int etype)
    }
    return retVal;
 }
-
-/* expression parsing
- * lev represents an operator.
- * because each operator `token` is arranged in order of priority,
- * large `lev` indicates a high priority.
- *
- * Operator precedence (lower first):
- * Assign  =
- * Cond   ?
- * Lor    ||
- * Lan    &&
- * Or     |
- * Xor    ^
- * And    &
- * Eq     ==
- * Ne     !=
- * Ge     >=
- * Lt     <
- * Gt     >
- * Le     <=
- * Shl    <<
- * Shr    >>
- * Add    +
- * Sub    -
- * Mul    *
- * Div    /
- * Mod    %
- * Inc    ++
- * Dec    --
- * Bracket [
- */
-
-#define REENTRANT 0x10000
-
-inline void stmt(int ctx);
 
 int idchar(int n) // 6 bits wide
 {
@@ -904,6 +881,45 @@ void flagWrite(int *flags, int *high, int *low)
    *flags |= ((*flags & 4) ? 8 : 4);
    if (high - low == 2 && *low != Num && *low != NumF) *flags |= 64; // not lit
 }
+
+/**************************************************
+ ******        Expression Parser             ******
+ **************************************************/
+
+/* expression parsing
+ * lev represents an operator.
+ * because each operator `token` is arranged in order of priority,
+ * large `lev` indicates a high priority.
+ *
+ * Operator precedence (lower first):
+ * Assign  =
+ * Cond   ?
+ * Lor    ||
+ * Lan    &&
+ * Or     |
+ * Xor    ^
+ * And    &
+ * Eq     ==
+ * Ne     !=
+ * Ge     >=
+ * Lt     <
+ * Gt     >
+ * Le     <=
+ * Shl    <<
+ * Shr    >>
+ * Add    +
+ * Sub    -
+ * Mul    *
+ * Div    /
+ * Mod    %
+ * Inc    ++
+ * Dec    --
+ * Bracket [
+ */
+
+#define REENTRANT 0x10000
+
+inline void stmt(int ctx);
 
 void expr(int lev)
 {
@@ -1959,6 +1975,10 @@ int isPrintf(char *s)
    return ((ss - s) < 6) ? 0 : !strcmp(ss - 6,"printf");
 }
 
+/****************************************************
+ ****** Intermediate Representation Generation ******
+ ****************************************************/
+
 // AST parsing for IR generatiion
 // With a modular code generator, new targets can be easily supported such as
 // native Arm machine code.
@@ -2217,6 +2237,10 @@ void gen(int *n)
       }
    }
 }
+
+/**************************************************
+ ******        Statement Parser              ******
+ **************************************************/
 
 int gen_etype(int ext[3], int d)
 {
@@ -3040,6 +3064,10 @@ void die(char *msg) { printf("%s\n", msg); exit(-1); }
 int reloc_imm(int offset) { return (((offset) - 8) >> 2) & 0x00ffffff; }
 int reloc_bl(int offset) { return 0xeb000000 | reloc_imm(offset); }
 
+/**************************************************
+ ****** Code Generator (IR -> Machine Lang)  ******
+ **************************************************/
+
 int icnst[512], nicnst;
 
 int addcnst(int val)
@@ -3476,6 +3504,10 @@ int *codegen(int *jitmem, int *jitmap)
    return tje;
 }
 
+/**************************************************
+ ******            JIT execution             ******
+ **************************************************/
+
 enum {
    _PROT_EXEC = 4, _PROT_READ = 1, _PROT_WRITE = 2,
    _MAP_PRIVATE = 2, _MAP_ANON = 32
@@ -3523,6 +3555,10 @@ int jit(int poolsz, int *main, int argc, char **argv)
    int *res = (int *) bsearch(&sym, sym, 1, 1, (void *) _start);
    if (((int *) 0) != res) return 0; return -1; // make compiler happy
 }
+
+/**************************************************
+ ******  Dynamically linked ELF executable   ******
+ **************************************************/
 
 int ELF32_ST_INFO(int b, int t) { return (b << 4) + (t & 0xf); }
 enum {
@@ -4080,6 +4116,10 @@ int elf32(int poolsz, int *main, int elf_fd)
    free(got_func_slot);
    return 0;
 }
+
+/**************************************************
+ ******     Main (Init + cmdline options)    ******
+ **************************************************/
 
 enum { _O_CREAT = 64, _O_WRONLY = 1 };
 

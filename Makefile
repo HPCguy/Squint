@@ -66,7 +66,7 @@ check: $(EXEC) $(TEST_OBJ)
 	fi
 	@echo "Type 'make show_asm' to create assembly listing in ASM directory"
 
-bench: $(EXEC)
+bench: $(EXEC) $(OBJ_DIR)/$(BIN)-opt
 	$(Q)if [ "$(shell uname -m)" != "aarch64" ]; then
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/lulesh-opt $(TEST_DIR)/extra/lulesh.c
 	$(Q) scripts/peep $(OBJ_DIR)/lulesh-opt -e

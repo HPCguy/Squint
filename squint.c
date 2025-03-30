@@ -85,6 +85,11 @@
 #define NOP11     0xe1a0b00b
 #define NOP13     0xe1a0d00d
 
+// allocable integer registers
+#define UREG_MASK 0x000057ff
+
+enum CPUregs { rSL = 10, rFP, rIP, rSP, rLR, rPC };
+
 enum search_dir { S_BACK = -1, S_FWD = 1 };
 
 struct ia_s {
@@ -101,9 +106,6 @@ static int *cbegin;
 
 static int skip_const_blk;
 static int extra_opt = 1;
-
-// allocable integer registers
-#define UREG_MASK 0x000057ff
 
 /**********************************************************/
 /*************** general utility functions ****************/
@@ -509,8 +511,6 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
 
 #if 0
       if (inst == 0xe28fe000) { // add lr, pc, #0
-      }
-      else if ((inst & 0xff7fff00) == 0xe59ff000) { // ldr pc, [pc, #72]
       }
 #endif
       if (instMask == 0x02) { /* ALU_immed */
@@ -4273,7 +4273,6 @@ static void simplify_frame(int *funcBegin, int *funcEnd)
    }
 }
 
-
 /**********************************************************/
 /****       convert frame vars to registers          ******/
 /**********************************************************/
@@ -4379,13 +4378,13 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
    for (scan = funcBegin; *scan != NOP; ++scan);
    for (i=0; i<numReg; ++i) {
       if (*scan != NOP) {
-         printf("out of register assignment space\n");
+         printf("out of register1 assignment space\n");
          exit(-1);
       }
       fbase ^= (1 << (FPreg[i] = avail_reg(fbase)));
       if (count[i] & 0x40000000) { // global const
          if (scan[1] != NOP) {
-            printf("out of register assignment space\n");
+            printf("out of register1 assignment space\n");
             exit(-1);
          }
          // ldr r0, [pc, #X]
@@ -4505,6 +4504,7 @@ static int rename_register1(int *instInfo, int *funcBegin, int *funcEnd,
    return fbase;
 }
 
+// create rudimentary loop level information.
 static int find_loop(int **loopRec, int *funcBegin, int *funcEnd)
 {
    int numLoop = 0;
@@ -4532,8 +4532,11 @@ static int in_loop(int **loopRec, int numLoop, int *scan)
    return (i != numLoop);
 }
 
+int *lastLoc[REN_BUF];
+int *firstLoc[REN_BUF];
+
 static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
-                            int base, int dofloat)
+                            int base, int dofloat, int tmask)
 {
    int *scan;
    int i, j, numReg = 0;
@@ -4541,63 +4544,91 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
    int memInst, altInst;
    int lb = 1 << 20; // load bit
    int maxReg = popcount32b(base);
+   int reg[32];
+   int hash[REN_BUF];
    int offset[REN_BUF];
    int count[REN_BUF];
    int loopCount[REN_BUF];
-   int reg[32];
+   int lastStr[REN_BUF];
 
-   if (dofloat) {
-      if ((base & 0xf0000000) != 0xf0000000 || maxReg < 5) return base;
-      maxReg -= 4;
-   }
+   if (maxReg == 0) return base;
 
    int **loopRec = (int **) malloc((funcEnd-funcBegin)*sizeof(int *)/2);
    int numLoop = find_loop(loopRec, funcBegin, funcEnd);
 
    if (dofloat) {
-      memMask = 0xff2f0f00;
-      altMask = 0x0f2f0000;
-      memInst = 0xed0b0a00;
-      altInst = 0x050b0000;
+      memMask = 0xff200f00;
+      altMask = 0x0f200000;
+      memInst = 0xed000a00;
+      altInst = 0x05000000;
    }
    else {
-      memMask = 0x0f2f0000;
-      altMask = 0xff2f0f00;
-      memInst = 0x050b0000;
-      altInst = 0xed0b0a00;
+      memMask = 0x0f200000;
+      altMask = 0xff200f00;
+      memInst = 0x05000000;
+      altInst = 0xed000a00;
    }
+
+   int rmask = tmask;
+
+   if (rmask != (1 << rFP)) {
+      int emask = memMask & 0xfedfffff;
+      int einst = memInst & 0xfedfffff;
+
+      // exclude registers that use pre/post increment
+      for (scan = funcBegin; scan <= funcEnd; ++scan) {
+         scan = skip_nop(scan, S_FWD);
+
+         if ((*scan & emask) == einst &&
+             (*scan & 0x01200000) != 0x01000000) {
+            rmask &= ~(1 << ((*scan & RI_Rn) >> 16));
+         }
+      }
+
+      if (dofloat) memMask |= 0x0000f000; // only xform s0/s1 loads/stores
+   }
+
+   if (rmask == 0) return base;
 
    for (i=0; i<REN_BUF; ++i) {
       count[i] = 0;
       loopCount[i] = 0;
+      lastStr[i] = 0;
+      firstLoc[i] = (int *) 0;
    }
 
    /* record frame variable in this context */
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
-      if ((*scan & memMask) == memInst) {
+      if ((*scan & memMask) == memInst &&
+          ((1 << ((*scan & RI_Rn) >> 16)) & rmask)) {
          int off = dofloat ? ((*scan & 0xff)*4) : (*scan & 0xfff);
          if ((*scan & (1<<23)) == 0) off = -off;
+         int h = (*scan & RI_Rn) | (off & ~RI_Rn);
          for (i = 0; i < numReg; ++i) {
-            if (offset[i] == off) break;
+            if (hash[i] == h) break;
          }
          if (i == numReg) {
             if (numReg == REN_BUF) break;
+            hash[numReg] = h;
             offset[numReg++] = off;
          }
          ++count[i];
          if (in_loop(loopRec, numLoop, scan)) ++loopCount[i];
          if (extra_opt) count[i] |= ((dofloat ? 2 : 1) << 29);
       }
-      else if (extra_opt && (*scan & altMask) == altInst) {
+      else if (extra_opt && (*scan & altMask) == altInst &&
+               ((1 << ((*scan & RI_Rn) >> 16)) & rmask)) {
          int off = dofloat ? (*scan & 0xfff) : ((*scan & 0xff)*4);
          if ((*scan & (1<<23)) == 0) off = -off;
+         int h = (*scan & RI_Rn) | (off & ~RI_Rn);
          for (i = 0; i < numReg; ++i) {
-            if (offset[i] == off) break;
+            if (hash[i] == h) break;
          }
          if (i == numReg) {
             if (numReg == REN_BUF) break;
+            hash[numReg] = h;
             offset[numReg++] = off;
          }
          // cross-access disqualifies xform
@@ -4614,6 +4645,7 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
          if ((count[i] & (3 << 29)) != ((dofloat ? 2 : 1) << 29)) {
             --numReg;
             for(int j = i; j < numReg; ++j) {
+               hash[j] = hash[j+1];
                offset[j] = offset[j+1];
                count[j] = count[j+1];
                loopCount[j] = loopCount[j+1];
@@ -4629,21 +4661,42 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
-      if ((*scan & 0xffffff00) == 0xe28b0000 || // add r0, fp, #X
-          (*scan & 0xffffff00) == 0xe24b0000) { // sub r0, fp, #X
+      // this comparison is a hack -- not rigorous
+      if (((*scan & 0xfff00f00) == 0xe2800000 ||  // add r0, fp, #X
+           (*scan & 0xfff00f00) == 0xe2400000) && // sub r0, fp, #X
+           (rmask & (1 << ((*scan & RI_Rn) >> 16))) ) {
          int off = (*scan & 0xff);
-         if ((*scan & 0xffffff00) == 0xe24b0000) {
+         if ((*scan & 0xfff00f00) == 0xe2400000) {
             off = -off;
          }
-         for (i = 0; i < numReg; ++i) {
-            if (offset[i] == off) break;
+         if ((*scan & RI_Rn) == 0x000b0000) {
+            int h = (*scan & RI_Rn) | (off & ~RI_Rn);
+            for (i = 0; i < numReg; ++i) {
+               if (hash[i] == h) break;
+            }
+            if (i != numReg) {
+               --numReg;
+               for(; i < numReg; ++i) {
+                  hash[i] = hash[i+1];
+                  offset[i] = offset[i+1];
+                  count[i] = count[i+1];
+                  loopCount[i] = loopCount[i+1];
+               }
+            }
          }
-         if (i != numReg) {
-            --numReg;
-            for(; i < numReg; ++i) {
-               offset[i] = offset[i+1];
-               count[i] = count[i+1];
-               loopCount[i] = loopCount[i+1];
+         else {
+            int h = (*scan & RI_Rn);
+            for (i = 0; i < numReg; ++i) {
+               if ((hash[i] & RI_Rn) == h) {
+                 --numReg;
+                  for(j = i; j < numReg; ++j) {
+                     hash[j] = hash[j+1];
+                     offset[j] = offset[j+1];
+                     count[j] = count[j+1];
+                     loopCount[j] = loopCount[j+1];
+                  }
+                  --i;
+               }
             }
          }
       }
@@ -4664,6 +4717,9 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
             tmp = offset[i];
             offset[i] = offset[i+1];
             offset[i+1] = tmp;
+            tmp = hash[i];
+            hash[i] = hash[i+1];
+            hash[i+1] = tmp;
             done = 0;
          }
       }
@@ -4690,6 +4746,9 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
                offset[j] = offset[j+1];
                offset[j+1] = tmp;
                done = 0;
+               tmp = hash[j];
+               hash[j] = hash[j+1];
+               hash[j+1] = tmp;
             }
          }
       } while(!done);
@@ -4712,6 +4771,9 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
                tmp = offset[j];
                offset[j] = offset[j+1];
                offset[j+1] = tmp;
+               tmp = hash[j];
+               hash[j] = hash[j+1];
+               hash[j+1] = tmp;
                done = 0;
             }
          }
@@ -4747,21 +4809,23 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
    for (scan = funcBegin; scan <= funcEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
-      if ((*scan & memMask) == memInst) { // load/store [fp, #X]
+      if ((*scan & memMask) == memInst &&
+          ((1 << ((*scan & RI_Rn) >> 16)) & rmask)) {
          int rd;
          int *rdu, *rdd, *rdt, *rfinal;
-         int off = dofloat ? (*scan & 0xff) : (*scan & 0xfff);
+         int off = dofloat ? ((*scan & 0xff)*4) : (*scan & 0xfff);
          if ((*scan & (1<<23)) == 0) off = -off;
+         int h = (*scan & RI_Rn) | (off & ~RI_Rn);
 
          for (i = 0; i < numReg; ++i) {
-            if (offset[i] == off) break;
+            if (hash[i] == h) break;
          }
          if (i == numReg) continue; // this frame var not mapped
 
          rd = dofloat ? (((*scan & RI_Rd) >> 11) + ((*scan & RI_Sd) >> 22)) :
                         ((*scan & RI_Rd) >> 12);
 
-         if ((*scan & memMask) == memInst && (*scan & lb)) { // load [fp, #X]
+         if ((*scan & lb)) { // load [rn, #X]
             rdd = find_def(instInfo, &instInfo[(scan-funcBegin)+1], rd, S_FWD);
             rdu = find_use(instInfo, &instInfo[(scan-funcBegin)+1], rd, S_FWD);
             if (rdu != 0) {
@@ -4770,6 +4834,7 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
                for (rdt = &instInfo[(scan-funcBegin)+1];
                     rdt <= rfinal; ++rdt) if (*rdt & RI_bb) break;
             }
+            if (firstLoc[i] == 0) firstLoc[i] = scan;
             if (rdu == 0 || rdt <= rfinal || // rdu == 0 means func ret value
                 funcBegin[rdu-instInfo] == 0xe3500000) { // switch stmt
                if (dofloat) {
@@ -4794,12 +4859,16 @@ static int rename_register2(int *instInfo, int *funcBegin, int *funcEnd,
 
                do {
                   int *rscan = &funcBegin[rdu-instInfo];
-                  if ((*rscan & memMask) == memInst && (*rscan & lb) == 0) {
+                  if ((*rscan & memMask) == memInst && (*rscan & lb) == 0 &&
+                      ((1 << ((*rscan & RI_Rn) >> 16)) & rmask)) {
                      // frame var store
-                     int off2 = dofloat ? (*rscan & 0xff) : (*rscan & 0xfff);
+                     lastStr[i] = *scan;
+                     lastLoc[i] = scan;
+                     int off2 = dofloat ? ((*rscan & 0xff)*4) : (*rscan & 0xfff);
                      if ((*rscan & (1<<23)) == 0) off2 = -off2;
+                     int hh = (*rscan & RI_Rn) | (off2 & ~RI_Rn);
                      for (j = 0; j < numReg; ++j) {
-                        if (offset[j] == off2) break;
+                        if (hash[j] == hh) break;
                      }
                      if (j != numReg) {
                         if (i == j) {
@@ -4840,7 +4909,9 @@ nextUse:
                } while (1);
             }
          }
-         else { // store [fp, #X]
+         else { // store [rn, #X]
+            lastStr[i] = *scan;
+            lastLoc[i] = scan;
             if (dofloat) {
                *scan = 0xeeb00a40 |
                        ((reg[i] & 0x1e) << 11) | ((reg[i] & 1) << 22) |
@@ -4861,21 +4932,58 @@ nextUse:
       }
    }
 
+   // hack to handle "last" store instruction.  Only works if
+   // literal last store is in a non-conditional code path
+   for (i = 0; i < numReg; ++i) {  // ldr rd, [rd, #X]
+      if (lastStr[i] && ((hash[i] & RI_Rn) != 0x000b0000)) {
+         if (dofloat) {
+            *lastLoc[i] = lastStr[i];
+            instInfo[lastLoc[i]-funcBegin] = RI_RdAct |
+                  ((lastStr[i] & 0x7000) * 2) |
+                  ((lastStr[i] & RI_Sd) >> 10) |
+                  ((lastStr[i] & 0x8000) << 7) |
+                  (instInfo[lastLoc[i]-funcBegin] & RI_bb);
+         }
+         else {
+            *lastLoc[i] = lastStr[i];
+            instInfo[lastLoc[i]-funcBegin] = RI_RdDest | RI_RdAct |
+               (lastStr[i] & RI_Rd) |
+               (instInfo[lastLoc[i]-funcBegin] & RI_bb);
+         }
+      }
+   }
+
+   create_inst_info(instInfo, funcBegin, funcEnd);
+   create_bb_info(instInfo, funcBegin, funcEnd);
+
    /* load frame vars into registers at top of function */
    for (scan = funcBegin; *scan != NOP; ++scan);
    j = 0;
-   for (i = 0; i < numReg; ++i) {  // ldr rn, [fp, #X]
-      if (*scan != NOP) {
-         printf("out of register assignment space\n");
-         exit(-1);
-      }
+   for (i = 0; i < numReg; ++i) {  // ldr rd, [rn, #X]
       if (offset[i] >= 0) {
-         if (dofloat)
-            *scan++ = 0xed9b0a00 |
-                      ((reg[i] & 0x1e) << 11) | ((reg[i] & 1) << 22) |
-                      offset[i] | (1<<23);
-         else
-            *scan++ = 0xe51b0000 | (reg[i] << 12) | offset[i] | (1<<23);
+         if ((hash[i] & RI_Rn) == 0x000b0000) { // frame ptr
+            if (*scan != NOP) {
+               printf("out of register2 assignment space\n");
+               exit(-1);
+            }
+            if (dofloat)
+               *scan++ = 0xed900a00 | (hash[i] & RI_Rn) |
+                         ((reg[i] & 0x1e) << 11) | ((reg[i] & 1) << 22) |
+                         offset[i];
+            else
+               *scan++ = 0xe5900000 | (hash[i] & RI_Rn) |
+                         (reg[i] << 12) | offset[i];
+         }
+         else if (firstLoc[i] != 0) {
+            int *fl = firstLoc[i];
+            if (dofloat)
+               *fl = 0xed900a00 | (hash[i] & RI_Rn) |
+                     ((reg[i] & 0x1e) << 11) | ((reg[i] & 1) << 22) |
+                     offset[i];
+            else
+               *fl = 0xe5900000 | (hash[i] & RI_Rn) |
+                     (reg[i] << 12) | offset[i];
+         }
       }
       else if ((funcBegin[2] & 0xffffff00) == 0xe24dd000) { // sub sp, sp, #X
         ++j;
@@ -4984,7 +5092,8 @@ int squint_opt(int *begin, int *end)
 
          ilow = avail_reg(ireg);
          if (!hasFuncCall)
-            ireg = rename_register2(tmpbuf, funcBegin, retAddr, ireg, 0);
+            ireg = rename_register2(tmpbuf, funcBegin, retAddr,
+                                    ireg, 0, (1 << rFP));
 
          if (!noFloatConst) // correction for rename_register1
             apply_peepholes4_5(tmpbuf, funcBegin, retAddr);
@@ -4995,12 +5104,16 @@ int squint_opt(int *begin, int *end)
          fhigh = avail_reg(freg);
 
          apply_peepholes4_6(tmpbuf, funcBegin, retAddr);
-         if (!hasFuncCall)
-            freg = rename_register2(tmpbuf, funcBegin, retAddr, freg, 1);
+         if (!hasFuncCall) {
+            int tmp = (freg & 0xf0000000);
+            freg = tmp | rename_register2(tmpbuf, funcBegin, retAddr,
+                                          (freg & 0x0fffffff), 1, (1 << rFP));
+         }
 
          apply_peepholes4_7(tmpbuf, funcBegin, retAddr);
          // apply_peepholes5(funcBegin, retAddr);
-         apply_peepholes6(tmpbuf, funcBegin, retAddr, ilow, avail_reg(ireg), 0);
+         apply_peepholes6(tmpbuf, funcBegin, retAddr, ilow,
+                          avail_reg(ireg), 0);
 
          if (!noFloatConst)
             apply_peepholes6(tmpbuf, funcBegin, retAddr, flow, fhigh, 1);
@@ -5011,6 +5124,7 @@ int squint_opt(int *begin, int *end)
          apply_peepholes7(tmpbuf, funcBegin, retAddr);
          create_pushpop_map4(tmpbuf, funcBegin, funcEnd, 0);
          create_pushpop_map4(tmpbuf, funcBegin, funcEnd, 1);
+
          apply_peepholes7_5(tmpbuf, funcBegin, retAddr);
          apply_peepholes7_7(funcBegin, retAddr);
 
@@ -5024,6 +5138,9 @@ int squint_opt(int *begin, int *end)
          apply_peepholes8_1(tmpbuf, funcBegin, retAddr);
          apply_peepholes8_2(tmpbuf, funcBegin, funcEnd, &freg);
          apply_peepholes9(tmpbuf, funcBegin, retAddr);
+         if (!hasFuncCall)
+            freg = rename_register2(tmpbuf, funcBegin, retAddr, freg, 1,
+                                    (UREG_MASK & ~((1 << rFP) | 7)));
 
          // if (noFloatConst)
          //    simplify_frame(funcBegin, retAddr); Also,
