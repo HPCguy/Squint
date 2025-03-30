@@ -279,13 +279,14 @@ void Release(void **ptr)
 void TimeIncrement(Domain *domain)
 {
    float targetdt = domain->stoptime - domain->time ;
+   float newdt = domain->deltatime;
 
    if ((domain->dtfixed <= ZERO) && (domain->cycle != 0)) {
       float ratio ;
       float olddt = domain->deltatime ;
 
       /* This will require a reduction in parallel */
-      float newdt = 1.0e+20 ;
+      newdt = 1.0e+20 ;
       if (domain->dtcourant < newdt) {
          newdt = domain->dtcourant / 2.0f ;
       }
@@ -306,20 +307,21 @@ void TimeIncrement(Domain *domain)
       if (newdt > domain->dtmax) {
          newdt = domain->dtmax ;
       }
-      domain->deltatime = newdt ;
    }
 
    /* TRY TO PREVENT VERY SMALL SCALING ON THE NEXT CYCLE */
-   if ((targetdt > domain->deltatime) &&
-       (targetdt < (4.0f * domain->deltatime / 3.0f)) ) {
-      targetdt = 2.0f * domain->deltatime / 3.0f ;
+   if ((targetdt > newdt) &&
+       (targetdt < (4.0f * newdt / 3.0f)) ) {
+      targetdt = 2.0f * newdt / 3.0f ;
    }
 
-   if (targetdt < domain->deltatime) {
-      domain->deltatime = targetdt ;
+   if (targetdt < newdt) {
+      newdt = targetdt ;
    }
 
-   domain->time += domain->deltatime ;
+   domain->time += newdt ;
+
+   domain->deltatime = newdt ;
 
    ++domain->cycle ;
 }
@@ -483,15 +485,21 @@ inline void SumElemFaceNormal(float *normalX0, float *normalY0, float *normalZ0,
    *normalZ3 += areaZ;
 }
 
-void CalcElemNodeNormals(float *pfx, float *pfy, float *pfz,
+void CalcElemNodeNormals(float *pfxt, float *pfyt, float *pfzt,
                          float *x, float *y, float *z)
 {
    int i;
+   float *pfx = pfxt;
+   float *pfy = pfyt;
+   float *pfz = pfzt;
    for (i = 0 ; i < 8 ; ++i) {
-      pfx[i] = ZERO;
-      pfy[i] = ZERO;
-      pfz[i] = ZERO;
+      *pfx++ = ZERO;
+      *pfy++ = ZERO;
+      *pfz++ = ZERO;
    }
+   pfx -= 8;
+   pfy -= 8;
+   pfz -= 8;
    /* evaluate face one: nodes 0, 1, 2, 3 */
    SumElemFaceNormal(&pfx[0], &pfy[0], &pfz[0],
                   &pfx[1], &pfy[1], &pfz[1],
@@ -1019,9 +1027,7 @@ void FBKernel(float *x8ni, float *y8ni, float *z8ni,
       hg[7] = gami[7] -  volinv*(dvdxi[7] * hourmodx +
                                  dvdyi[7] * hourmody +
                                  dvdzi[7] * hourmodz );
-
    }
-
 }
 
 void CalcFBHourglassForceForElems(int * nodelist,
@@ -1499,7 +1505,7 @@ float CalcElemCharacteristicLength(float x[8], float y[8], float z[8],
    return charLength;
 }
 
-void CalcElemVelocityGrandient(float *xvel, float *yvel, float *zvel,
+void CalcElemVelocityGradient(float *xvel, float *yvel, float *zvel,
                                float b[][8], float detJ, float *d)
 {
    float inv_detJ = ONE / detJ ;
@@ -1508,50 +1514,64 @@ void CalcElemVelocityGrandient(float *xvel, float *yvel, float *zvel,
    float*  pfy = &b[1][0];
    float*  pfz = &b[2][0];
 
-  d[0] = inv_detJ * ( pfx[0] * (xvel[0]-xvel[6])
-                     + pfx[1] * (xvel[1]-xvel[7])
-                     + pfx[2] * (xvel[2]-xvel[4])
-                     + pfx[3] * (xvel[3]-xvel[5]) );
+   float  dxv0 = (xvel[0]-xvel[6]);
+   float  dxv1 = (xvel[1]-xvel[7]);
+   float  dxv2 = (xvel[2]-xvel[4]);
+   float  dxv3 = (xvel[3]-xvel[5]);
+   float  dyv0 = (yvel[0]-yvel[6]);
+   float  dyv1 = (yvel[1]-yvel[7]);
+   float  dyv2 = (yvel[2]-yvel[4]);
+   float  dyv3 = (yvel[3]-yvel[5]);
+   float  dzv0 = (zvel[0]-zvel[6]);
+   float  dzv1 = (zvel[1]-zvel[7]);
+   float  dzv2 = (zvel[2]-zvel[4]);
+   float  dzv3 = (zvel[3]-zvel[5]);
 
-  d[1] = inv_detJ * ( pfy[0] * (yvel[0]-yvel[6])
-                     + pfy[1] * (yvel[1]-yvel[7])
-                     + pfy[2] * (yvel[2]-yvel[4])
-                     + pfy[3] * (yvel[3]-yvel[5]) );
+  d[0] = inv_detJ * ( pfx[0] * dxv0
+                     + pfx[1] * dxv1
+                     + pfx[2] * dxv2
+                     + pfx[3] * dxv3 );
 
-  d[2] = inv_detJ * ( pfz[0] * (zvel[0]-zvel[6])
-                     + pfz[1] * (zvel[1]-zvel[7])
-                     + pfz[2] * (zvel[2]-zvel[4])
-                     + pfz[3] * (zvel[3]-zvel[5]) );
+  d[1] = inv_detJ * ( pfy[0] * dyv0
+                     + pfy[1] * dyv1
+                     + pfy[2] * dyv2
+                     + pfy[3] * dyv3 );
 
-  dyddx  = inv_detJ * ( pfx[0] * (yvel[0]-yvel[6])
-                      + pfx[1] * (yvel[1]-yvel[7])
-                      + pfx[2] * (yvel[2]-yvel[4])
-                      + pfx[3] * (yvel[3]-yvel[5]) );
+  d[2] = inv_detJ * ( pfz[0] * dzv0
+                     + pfz[1] * dzv1
+                     + pfz[2] * dzv2
+                     + pfz[3] * dzv3 );
 
-  dxddy  = inv_detJ * ( pfy[0] * (xvel[0]-xvel[6])
-                      + pfy[1] * (xvel[1]-xvel[7])
-                      + pfy[2] * (xvel[2]-xvel[4])
-                      + pfy[3] * (xvel[3]-xvel[5]) );
+  dyddx  = inv_detJ * ( pfx[0] * dyv0
+                      + pfx[1] * dyv1
+                      + pfx[2] * dyv2
+                      + pfx[3] * dyv3 );
 
-  dzddx  = inv_detJ * ( pfx[0] * (zvel[0]-zvel[6])
-                      + pfx[1] * (zvel[1]-zvel[7])
-                      + pfx[2] * (zvel[2]-zvel[4])
-                      + pfx[3] * (zvel[3]-zvel[5]) );
+  dxddy  = inv_detJ * ( pfy[0] * dxv0
+                      + pfy[1] * dxv1
+                      + pfy[2] * dxv2
+                      + pfy[3] * dxv3 );
 
-  dxddz  = inv_detJ * ( pfz[0] * (xvel[0]-xvel[6])
-                      + pfz[1] * (xvel[1]-xvel[7])
-                      + pfz[2] * (xvel[2]-xvel[4])
-                      + pfz[3] * (xvel[3]-xvel[5]) );
+  dzddx  = inv_detJ * ( pfx[0] * dzv0
+                      + pfx[1] * dzv1
+                      + pfx[2] * dzv2
+                      + pfx[3] * dzv3 );
 
-  dzddy  = inv_detJ * ( pfy[0] * (zvel[0]-zvel[6])
-                      + pfy[1] * (zvel[1]-zvel[7])
-                      + pfy[2] * (zvel[2]-zvel[4])
-                      + pfy[3] * (zvel[3]-zvel[5]) );
+  dxddz  = inv_detJ * ( pfz[0] * dxv0
+                      + pfz[1] * dxv1
+                      + pfz[2] * dxv2
+                      + pfz[3] * dxv3 );
 
-  dyddz  = inv_detJ * ( pfz[0] * (yvel[0]-yvel[6])
-                      + pfz[1] * (yvel[1]-yvel[7])
-                      + pfz[2] * (yvel[2]-yvel[4])
-                      + pfz[3] * (yvel[3]-yvel[5]) );
+  dzddy  = inv_detJ * ( pfy[0] * dzv0
+                      + pfy[1] * dzv1
+                      + pfy[2] * dzv2
+                      + pfy[3] * dzv3 );
+
+  dyddz  = inv_detJ * ( pfz[0] * dyv0
+                      + pfz[1] * dyv1
+                      + pfz[2] * dyv2
+                      + pfz[3] * dyv3 );
+
   d[5]  = ( dxddy + dyddx ) * HALF;
   d[4]  = ( dxddz + dzddx ) * HALF;
   d[3]  = ( dzddy + dyddz ) * HALF;
@@ -1625,8 +1645,8 @@ void CalcKinematicsForElems(int *nodelist,
     CalcElemShapeFunctionDerivatives( x_local, y_local, z_local,
                                       B, &detJ );
 
-    CalcElemVelocityGrandient( xd_local, yd_local, zd_local,
-                               B, detJ, D );
+    CalcElemVelocityGradient( xd_local, yd_local, zd_local,
+                              B, detJ, D );
 
     // put velocity gradient quantities into their global arrays.
     dxx[k] = D[0];
@@ -1643,19 +1663,19 @@ int VolErr2(Domain *domain, int numElem)
   float *vnew = domain->vnew;
   float *vdovv = domain->vdov;
 
-  for (int k=0; k<numElem; ++k) {
+  for (int k=numElem; k>0; --k) {
     // calc strain rate and apply as raint (only done in FB element)
-    float vdov = dxx[k] + dyy[k] + dzz[k] ;
+    float vdov = *dxx + *dyy + *dzz ;
     float vdovthird = vdov * (ONE / 3.0f ) ;
 
     // make the rate of deformation tensor deviatoric
-    vdovv[k] = vdov ;
-    dxx[k] -= vdovthird ;
-    dyy[k] -= vdovthird ;
-    dzz[k] -= vdovthird ;
+    *vdovv++ = vdov ;
+    *dxx++ -= vdovthird ;
+    *dyy++ -= vdovthird ;
+    *dzz++ -= vdovthird ;
 
     // See if any volumes are negative, and take appropriate action.
-    if (vnew[k] <= ZERO)
+    if (*vnew++ <= ZERO)
     {
       return 1;
     }
@@ -2008,10 +2028,11 @@ void CalcMonotonicQForElems(Domain *domain)
 
 int Qerr(float *q, int numElem, float qstop)
 {
+  float *ql = q;
   float qstopl = qstop; // force register allocation
   int idx = -1;
   for (int i=0; i<numElem; ++i) {
-    if ( q[i] > qstopl ) {
+    if ( *ql++ > qstopl ) {
       idx = i ;
       // break ;
     }

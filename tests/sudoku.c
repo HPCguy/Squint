@@ -209,9 +209,13 @@ char *puzzle[20] = {
 void draw(char *puzzle, char *out)
 {
    for (int i=0; i<9; ++i) {
-      printf("%.9s     %.9s\n", &puzzle[i*9], &out[i*9]);
+      printf("%.3s %.3s %.3s    %.3s %.3s %.3s\n",
+         &puzzle[i*9], &puzzle[i*9+3], &puzzle[i*9+6],
+         &out[i*9],    &out[i*9+3],    &out[i*9+6]);
+      if (i % 3 == 2)
+         printf("\n");
    }
-   printf("\n");
+   printf("\n\n");
 }
 
 
