@@ -26,50 +26,13 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 
-#define SMALL_TBL_SZ 256
-
-#ifdef __MC__
-float strtof(char *s, char **e);
-char *strrchr(char *s, int c);
-#endif
-
-#ifdef SQUINT_SO
-int squint_opt(int *begin, int *end);
-#ifdef ARM64OS
-#include "squint.c"
-#endif
-#endif
-
-char *freep, *p, *lp; // current position in source code
-char *freedata, *data, *_data;   // data/bss pointer
-
-int *e, *le, *text; // current position in emitted IR code
-int *lastLEV;       // needed to close out functions
-char *idn, *idp;    // decouples ids from program source code
-char *idl, *idln;   // storage for func scope label names
-int *cas;           // case statement patch-up pointer
-int *def;           // default statement patch-up pointer
-int *brks;          // break statement patch-up pointer
-int *cnts;          // continue statement patch-up pointer
-int *rets;          // single function exit model
-int  swtc;          // !0 -> in a switch-stmt context
-int  brkc;          // !0 -> in a break-stmt context
-int  cntc;          // !0 -> in a continue-stmt context
-int *tsize;         // array (indexed by type) of type sizes
-int tnew;           // next available type
+int *n;             // current position in emitted abstract syntax tree
+                    // With an AST, the compiler is not limited to generate
+                    // code on the fly with parsing.
+                    // This capability allows function parameter code to be
+                    // emitted and pushed on the stack in the proper
+                    // right-to-left order.
 int tk;             // current token
-int sbegin;         // statement begin state.
-int deadzone;       // don't do inlining during dead code elimination
-int attq;           // attribute query such as dereference or sizeof
-int parg;           // attq -- assume passing deref var to func means it is set
-int inDecl;         // declaration statement context
-int pinlndef;       // parsing an inline-only function
-int tokloc;         // 0 = global scope, 1 = function scope
-                    // 2 = function scope, declaration in progress
-union conv {
-   int i;
-   float f;
-} tkv;              // current token value
 int ty;             // current expression type
                     // bit 0:1 - tensor rank, eg a[4][4][4]
                     // 0=scalar, 1=1d, 2=2d, 3=3d
@@ -78,29 +41,9 @@ int ty;             // current expression type
                     //   3d etype -- bit 0:10,11:20,21:30 [1024,1024,2048]
                     // bit 2:9 - type
                     // bit 10:11 - ptr level
-int compound;       // manage precedence of compound assign expressions
-int rtf, rtt;       // return flag and return type for current function
-int ld, maxld;      // function frame ptr -- argument index then local var
-int loc;            // separating point for arg vs local variables
-int line;           // current line number
-int src;            // print source and assembly flag
-int signed_char;    // use `signed char` for `char`
-int single_exit;    // one function exit point at end
-int elf;            // print ELF format
-int peephole;       // helper for peephole optimization
-int *n;             // current position in emitted abstract syntax tree
-                    // With an AST, the compiler is not limited to generate
-                    // code on the fly with parsing.
-                    // This capability allows function parameter code to be
-                    // emitted and pushed on the stack in the proper
-                    // right-to-left order.
-int lds[32], ldn;   // used to track scope level for duplicate local var defs
-int pplev, pplevt;  // preprocessor conditional level
-int ppactive;
-int oline, osize;   // for optimization suggestion
-char *oname;
-int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
-int ma = 1;         // prevent "modify argument" in functions
+inline void next();
+inline void fatal(char *msg);
+int *e, *le, *text; // current position in emitted IR code
 
 // max recursive inline levels
 #define INL_LEV 32
@@ -138,6 +81,61 @@ struct ident_s {
   *labt,         // tail ptr for label Ids
   *retlabel[INL_LEV], // label for end of inline function
   lab[MAX_LABEL];
+
+inline void gen(int *n);
+inline void expr(int lev);
+
+// types -- 4 scalar types, 1020 aggregate types, 4 tensor ranks, 8 ptr levels
+// bits 0-1 = tensor rank, 2-11 = type id, 12-14 = ptr level
+// 4 type ids are scalars: 0 = char/void, 1 = int, 2 = float, 3 = reserved
+enum { CHAR = 0, INT = 4, FLOAT = 8, ATOM_TYPE = 11,
+       PTR = 0x1000, PTR2 = 0x2000 };
+
+char *p, *lp, *freep; // current position in source code
+char *data, *freedata, *_data;   // data/bss pointer
+
+int *lastLEV;       // needed to close out functions
+char *idn, *idp;    // decouples ids from program source code
+char *idl, *idln;   // storage for func scope label names
+int *cas;           // case statement patch-up pointer
+int *def;           // default statement patch-up pointer
+int *brks;          // break statement patch-up pointer
+int *cnts;          // continue statement patch-up pointer
+int *rets;          // single function exit model
+int  swtc;          // !0 -> in a switch-stmt context
+int  brkc;          // !0 -> in a break-stmt context
+int  cntc;          // !0 -> in a continue-stmt context
+int *tsize;         // array (indexed by type) of type sizes
+int tnew;           // next available type
+int sbegin;         // statement begin state.
+int deadzone;       // don't do inlining during dead code elimination
+int attq;           // attribute query such as dereference or sizeof
+int parg;           // attq -- assume passing deref var to func means it is set
+int inDecl;         // declaration statement context
+int pinlndef;       // parsing an inline-only function
+int tokloc;         // 0 = global scope, 1 = function scope
+                    // 2 = function scope, declaration in progress
+union conv {
+   int i;
+   float f;
+} tkv;              // current token value
+int compound;       // manage precedence of compound assign expressions
+int rtf, rtt;       // return flag and return type for current function
+int ld, maxld;      // function frame ptr -- argument index then local var
+int loc;            // separating point for arg vs local variables
+int line;           // current line number
+int src;            // print source and assembly flag
+int signed_char;    // use `signed char` for `char`
+int single_exit;    // one function exit point at end
+int elf;            // print ELF format
+int peephole;       // helper for peephole optimization
+int lds[32], ldn;   // used to track scope level for duplicate local var defs
+int pplev, pplevt;  // preprocessor conditional level
+int ppactive;
+int oline, osize;   // for optimization suggestion
+char *oname;
+int btrue = 0;      // comparison "true" = ( btrue ? -1 : 1)
+int ma = 1;         // prevent "modify argument" in functions
 
 int mns;            // member namespace -- 1 = member lookup in progress
 int masgn;          // This variable is used to skip struct substitutions
@@ -344,19 +342,26 @@ enum {
    PHD,  /* 53 PeepHole Disable next assembly instruction in optimizer */
    PHF,  /* 54 Inform peephole optimizer a function call is beginning */
    PHR0, /* 55 Inform PeepHole optimizer that R0 holds a return value */
+   CBLK, /* 56 Statement boundary -- good place to store istream const */
 
    INVALID
 };
 
-// types -- 4 scalar types, 1020 aggregate types, 4 tensor ranks, 8 ptr levels
-// bits 0-1 = tensor rank, 2-11 = type id, 12-14 = ptr level
-// 4 type ids are scalars: 0 = char/void, 1 = int, 2 = float, 3 = reserved
-enum { CHAR = 0, INT = 4, FLOAT = 8, ATOM_TYPE = 11,
-       PTR = 0x1000, PTR2 = 0x2000 };
-
 // ELF generation
 char **plt_func_addr;
 char *freebuf;
+
+#ifdef __MC__
+float strtof(char *s, char **e);
+char *strrchr(char *s, int c);
+#endif
+
+#ifdef SQUINT_SO
+int squint_opt(int *begin, int *end);
+#ifdef ARM64OS
+#include "squint.c"
+#endif
+#endif
 
 char *append_strtab(char **strtab, char *str)
 {
@@ -445,8 +450,6 @@ int ef_getidx(char *name) // get cache index of external function
  ******             Lexer                    ******
  **************************************************/
 
-inline void expr(int lev);
-
 void eol2semi(char *ss) // preprocessor support
 {
    char *s;
@@ -469,23 +472,35 @@ void next()
 
 text_sub:
    while ((tl = *s)) {
+      int lower;
       ++s;
-      if ((tl >= 'a' && tl <= 'z') || (tl >= 'A' && tl <= 'Z') ||
+      if ((lower = (tl >= 'a' && tl <= 'z')) || (tl >= 'A' && tl <= 'Z') ||
           (tl == '_') || (tl == '$')) {
          pp = s - 1;
          while ((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
                 (*s >= '0' && *s <= '9') || (*s == '_') || (*s == '$'))
             tl = tl * 147 + *s++;
-         tl = (tl << 6) + (s - pp);  // hash plus symbol length
-         int nlen = s - pp;
 
-         for (il = sym; il < symk; ++il) { // check for keywords
-            if (tl == il->hash && il->name[nlen] == 0 &&
-                !memcmp(il->name, pp, nlen)) {
-               tl = il->tk; id = il;
-               goto ret;
+         int nlen = s - pp;
+         tl = (tl << 6) + nlen;  // hash plus symbol length
+
+         if (nlen >= 2 && nlen <= 8 &&
+             (lower && ((1 << (*pp-'a')) & 0x7e017e)) &&
+             (pp[1] >= 'a' && pp[1] <= 'z' &&
+              ((1 << (pp[1]-'a')) & 0x14a69b1))) {
+            // if (nlen >= 3 && (pp[2] >= 'a' && pp[2] <= 'z' &&
+            //     ((1 << (pp[2]-'a')) & 0x1e116ce))) {
+            //    goto not_a_keyword;
+            // }
+            for (il = sym; il < symk; ++il) { // check for keywords
+               if (tl == il->hash && il->name[nlen] == 0 &&
+                   !memcmp(il->name, pp, nlen)) {
+                  tl = il->tk; id = il;
+                  goto ret;
+               }
             }
          }
+// not_a_keyword:
          if (tokloc) {
             for (il = symlh; il < symlt; ++il) { // local ids
                if (tl == il->hash && il->name[nlen] == 0 &&
@@ -1998,8 +2013,10 @@ void gen(int *n)
       *++e = (n[1] >= PTR) ? LI : LC + (n[1] >> 2);
       break;
    case Loc: *++e = LEA; *++e = n[1]; break;       // get address of variable
-   case '{': gen((int *) n[1]); gen(n + 2); break; // parse AST expr or stmt
+   case '{': if (*e != CBLK) *++e = CBLK;
+             gen((int *) n[1]); gen(n + 2); break; // parse AST expr or stmt
    case Assign: // assign the value to variables
+      if (*e != CBLK) *++e = CBLK;
       gen((int *) n[2]); *++e = PSH; gen(n + 3); l = n[1] & 0xffff;
       // Add SC/SI instruction to save value in register to variable address
       // held on stack.
@@ -2093,6 +2110,7 @@ void gen(int *n)
    case Func:
    case Syscall:
    case ClearCache:
+      if (*e != CBLK) *++e = CBLK;
       b = (int *) n[1]; k = b ? n[3] : 0;
       if (k) {
          if (i == Syscall) {
@@ -2578,7 +2596,7 @@ do_typedef:
                           "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
                           "ADDF SUBF MULF DIVF FTOI ITOF "
                           "EQF  NEF  GEF  LTF  GTF  LEF  FNEG FABS SQRT "
-                          "SYSC CLCA VENT VLEV PHD  PHF  PHR0" [*++le * 5]);
+                          "SYSC CLCA VENT VLEV PHD  PHF  PHR0 CBLK" [*++le * 5]);
                   if (*le < ADJ) {
                      struct ident_s *scan;
                      ++le;
@@ -3084,7 +3102,7 @@ int addcnst(int val)
 
 int *codegen(int *jitmem, int *jitmap)
 {
-   int i, ii, jj, kk, tmp, c, ni, nf, sz;
+   int i, ii, jj, kk, tmp, c, ni, nf, sz, cnstBlk;
    int *je, *tje;    // current position in emitted native code
    int *immloc, *immlocv, *il, *ill, *ivv;
    int *rMap;
@@ -3099,6 +3117,7 @@ int *codegen(int *jitmem, int *jitmap)
    // first pass: emit native code
    int *pc = text + 1; je = jitmem; line = 0;
    while (pc <= e) {
+      cnstBlk = 0; // mark the "optimal" points to insert a const block
       i = *pc;
       // Store mapping from IR index to native instruction buffer location
       // "pc - text" gets the index of IR.
@@ -3386,6 +3405,7 @@ int *codegen(int *jitmem, int *jitmap)
       case PHD:  *je++ = 0xe1a01001; break;      // mov r1, r1
       case PHF:  *je++ = 0xe1a0b00b; break;      // mov fp, fp
       case PHR0: *je++ = 0xe1a0d00d; break;      // mov sp, sp
+      case CBLK: cnstBlk = 1;        break;
       default:
          if ((EQ <= i && i <= LE) || (EQF <= i && i <= LEF)) {
             if (EQ <= i && i <= LE) {
@@ -3421,16 +3441,23 @@ int *codegen(int *jitmem, int *jitmap)
             (i == JMP && // start looking for opportunities
              ((imm0 && je > imm0 + 768) || (immf0 && je > immf0 + 128))))
             genpool = 1;
-         else if ( je > imm0 + 896 || // pad for optimizer
-                   (immf0 && je > immf0 + 192) ) {
-            tje = je - 1;
-            if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
-                *tje != 0xe1a0b00b &&    // PHR0: mov r13, r13
-                (*tje & 0x000f0000) != 0x000f0000 && // pc-relative mem op
-                (*tje & 0xffb00f00) != 0xed900a00 && // vldr
-                (*tje & 0xfff00ff0) != 0xe0000090 && // mul
-                (*tje & 0xf0000000) == 0xe0000000) { // conditional or branch
+         else if ( je > imm0 + 928 || (immf0 && je > immf0 + 200) ) {
+            if (cnstBlk) { // potential const block insertion point
                tje = je++; genpool = 2;
+            }
+            else if ( je > imm0 + 972 || (immf0 && je > immf0 + 228) ) {
+               tje = je - 1;
+               if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
+                   *(tje-1) != 0xe1a01001 &&
+                   *tje != 0xe1a0b00b &&    // PHR0: mov r13, r13
+                   (*tje & 0x000f0000) != 0x000f0000 && // pc-relative mem op
+                   (*tje & 0xffb00f00) != 0xed900a00 && // vldr
+                   (*tje & 0xfff00ff0) != 0xe0000090 && // mul
+                   *tje != 0xe52d0004 &&    // push r0
+                   *tje != 0xed2d0a01 &&    // vpush s0
+                   (*tje & 0xf0000000) == 0xe0000000) { // conditional or branch
+                  tje = je++; genpool = 2;
+               }
             }
          }
       }
@@ -3715,6 +3742,8 @@ enum {
    PAGE_SIZE = 0x1000, PHDR_NUM = 4, SHDR_NUM = 11,
    DYN_NUM = 16
 };
+
+#define SMALL_TBL_SZ 256
 
 void elf32_init(int poolsz)
 {
