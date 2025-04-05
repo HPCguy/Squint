@@ -672,42 +672,54 @@ void CollectDomainNodesToElemNodes(float *x, float *y, float *z,
                                    int *elemToNode,
                                    float *elemX, float *elemY, float *elemZ)
 {
-   int nd0i := elemToNode[0] ;
-   int nd1i := elemToNode[1] ;
-   int nd2i := elemToNode[2] ;
-   int nd3i := elemToNode[3] ;
-   int nd4i := elemToNode[4] ;
-   int nd5i := elemToNode[5] ;
-   int nd6i := elemToNode[6] ;
-   int nd7i := elemToNode[7] ;
-
-   elemX[0] = x[nd0i];
-   elemX[1] = x[nd1i];
-   elemX[2] = x[nd2i];
-   elemX[3] = x[nd3i];
-   elemX[4] = x[nd4i];
-   elemX[5] = x[nd5i];
-   elemX[6] = x[nd6i];
-   elemX[7] = x[nd7i];
-
-   elemY[0] = y[nd0i];
-   elemY[1] = y[nd1i];
-   elemY[2] = y[nd2i];
-   elemY[3] = y[nd3i];
-   elemY[4] = y[nd4i];
-   elemY[5] = y[nd5i];
-   elemY[6] = y[nd6i];
-   elemY[7] = y[nd7i];
-
-   elemZ[0] = z[nd0i];
-   elemZ[1] = z[nd1i];
-   elemZ[2] = z[nd2i];
-   elemZ[3] = z[nd3i];
-   elemZ[4] = z[nd4i];
-   elemZ[5] = z[nd5i];
-   elemZ[6] = z[nd6i];
-   elemZ[7] = z[nd7i];
-
+   {
+      int nd0i = elemToNode[0] ;
+      elemX[0] = x[nd0i];
+      elemY[0] = y[nd0i];
+      elemZ[0] = z[nd0i];
+   }
+   {
+      int nd1i = elemToNode[1] ;
+      elemX[1] = x[nd1i];
+      elemY[1] = y[nd1i];
+      elemZ[1] = z[nd1i];
+   }
+   {
+      int nd2i = elemToNode[2] ;
+      elemX[2] = x[nd2i];
+      elemY[2] = y[nd2i];
+      elemZ[2] = z[nd2i];
+   }
+   {
+      int nd3i = elemToNode[3] ;
+      elemX[3] = x[nd3i];
+      elemY[3] = y[nd3i];
+      elemZ[3] = z[nd3i];
+   }
+   {
+      int nd4i = elemToNode[4] ;
+      elemX[4] = x[nd4i];
+      elemY[4] = y[nd4i];
+      elemZ[4] = z[nd4i];
+   }
+   {
+      int nd5i = elemToNode[5] ;
+      elemX[5] = x[nd5i];
+      elemY[5] = y[nd5i];
+      elemZ[5] = z[nd5i];
+   }
+   {
+      int nd6i = elemToNode[6] ;
+      elemX[6] = x[nd6i];
+      elemY[6] = y[nd6i];
+      elemZ[6] = z[nd6i];
+   }
+   {
+      int nd7i = elemToNode[7] ;
+      elemX[7] = x[nd7i];
+      elemY[7] = y[nd7i];
+      elemZ[7] = z[nd7i];
+   }
 }
 
 #define twelfth 0.0833333333f
