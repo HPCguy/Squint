@@ -174,7 +174,7 @@ struct member_s {
 // tokens and classes (operators last and in precedence order)
 // ( >= 128 so not to collide with ASCII-valued tokens)
 enum {
-   Func=128, Syscall, Main, ClearCache, Fneg, Fabs, Sqrt,
+   Func=128, Syscall, Main, ClearCache, Fneg, Fabs, Sqrt, Clz,
    Glo, Par, Loc, Keyword, Id, Load,
    Enter, Num, NumF, TypeId,
    Typedef, Enum, Char, Int, Float, Struct, Union,
@@ -183,7 +183,7 @@ enum {
    Switch, Case, Default, Else, Inln, Label,
    Alias, // operator :=, text substitution for simple memory address
    Assign, // operator =, keep Assign as highest priority operator
-   OrAssign, XorAssign, AndAssign, ShlAssign, ShrAssign, // |=, ^=, &=, <<=, >>=
+   OrAssign, XorAssign, AndAssign, ShlAssign, ShrAssign, // |=,^=,&=, <<=, >>=
    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, // +=, -=, *=, /=, %=
    Cond, // operator: ?
    Lor, Lan, Or, Xor, And,         // operator: ||, &&, |, ^, &
@@ -333,16 +333,17 @@ enum {
    FNEG, /* 46 float fnegf(float); returns -arg */
    FABS, /* 47 float fabsf(float); */
    SQRT, /* 48 float sqrtf(float); */
-   SYSC, /* 49 system call */
-   CLCA, /* 50 clear cache, used by JIT compilation */
+   CLZ,  /* 49 int clz(int); */
+   SYSC, /* 50 system call */
+   CLCA, /* 51 clear cache, used by JIT compilation */
 
-   VENT, /* 51 Needed fo Varargs ABI, which requires 8-byte stack align */
-   VLEV, /* 52 */
+   VENT, /* 52 Needed fo Varargs ABI, which requires 8-byte stack align */
+   VLEV, /* 53 */
 
-   PHD,  /* 53 PeepHole Disable next assembly instruction in optimizer */
-   PHF,  /* 54 Inform peephole optimizer a function call is beginning */
-   PHR0, /* 55 Inform PeepHole optimizer that R0 holds a return value */
-   CBLK, /* 56 Statement boundary -- good place to store istream const */
+   PHD,  /* 54 PeepHole Disable next assembly instruction in optimizer */
+   PHF,  /* 55 Inform peephole optimizer a function call is beginning */
+   PHR0, /* 56 Inform PeepHole optimizer that R0 holds a return value */
+   CBLK, /* 57 Statement boundary -- good place to store istream const */
 
    INVALID
 };
@@ -608,7 +609,7 @@ new_block_def:
             if (tl == Id) {
                struct ident_s *ndd = id;
                int *nbase = n;
-               if (ndd->class != 0) fatal("can't redefine preprocessor symbol");
+               if (ndd->class) fatal("can't redefine preprocessor symbol");
                while (*s == ' ') ++s;
                if (*s == '\n') {    // no value assigned
                   ndd->class = Num; ndd->type = INT;
@@ -725,7 +726,7 @@ new_block_def:
       case '|': if (*s == '|') { ++s; tl = Lor; }
                 else if (*s == '=') { ++s; tl = OrAssign; }
                 else tl = Or; goto ret;
-      case '^': if (*s == '=') { ++s; tl = XorAssign; } else tl = Xor; goto ret;
+      case '^': if (*s == '=') { ++s; tl = XorAssign; } else tl=Xor; goto ret;
       case '%': if (*s == '=') { ++s; tl = ModAssign; }
                 else tl = Mod; goto ret;
       case '?': tl = Cond; goto ret;
@@ -975,7 +976,7 @@ do_inln_func:
              d->tsub == 0 && (d->flags & 1) == 0) { // lib func prototype
             goto resolve_fnproto;
          }
-         if (d->class < Func || d->class > Sqrt) {
+         if (d->class < Func || d->class > Clz) {
             if (d->class != 0) fatal("bad function call");
             d->type = INT;
             d->ftype[0] = d->ftype[1] = 0;
@@ -1003,7 +1004,7 @@ resolve_fnproto:
             if (fidx == numfspec || numpts == INL_LEV) inln_func = 0; // warn?
             else { tsi = 0; saven = n; }
          }
-         if (peephole && (d->class < Fneg || d->class > Sqrt) && !inln_func) {
+         if (peephole && (d->class < Fneg || d->class > Clz) && !inln_func) {
             *--n = Phf; c = n;
          }
          parg = 1;
@@ -1856,7 +1857,8 @@ mod1_to_mul0:
             if (dim && tk != Bracket) { // ptr midway for partial subscripting
               t += PTR*(ii+1); doload = 0; break;
             }
-            next(); expr(Assign); if (ty >= FLOAT) fatal("non-int array index");
+            next(); expr(Assign);
+            if (ty >= FLOAT) fatal("non-int array index");
             if (tk != ']') fatal("close bracket expected");
             c = n; next();
             if (dim) {
@@ -2156,7 +2158,8 @@ void gen(int *n)
       break;
    case Fneg:
    case Fabs:
-   case Sqrt: b = (int *) n[1]; gen(b + 1); *++e = n[2]; break;
+   case Sqrt:
+   case Clz:  b = (int *) n[1]; gen(b + 1); *++e = n[2]; break;
    case While:
    case DoWhile:
       if (i == While && n[3] != 2) { *++e = JMP; a = ++e; }
@@ -2219,7 +2222,7 @@ void gen(int *n)
    case Goto:
       label = (struct ident_s *) n[1];
       *++e = JMP; *++e = label->val;
-      if (label->class == 0) label->val = (int) e; // Define label address later
+      if (label->class == 0) label->val = (int) e; // Def label address later
       break;
    case Default: def = e + 1; gen((int *) n[1]); break;
    case Return:
@@ -2590,13 +2593,14 @@ do_typedef:
                while (le < e) {
                   int off = le - base; // Func IR instruction memory offset
                   printf("%04d: %8.4s", off,
-                        & "LEA  IMM  IMMF JMP  JSR  BZ   BNZ  ENT  ADJ  LEV  "
-                          "PSH  PSHF LC   LI   LF   SC   SI   SF   "
-                          "OR   XOR  AND  EQ   NE   GE   LT   GT   LE   "
-                          "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
-                          "ADDF SUBF MULF DIVF FTOI ITOF "
-                          "EQF  NEF  GEF  LTF  GTF  LEF  FNEG FABS SQRT "
-                          "SYSC CLCA VENT VLEV PHD  PHF  PHR0 CBLK" [*++le * 5]);
+                       & "LEA  IMM  IMMF JMP  JSR  BZ   BNZ  ENT  ADJ  LEV  "
+                         "PSH  PSHF LC   LI   LF   SC   SI   SF   "
+                         "OR   XOR  AND  EQ   NE   GE   LT   GT   LE   "
+                         "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
+                         "ADDF SUBF MULF DIVF FTOI ITOF "
+                         "EQF  NEF  GEF  LTF  GTF  LEF  "
+                         "FNEG FABS SQRT CLZ  "
+                         "SYSC CLCA VENT VLEV PHD  PHF  PHR0 CBLK" [*++le *5]);
                   if (*le < ADJ) {
                      struct ident_s *scan;
                      ++le;
@@ -3111,6 +3115,7 @@ int *codegen(int *jitmem, int *jitmap)
    immloc = il = (int *) malloc(1024 * sizeof(int));
    int *iv = (int *) malloc(1024 * sizeof(int));
    immlocv = iv;
+   int  imm = 0 ;
    int *imm0 = 0;
    int *immf0 = 0;
 
@@ -3133,9 +3138,15 @@ int *codegen(int *jitmem, int *jitmap)
       case LEA:
          tmp = *pc++;
          if (tmp >= 64 || tmp <= -64) {
-            if (!imm0) imm0 = je;
-            *il++ = (int) (je++); *iv++ = addcnst(tmp * 4);
-            *je++ = 0xe08b0000;   // add r0, fp, r0
+            if (!imm0) { imm = 1; imm0 = je; }
+            if (tmp >= 64) {
+               *il++ = (int) (je++); *iv++ = addcnst(tmp * 4);
+               *je++ = 0xe08b0000;   // add r0, fp, r0
+            }
+            else {
+               *il++ = (int) (je++); *iv++ = addcnst(-tmp * 4);
+               *je++ = 0xe04b0000;   // sub r0, fp, r0
+            }
          }
          else if (tmp >= 0)
             *je++ = 0xe28b0000 | tmp * 4;     // add r0, fp, #(tmp)
@@ -3149,14 +3160,14 @@ int *codegen(int *jitmem, int *jitmap)
          else if (-256 <= tmp && tmp < 0)
             *je++ = 0xe3e00000 + -(tmp+1);    // mvn r0, #tmp
          else {
-             if (!imm0) imm0 = je;
+             if (!imm0) { imm = 1; imm0 = je; }
              *il++ = (int) (je++); *iv++ = addcnst(tmp);
          }
          break;
       case IMMF:
          tmp = (int) *pc++;
          if (tmp == 0) tmp = 1; // special handling for FP 0.0
-         if (!imm0) imm0 = je; if (!immf0) immf0 = je;
+         if (!immf0) { imm = 1; immf0 = je; }
          *il++ = (int) je++ + 2; *iv++ = addcnst(tmp);
          break;
       case JMP:
@@ -3168,7 +3179,7 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0xe3500000; pc++; je++;      // cmp r0, #0
          break;
       case ENT:
-         *je++ = 0xe92d4800; *je++ = 0xe28db000; // push {fp,lr}; add fp, sp, #0
+         *je++ = 0xe92d4800; *je++ = 0xe28db000; // push {fp,lr}; add fp,sp,#0
          ii = c = 0; tmp = 4 * (*pc++);
          while (tmp >= 255) { c |= tmp & 3; tmp >>= 2; ++ii; }
          tmp += (c ? 1 : 0); if ((tmp << (2*ii)) >= 32768 || tmp < 0) {
@@ -3181,10 +3192,10 @@ int *codegen(int *jitmem, int *jitmap)
          break;
       case ADJ:
          if (*pc & 0x3f)
-            *je++ = 0xe28dd000 + ( *pc++ & 0x3f) * 4; // add sp, sp, #(tmp * 4)
+            *je++ = 0xe28dd000 + ( *pc++ & 0x3f) * 4; // add sp,sp,#(tmp*4)
          break;
       case LEV:
-         *je++ = 0xe28bd000; *je++ = 0xe8bd8800; // add sp, fp, #0; pop {fp, pc}
+         *je++ = 0xe28bd000; *je++ = 0xe8bd8800; // add sp,fp,#0; pop {fp,pc}
          break;
       case PSH:
          *je++ = 0xe52d0004;                     // push {r0}
@@ -3193,7 +3204,8 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0xed2d0a01;                     // push {s0}
          break;
       case LC:
-         *je++ = 0xe5d00000; if (signed_char)  *je++ = 0xe6af0070; // ldrb r0, [r0]
+         *je++ = 0xe5d00000;                     // ldrb r0,[r0]
+         if (signed_char) *je++ = 0xe6af0070;    // sxtb r0, r0
          break;
       case LI:
          *je++ = 0xe5900000;                     // ldr r0, [r0]
@@ -3246,7 +3258,8 @@ int *codegen(int *jitmem, int *jitmap)
          *je++ = 0xe49d0004 | (0 << 12);        // pop r0
          if (peephole) *je++ = 0xe1a01001;      // mov r1, r1
          *je++ = 0xe28fe000;                    // add lr, pc, #0
-         if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = addcnst(tmp);
+         if (!imm0) { imm = 1; imm0 = je; }
+         *il++ = (int) je++ + 1; *iv++ = addcnst(tmp);
          // ARM EABI modulo helper function produces quotient in r0
          // and the remainder in r1.
          if (i == MOD) {
@@ -3361,7 +3374,8 @@ int *codegen(int *jitmem, int *jitmap)
          }
          if (peephole) *je++ = 0xe1a01001;     // mov r1, r1
          *je++ = 0xe28fe000;                   // add lr, pc, #0
-         if (!imm0) imm0 = je; *il++ = (int) je++ + 1; *iv++ = addcnst(tmp);
+         if (!imm0) { imm = 1; imm0 = je; }
+         *il++ = (int) je++ + 1; *iv++ = addcnst(tmp);
          if (isPrtf) {
             if (sz > 4) *je++ = 0xe28dd000 | (sz - 4)*4; // add sp, sp, #off
             free(rMap);
@@ -3384,6 +3398,7 @@ int *codegen(int *jitmem, int *jitmap)
       case FNEG: *je++ = 0xeeb10a40; break;      // fnegs  s0, s0
       case FABS: *je++ = 0xeeb00ac0; break;      // fabss  s0, s0
       case SQRT: *je++ = 0xeeb10ac0; break;      // fsqrts s0, s0
+      case CLZ:  *je++ = 0xe1600010; break;      // clz    r0, r0
       case VENT:
          if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
          *je++ = 0xe08d0000; // add r0, sp, r0
@@ -3412,7 +3427,7 @@ int *codegen(int *jitmem, int *jitmap)
                *je++ = 0xe49d1004; *je++ = 0xe1510000; // pop {r1}; cmp r1, r0
             }
             else {
-               *je++ = 0xecfd0a01; *je++ = 0xeef40ac0; // pop {s1}; vcmpe s1, s0
+               *je++ = 0xecfd0a01; *je++ = 0xeef40ac0; // pop {s1}; vcmpe s1,s0
                *je++ = 0xeef1fa10; i -= (EQF - EQ);    // vmrs APSR_nzcv, fpscr
                if (*pc == FTOI) *pc = PHR0;
             }
@@ -3436,16 +3451,17 @@ int *codegen(int *jitmem, int *jitmap)
       }
 
       int genpool = 0;
-      if (imm0) {
+      if (imm) {
          if ((i == LEV && (pc == (e+1) || *pc == ENT)) ||
             (i == JMP && // start looking for opportunities
              ((imm0 && je > imm0 + 768) || (immf0 && je > immf0 + 128))))
             genpool = 1;
-         else if ( je > imm0 + 928 || (immf0 && je > immf0 + 200) ) {
+         else if ((imm0 && je > imm0 + 928) || (immf0 && je > immf0 + 200)) {
             if (cnstBlk) { // potential const block insertion point
                tje = je++; genpool = 2;
             }
-            else if ( je > imm0 + 972 || (immf0 && je > immf0 + 228) ) {
+            else if ((imm0 && je > imm0 + 972) ||
+                     (immf0 && je > immf0 + 228) ) {
                tje = je - 1;
                if (*tje != 0xe1a01001 &&    // NOP : mov r1, r1
                    *(tje-1) != 0xe1a01001 &&
@@ -3455,7 +3471,7 @@ int *codegen(int *jitmem, int *jitmap)
                    (*tje & 0xfff00ff0) != 0xe0000090 && // mul
                    *tje != 0xe52d0004 &&    // push r0
                    *tje != 0xed2d0a01 &&    // vpush s0
-                   (*tje & 0xf0000000) == 0xe0000000) { // conditional or branch
+                   (*tje & 0xf0000000) == 0xe0000000) { // no cond or branch
                   tje = je++; genpool = 2;
                }
             }
@@ -3483,7 +3499,7 @@ int *codegen(int *jitmem, int *jitmap)
                if ((int) (je + *ivv) > (tmp + 255*4 + 8))
                   die("codegen: float constant too far");
                // vldr s0, [pc, #..]
-               *((int *)tmp) = 0xed9f0a00 | (((int) (je + *ivv) - tmp - 8) >> 2);
+               *((int *)tmp) = 0xed9f0a00 | (((int) (je+*ivv) - tmp - 8) >> 2);
             } else {
                // ldr r0, [pc, #..]
                *(int *) tmp = 0xe59f0000 | ((int) (je + *ivv) - tmp - 8);
@@ -3495,7 +3511,7 @@ int *codegen(int *jitmem, int *jitmap)
             tmp = ((int) je - (int) tje - 8) >> 2;
             *tje = 0xea000000 | (tmp & 0x00ffffff); // b #(je)
          }
-         imm0 = immf0 = 0; genpool = 0;
+         imm0 = immf0 = 0; imm = genpool = 0;
          iv = immlocv; il = immloc; nicnst = 0;
       }
    }
@@ -3727,7 +3743,7 @@ int gen_sym(char *ptr, int name, char info,
 
 int append_func_sym(char **sdata, int name)
 {
-   int idx = gen_sym(*sdata, name, ELF32_ST_INFO(STB_GLOBAL, STT_FUNC), 0, 0, 0);
+   int idx = gen_sym(*sdata,name, ELF32_ST_INFO(STB_GLOBAL,STT_FUNC) ,0,0,0);
    *sdata += SYM_ENT_SIZE;
    return idx;
 }
@@ -4177,7 +4193,7 @@ int main(int argcc, char **argvv)
    p = "typedef enum char int float struct union "
        "sizeof return goto break continue "
        "if do while for switch case default else inline "
-       "void main __clear_cache fnegf fabsf sqrtf";
+       "void main __clear_cache fnegf fabsf sqrtf clz";
 
    // call "next" to create symbol table entry.
    // store the keyword's token type in the symbol table entry's "tk" field.
@@ -4197,6 +4213,8 @@ int main(int argcc, char **argvv)
            id->val = FABS; id->ftype[0] = 0x1041;
    next(); id->class = Sqrt; id->type = FLOAT;
            id->val = SQRT; id->ftype[0] = 0x1041;
+   next(); id->class = Clz; id->type = INT;
+           id->val = CLZ; id->ftype[0] = 1;
 
    if (!(freedata = _data = data = (char *) malloc(poolsz)))
       printf("could not allocat data area");
