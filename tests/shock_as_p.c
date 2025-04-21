@@ -276,7 +276,7 @@ int main(void)
    float time = 0.0f;
    float dx = 1.0f / (float) numElems;
    float dt = 0.4f * dx;
-   int currCycle = 0;
+   int currCycle;
 
    for (currCycle=0; currCycle<numTotalCycles; ++currCycle)
    {

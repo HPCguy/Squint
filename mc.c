@@ -358,7 +358,7 @@ char *strrchr(char *s, int c);
 #endif
 
 #ifdef SQUINT_SO
-int squint_opt(int *begin, int *end);
+int *squint_opt(int *begin, int *end);
 #ifdef ARM64OS
 #include "squint.c"
 #endif
@@ -3842,9 +3842,11 @@ int elf32(int poolsz, int *main, int elf_fd)
    char *je = (char *) codegen((int *) (code + start_stub_size), jitmap);
    if (!je) return 1;
    if ((int *) je >= jitmap) die("elf32: jitmem too small");
+   *((int *) (code + 0x44)) =
+      reloc_bl(jitmap[main - text] - (int) (stub_end - 3));
 
 #ifdef SQUINT_SO
-   if (peephole) squint_opt((int *)code, (int *) je);
+   if (peephole) je = (char *) squint_opt((int *)code, (int *) je);
 #endif
 
    // elf32_hdr
@@ -4081,14 +4083,16 @@ int elf32(int poolsz, int *main, int elf_fd)
    }
    if ((int *) je >= jitmap) die("elf32: jitmem too small");
 
-#ifdef SQUINT_SO
-   if (peephole) squint_opt((int *)code, (int *) je);
-#endif
-
    // Relocate __libc_start_main() and main().
-   *((int *) (code + 0x28)) = reloc_bl(plt_func_addr[0] - code_addr - 0x28);
+   *((int *) (code + 0x28)) = 0xebfffffe;
    *((int *) (code + 0x44)) =
       reloc_bl(jitmap[main - text] - (int) code - 0x44);
+
+#ifdef SQUINT_SO
+   if (peephole) je = (char *) squint_opt((int *)code, (int *) je);
+#endif
+
+   *((int *) (code + 0x28)) = reloc_bl(plt_func_addr[0] - code_addr - 0x28);
 
    // Copy the generated binary.
    memcpy(code_addr, code,  je - code);
