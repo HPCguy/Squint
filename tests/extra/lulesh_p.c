@@ -636,7 +636,7 @@ void IntegrateStressForElems(int *nodelist,
   for (int k=0; k<numElem; ++k) {
     float  B[3][8] ;// shape function derivatives
 
-    elemNodes = &nodelist[8*k];
+    elemNodes = &nodelist[k*8];
 
     {
       float  x_local[8] ;
@@ -1062,7 +1062,7 @@ void CalcFBHourglassForceForElems(int * nodelist,
 /*    compute the hourglass modes */
 
    for (int i2=0; i2<numElem; ++i2) {
-      int i3=8*i2;
+      int i3=i2*8;
       int *elemToNode = &nodelist[i3];
       float hourgam[4][8];
 
@@ -1118,7 +1118,7 @@ void CalcHourglassControlForElems(Domain *domain, float *determ, float hgcoef)
 
    /* start loop over elements */
    for (int idx=0; idx<numElem; ++idx) {
-      int baseIdx = 8*idx;
+      int baseIdx = idx*8;
       float  x1[8],  y1[8],  z1[8] ;
       float pfx[8], pfy[8], pfz[8] ;
 
@@ -1622,7 +1622,7 @@ void CalcKinematicsForElems(int *nodelist,
     float detJ = ZERO ;
     float volume ;
     float relativeVolume ;
-    int * elemToNode = &nodelist[8*k] ;
+    int * elemToNode = &nodelist[k*8] ;
 
     float  x_local[8] ;
     float  y_local[8] ;
@@ -1743,7 +1743,7 @@ void CalcMonotonicQGradientsForElems(float *x, float *y, float *z,
       float dxj, dyj, dzj;
       float dxk, dyk, dzk;
 
-      int * elemToNode = &nodelist[8*i];
+      int * elemToNode = &nodelist[i*8];
       int n0 := elemToNode[0] ;
       int n1 := elemToNode[1] ;
       int n2 := elemToNode[2] ;
@@ -2276,8 +2276,11 @@ void CalcSoundSpeedForElems(int length, float *ss,
 
 void EvalCopy(float *p_old, float *p, int numElem)
 {
-  for (int zidx=0; zidx<numElem; ++zidx) {
-    p_old[zidx] = p[zidx] ;
+  int *save = (int *) p_old, *current = (int *)p;
+  if (numElem & 1) *save++ = *current++ ;
+  for (int zidx=numElem/2; zidx > 0; --zidx) {
+    *save++ = *current++ ;
+    *save++ = *current++ ;
   }
 }
 
@@ -2592,15 +2595,198 @@ void LagrangeLeapFrog(Domain *domain)
 
 }
 
+void InitMesh(Domain *d, int edgeElems, int edgeNodes)
+{
+   int domElems = d->numElem;
+   int domNodes = d->numNode;
+   int plane, row, col;
+   int i, j, nidx, zidx;
+
+   /* Basic Field Initialization */
+
+   for (i=0; i<domElems; ++i) {
+      d->e[i] = ZERO ;
+      d->p[i] = ZERO ;
+      d->q[i] = ZERO ;
+      d->v[i] = ONE ;
+   }
+
+   for (i=0; i<domNodes; ++i) {
+      d->xd[i] = ZERO ;
+      d->yd[i] = ZERO ;
+      d->zd[i] = ZERO ;
+   }
+
+   for (i=0; i<domNodes; ++i) {
+      d->xdd[i] = ZERO ;
+      d->ydd[i] = ZERO ;
+      d->zdd[i] = ZERO ;
+   }
+
+   /* initialize nodal coordinates */
+
+   nidx = 0 ;
+   float tz = ZERO ;
+   for (plane=0; plane<edgeNodes; ++plane) {
+      float ty = ZERO ;
+      for (row=0; row<edgeNodes; ++row) {
+         float tx = ZERO ;
+         for (col=0; col<edgeNodes; ++col) {
+            d->x[nidx] = tx ;
+            d->y[nidx] = ty ;
+            d->z[nidx] = tz ;
+            ++nidx ;
+            // tx += ds ; /* may accumulate roundoff... */
+            tx = 1.125f*(float)(col+1)/(float)(edgeElems) ;
+         }
+         // ty += ds ;  /* may accumulate roundoff... */
+         ty = 1.125f*(float)(row+1)/(float)(edgeElems) ;
+      }
+      // tz += ds ;  /* may accumulate roundoff... */
+      tz = 1.125f*(float)(plane+1)/(float)(edgeElems) ;
+   }
+
+
+   /* embed hexehedral elements in nodal point lattice */
+
+   nidx = 0 ;
+   zidx = 0 ;
+   for (plane=0; plane<edgeElems; ++plane) {
+      for (row=0; row<edgeElems; ++row) {
+         for (col=0; col<edgeElems; ++col) {
+            int *localNode = &d->nodelist[zidx*8] ;
+            localNode[0] = nidx                                       ;
+            localNode[1] = nidx                                   + 1 ;
+            localNode[2] = nidx                       + edgeNodes + 1 ;
+            localNode[3] = nidx                       + edgeNodes     ;
+            localNode[4] = nidx + edgeNodes*edgeNodes                 ;
+            localNode[5] = nidx + edgeNodes*edgeNodes             + 1 ;
+            localNode[6] = nidx + edgeNodes*edgeNodes + edgeNodes + 1 ;
+            localNode[7] = nidx + edgeNodes*edgeNodes + edgeNodes     ;
+            ++zidx ;
+            ++nidx ;
+         }
+         ++nidx ;
+      }
+      nidx += edgeNodes ;
+   }
+
+   /* initialize material parameters */
+   d->dtfixed = -1.0e-7f ;
+   d->deltatime = 1.0e-7f ;
+   d->deltatimemultlb = 1.1f ;
+   d->deltatimemultub = 1.2f ;
+   d->stoptime  = 1.0e-2f ;
+   d->dtcourant = 1.0e+20f ;
+   d->dthydro   = 1.0e+20f ;
+   d->dtmax     = 1.0e-2f ;
+   d->time    = ZERO ;
+   d->cycle   = 0 ;
+
+   d->e_cut = 1.0e-7f ;
+   d->p_cut = 1.0e-7f ;
+   d->q_cut = 1.0e-7f ;
+   d->u_cut = 1.0e-7f ;
+   d->v_cut = 1.0e-10f ;
+
+   d->hgcoef      = 3.0f ;
+   d->ss4o3       = 4.0f/3.0f ;
+
+   d->qstop              =  1.0e+12f ;
+   d->monoq_max_slope    =  ONE ;
+   d->monoq_limiter_mult =  2.0f ;
+   d->qlc_monoq          = HALF ;
+   d->qqc_monoq          = 2.0f/3.0f ;
+   d->qqc                = 2.0f ;
+
+   d->pmin =  ZERO ;
+   d->emin = -1.0e+15f ;
+
+   d->dvovmax =  0.1f ;
+
+   d->eosvmax =  1.0e+9f ;
+   d->eosvmin =  1.0e-9f ;
+
+   d->refdens =  ONE ;
+
+   /* initialize field data */
+   for (i=0; i<domNodes; ++i) {
+      d->nodalMass[i] = ZERO ;
+   }
+
+   /* deposit energy */
+   d->e[0] = 3.948746e+7f ;
+
+   /* set up symmetry nodesets */
+   nidx = 0 ;
+   for (i=0; i<edgeNodes; ++i) {
+      int planeInc = i*edgeNodes*edgeNodes ;
+      int rowInc   = i*edgeNodes ;
+      for (j=0; j<edgeNodes; ++j) {
+         d->symmX[nidx] = planeInc + j*edgeNodes ;
+         d->symmY[nidx] = planeInc + j ;
+         d->symmZ[nidx] = rowInc   + j ;
+         ++nidx ;
+      }
+   }
+
+   /* set up elemement connectivity information */
+   d->lxim[0] = 0 ;
+   for (i=1; i<domElems; ++i) {
+      d->lxim[i]   = i-1 ;
+      d->lxip[i-1] = i ;
+   }
+   d->lxip[domElems-1] = domElems-1 ;
+
+   for (i=0; i<edgeElems; ++i) {
+      d->letam[i] = i ;
+      d->letap[domElems-edgeElems+i] = domElems-edgeElems+i ;
+   }
+   for (i=edgeElems; i<domElems; ++i) {
+      d->letam[i] = i-edgeElems ;
+      d->letap[i-edgeElems] = i ;
+   }
+
+   for (i=0; i<edgeElems*edgeElems; ++i) {
+      d->lzetam[i] = i ;
+      d->lzetap[domElems-edgeElems*edgeElems+i] =
+         domElems - edgeElems*edgeElems + i ;
+   }
+   for (i=edgeElems*edgeElems; i<domElems; ++i) {
+      d->lzetam[i] = i - edgeElems*edgeElems ;
+      d->lzetap[i-edgeElems*edgeElems] = i ;
+   }
+
+   /* set up boundary condition information */
+   for (i=0; i<domElems; ++i) {
+      d->elemBC[i] = 0 ;  /* clear BCs by default */
+   }
+
+   /* faces on "external" boundaries will be */
+   /* symmetry plane or free surface BCs */
+   for (i=0; i<edgeElems; ++i) {
+      int planeInc = i*edgeElems*edgeElems ;
+      int rowInc   = i*edgeElems ;
+      for (j=0; j<edgeElems; ++j) {
+         d->elemBC[planeInc+j*edgeElems] |= XI_M_SYMM ;
+         d->elemBC[planeInc+j*edgeElems+edgeElems-1] |= XI_P_FREE ;
+         d->elemBC[planeInc+j] |= ETA_M_SYMM ;
+         d->elemBC[planeInc+j+edgeElems*edgeElems-edgeElems] |= ETA_P_FREE ;
+         d->elemBC[rowInc+j] |= ZETA_M_SYMM ;
+         d->elemBC[rowInc+j+domElems-edgeElems*edgeElems] |= ZETA_P_FREE ;
+      }
+   }
+}
+
 int main(int argc, char *argv[])
 {
-   int i, j, lnode, plane, row, col;
-   float tx, ty, tz ;
-   int nidx, zidx ;
-   Domain domain ;
-
    int edgeElems = 20 ;
    int edgeNodes = edgeElems+1 ;
+   int domElems, domNodes;
+
+   Domain domain ;
+
+   fmaxf(ZERO, ZERO); // apply GCC magic to cut 8 sec off runtime
 
    /****************************/
    /*   Initialize Sedov Mesh  */
@@ -2615,8 +2801,8 @@ int main(int argc, char *argv[])
 
    domain.numNode = edgeNodes*edgeNodes*edgeNodes ;
 
-   int domElems = domain.numElem ;
-   int domNodes = domain.numNode ;
+   domElems = domain.numElem ;
+   domNodes = domain.numNode ;
 
    /*************************/
    /* allocate field memory */
@@ -2627,7 +2813,7 @@ int main(int argc, char *argv[])
    /*****************/
 
    /* elemToNode connectivity */
-   domain.nodelist = AllocateInt(8*domElems) ;
+   domain.nodelist = AllocateInt(domElems*8) ;
 
    /* elem connectivity through face */
    domain.lxim = AllocateInt(domElems) ;
@@ -2720,200 +2906,24 @@ int main(int argc, char *argv[])
    domain.delx_zeta = /* AllocateFloat(domElems) */ domain.delx_eta + domElems ;
    domain.vnew = AllocateFloat(domElems) ;
 
-   /* Basic Field Initialization */
+   InitMesh(&domain, edgeElems, edgeNodes);
 
-   for (i=0; i<domElems; ++i) {
-      domain.e[i] = ZERO ;
-      domain.p[i] = ZERO ;
-      domain.q[i] = ZERO ;
-      domain.v[i] = ONE ;
-   }
-
-   for (i=0; i<domNodes; ++i) {
-      domain.xd[i] = ZERO ;
-      domain.yd[i] = ZERO ;
-      domain.zd[i] = ZERO ;
-   }
-
-   for (i=0; i<domNodes; ++i) {
-      domain.xdd[i] = ZERO ;
-      domain.ydd[i] = ZERO ;
-      domain.zdd[i] = ZERO ;
-   }
-
-   /* initialize nodal coordinates */
-
-   nidx = 0 ;
-   tz = fmaxf(ZERO, ZERO) ; // fmaxf call magically shaves 8 sec off runtime
-   for (plane=0; plane<edgeNodes; ++plane) {
-      ty = ZERO ;
-      for (row=0; row<edgeNodes; ++row) {
-         tx = ZERO ;
-         for (col=0; col<edgeNodes; ++col) {
-            domain.x[nidx] = tx ;
-            domain.y[nidx] = ty ;
-            domain.z[nidx] = tz ;
-            ++nidx ;
-            // tx += ds ; /* may accumulate roundoff... */
-            tx = 1.125f*(float)(col+1)/(float)(edgeElems) ;
-         }
-         // ty += ds ;  /* may accumulate roundoff... */
-         ty = 1.125f*(float)(row+1)/(float)(edgeElems) ;
-      }
-      // tz += ds ;  /* may accumulate roundoff... */
-      tz = 1.125f*(float)(plane+1)/(float)(edgeElems) ;
-   }
-
-
-   /* embed hexehedral elements in nodal point lattice */
-
-   nidx = 0 ;
-   zidx = 0 ;
-   for (plane=0; plane<edgeElems; ++plane) {
-      for (row=0; row<edgeElems; ++row) {
-         for (col=0; col<edgeElems; ++col) {
-            int * localNode = &domain.nodelist[8*zidx] ;
-            localNode[0] = nidx                                       ;
-            localNode[1] = nidx                                   + 1 ;
-            localNode[2] = nidx                       + edgeNodes + 1 ;
-            localNode[3] = nidx                       + edgeNodes     ;
-            localNode[4] = nidx + edgeNodes*edgeNodes                 ;
-            localNode[5] = nidx + edgeNodes*edgeNodes             + 1 ;
-            localNode[6] = nidx + edgeNodes*edgeNodes + edgeNodes + 1 ;
-            localNode[7] = nidx + edgeNodes*edgeNodes + edgeNodes     ;
-            ++zidx ;
-            ++nidx ;
-         }
-         ++nidx ;
-      }
-      nidx += edgeNodes ;
-   }
-
-   /* initialize material parameters */
-   domain.dtfixed = -1.0e-7f ;
-   domain.deltatime = 1.0e-7f ;
-   domain.deltatimemultlb = 1.1f ;
-   domain.deltatimemultub = 1.2f ;
-   domain.stoptime  = 1.0e-2f ;
-   domain.dtcourant = 1.0e+20f ;
-   domain.dthydro   = 1.0e+20f ;
-   domain.dtmax     = 1.0e-2f ;
-   domain.time    = ZERO ;
-   domain.cycle   = 0 ;
-
-   domain.e_cut = 1.0e-7f ;
-   domain.p_cut = 1.0e-7f ;
-   domain.q_cut = 1.0e-7f ;
-   domain.u_cut = 1.0e-7f ;
-   domain.v_cut = 1.0e-10f ;
-
-   domain.hgcoef      = 3.0f ;
-   domain.ss4o3       = 4.0f/3.0f ;
-
-   domain.qstop              =  1.0e+12f ;
-   domain.monoq_max_slope    =  ONE ;
-   domain.monoq_limiter_mult =  2.0f ;
-   domain.qlc_monoq          = HALF ;
-   domain.qqc_monoq          = 2.0f/3.0f ;
-   domain.qqc                = 2.0f ;
-
-   domain.pmin =  ZERO ;
-   domain.emin = -1.0e+15f ;
-
-   domain.dvovmax =  0.1f ;
-
-   domain.eosvmax =  1.0e+9f ;
-   domain.eosvmin =  1.0e-9f ;
-
-   domain.refdens =  ONE ;
-
-   /* initialize field data */
-   for (i=0; i<domNodes; ++i) {
-      domain.nodalMass[i] = ZERO ;
-   }
-
-   for (i=0; i<domElems; ++i) {
-      float  x_local[8] ;
-      float  y_local[8] ;
-      float  z_local[8] ;
-      int * elemToNode = &domain.nodelist[8*i] ;
-      for( lnode=0 ; lnode<8 ; ++lnode )
-      {
-        int gnode = elemToNode[lnode];
-        x_local[lnode] = domain.x[gnode];
-        y_local[lnode] = domain.y[gnode];
-        z_local[lnode] = domain.z[gnode];
-      }
+   // This code isn't in InitMesh since CalcElemVolume call disables optimizer.
+   for (int i=0; i<domElems; ++i) {
+      float x_local[8] ;
+      float y_local[8] ;
+      float z_local[8] ;
+      int *elemToNode = &domain.nodelist[i*8] ;
+      GatherNodes(elemToNode, domain.x, domain.y, domain.z,
+                  x_local, y_local, z_local);
 
       // volume calculations
       float volume = CalcElemVolume(x_local, y_local, z_local );
       domain.volo[i] = volume ;
       domain.elemMass[i] = volume ;
-      for (j=0; j<8; ++j) {
-         int idx = elemToNode[j] ;
-         domain.nodalMass[idx] += volume / 8.0f ;
-      }
-   }
-
-   /* deposit energy */
-   domain.e[0] = 3.948746e+7f ;
-
-   /* set up symmetry nodesets */
-   nidx = 0 ;
-   for (i=0; i<edgeNodes; ++i) {
-      int planeInc = i*edgeNodes*edgeNodes ;
-      int rowInc   = i*edgeNodes ;
-      for (j=0; j<edgeNodes; ++j) {
-         domain.symmX[nidx] = planeInc + j*edgeNodes ;
-         domain.symmY[nidx] = planeInc + j ;
-         domain.symmZ[nidx] = rowInc   + j ;
-         ++nidx ;
-      }
-   }
-
-   /* set up elemement connectivity information */
-   domain.lxim[0] = 0 ;
-   for (i=1; i<domElems; ++i) {
-      domain.lxim[i]   = i-1 ;
-      domain.lxip[i-1] = i ;
-   }
-   domain.lxip[domElems-1] = domElems-1 ;
-
-   for (i=0; i<edgeElems; ++i) {
-      domain.letam[i] = i ; 
-      domain.letap[domElems-edgeElems+i] = domElems-edgeElems+i ;
-   }
-   for (i=edgeElems; i<domElems; ++i) {
-      domain.letam[i] = i-edgeElems ;
-      domain.letap[i-edgeElems] = i ;
-   }
-
-   for (i=0; i<edgeElems*edgeElems; ++i) {
-      domain.lzetam[i] = i ;
-      domain.lzetap[domElems-edgeElems*edgeElems+i] = domElems-edgeElems*edgeElems+i ;
-   }
-   for (i=edgeElems*edgeElems; i<domElems; ++i) {
-      domain.lzetam[i] = i - edgeElems*edgeElems ;
-      domain.lzetap[i-edgeElems*edgeElems] = i ;
-   }
-
-   /* set up boundary condition information */
-   for (i=0; i<domElems; ++i) {
-      domain.elemBC[i] = 0 ;  /* clear BCs by default */
-   }
-
-   /* faces on "external" boundaries will be */
-   /* symmetry plane or free surface BCs */
-   for (i=0; i<edgeElems; ++i) {
-      int planeInc2 = i*edgeElems*edgeElems ;
-      int rowInc2   = i*edgeElems ;
-      for (j=0; j<edgeElems; ++j) {
-         domain.elemBC[planeInc2+j*edgeElems] |= XI_M_SYMM ;
-         domain.elemBC[planeInc2+j*edgeElems+edgeElems-1] |= XI_P_FREE ;
-         domain.elemBC[planeInc2+j] |= ETA_M_SYMM ;
-         domain.elemBC[planeInc2+j+edgeElems*edgeElems-edgeElems] |= ETA_P_FREE ;
-         domain.elemBC[rowInc2+j] |= ZETA_M_SYMM ;
-         domain.elemBC[rowInc2+j+domElems-edgeElems*edgeElems] |= ZETA_P_FREE ;
+      volume = volume / 8.0f;
+      for (int j=0; j<8; ++j) {
+         domain.nodalMass[elemToNode[j]] += volume ;
       }
    }
 

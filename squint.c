@@ -92,6 +92,8 @@ enum CPUregs { rSL = 10, rFP, rIP, rSP, rLR, rPC };
 
 enum search_dir { S_BACK = -1, S_FWD = 1 };
 
+enum relocateMode { IntraFunc = 0, InterFunc };
+
 int *cnst_bit;
 
 struct ia_s {
@@ -194,7 +196,7 @@ static void create_const_map(int *begin, int *end)
    /* initialize global variables */
    cbegin = begin;
    cnst_pool = calloc(end-begin, sizeof(struct pd_s)); // 1/4 prog size
-   cnst_bit  = (int *) calloc(1, ((end-begin)/8) + 1);
+   cnst_bit  = (int *) calloc(1, ((end-begin)/8) + 8);
    cnst_pool_size = 0;
 
    while (scan < end) {
@@ -3330,55 +3332,59 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
    int ii, jj, tmp, done;
    int currAddr;
    int currTarget;
-   int hasLink;
    int offset;
-   int align;
-
    int *scan, *packed;
+   int filter = ((mode == InterFunc) ? 0xff : 0x0f) << 24;
+   int modeMask = ((mode == InterFunc) ? 0xeb : 0x0a) << 24;
+   int *funcStart;
+
+   if (funcBegin[10] != 0xebfffffe)
+      funcStart = funcBegin;
+   else
+      funcStart = (mode == InterFunc) ? (funcBegin + 11) : funcBegin;
 
    struct pd_s *cremap;
    struct ia_s **inst;
    int lowc, highc;
    int cremap_size = 0;
 
-   // Relocate instruction stream consts
-   lowc  = find_const((funcBegin-cbegin)*4);
-   highc = find_const((funcEnd+1-cbegin)*4); // past end of func
+   if (mode == IntraFunc) {
+      // Relocate instruction stream consts
+      lowc  = find_const((funcBegin-cbegin)*4);
+      highc = find_const((funcEnd+1-cbegin)*4); // past end of func
 
-   for (ii=lowc; ii<highc; ++ii) {
-      if (cnst_pool[ii].inst == 0) {
-         pack_const(ii);
-         break;
+      for (ii=lowc; ii<highc; ++ii) {
+         if (cnst_pool[ii].inst == 0) {
+            pack_const(ii);
+            break;
+         }
       }
-   }
-   highc = find_const((funcEnd+1-cbegin)*4); // value can change after pack
+      highc = find_const((funcEnd+1-cbegin)*4); // value can change after pack
 
-   if (highc != lowc) {
-      if (highc == cnst_pool_size ||
-          cnst_pool[highc].data_addr > (funcEnd-cbegin)*4) {
-         --highc;
+      if (highc != lowc) {
+         if (highc == cnst_pool_size ||
+             cnst_pool[highc].data_addr > (funcEnd-cbegin)*4) {
+            --highc;
+         }
+         cremap_size = highc - lowc + 1;
+         cremap = calloc(cremap_size, sizeof(struct pd_s));
       }
-      cremap_size = highc - lowc + 1;
-      cremap = calloc(cremap_size, sizeof(struct pd_s));
    }
 
    /* count number of branches to relocate */
    int nopCount = 0;
    int branchCount = 0;
 
-   for (scan = funcBegin; scan < funcEnd; ++scan) {
-      while (scan < funcEnd && is_const(scan)) ++scan;
+   for (scan = funcStart; scan < funcEnd; ++scan) {
+      if (mode == IntraFunc)
+         while (scan < funcEnd && is_const(scan)) ++scan;
 
       // legal since rename_nop occurs before this call...
       if (*scan == NOP) {
          ++nopCount;
       }
-      else if ((*scan & 0x0e000000) == 0x0a000000) {
-         hasLink = *scan & (1<<24);
-         if ( ((mode == 0) && !hasLink) ||   // intra-function mode
-              ((mode != 0) &&  hasLink) ) {  // inter-function mode
-            ++branchCount;
-         }
+      else if ((*scan & filter) == modeMask) {
+         ++branchCount;
       }
    }
 
@@ -3390,21 +3396,18 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
 
       /* record all branch inst and target addresses */
       branchCount = 0;
-      for (scan = funcBegin; scan < funcEnd; ++scan) {
-         while (scan < funcEnd && is_const(scan)) ++scan;
+      for (scan = funcStart; scan < funcEnd; ++scan) {
+         if (mode == IntraFunc)
+            while (scan < funcEnd && is_const(scan)) ++scan;
 
-         if ((*scan & 0x0e000000) == 0x0a000000) {
-            hasLink = *scan & (1<<24);
-            if ( ((mode == 0) && !hasLink) ||   // intra-function mode
-                 ((mode != 0) &&  hasLink) ) {  // inter-function mode
-               /* add branch to table */
-               permutation[branchCount] = branchCount;
-               branchAddr[branchCount] = (scan - funcBegin);
-               tmp = (*scan & 0x00ffffff) |
-                     ((*scan & 0x00800000) ? 0xff000000 : 0);
-               branchTarget[branchCount] = (scan - funcBegin) + 2 + tmp;
-               ++branchCount;
-            }
+         if ((*scan & filter) == modeMask) {
+            /* add branch to table */
+            permutation[branchCount] = branchCount;
+            branchAddr[branchCount] = (scan - funcBegin);
+            tmp = (*scan & 0x00ffffff) |
+                  ((*scan & 0x00800000) ? 0xff000000 : 0);
+            branchTarget[branchCount] = (scan - funcBegin) + 2 + tmp;
+            ++branchCount;
          }
       }
 
@@ -3430,18 +3433,54 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
    }
 
    if (nopCount > 0) { // there are nops to remove
-
+      int align;
+      int nopRun = 0;
       currAddr = 0;
       currTarget = 0;
       offset = 0;
 
       packed = funcBegin;
       for (scan = funcBegin; scan <= funcEnd; ++scan, ++offset) {
+         if (mode == InterFunc) {
+            if (*scan == NOP) {
+               *packed++ = NOP;
+               if (++nopRun < 8) continue;
+               // 4 consecutive nops means interfunc region found
+               int *last = scan - 8; // last instr from previous func
+               int *scan2 = scan + 1;
+               packed -= 8;
+               while (scan2 <= funcEnd && *scan2 == NOP) {
+                  ++scan2;
+                  ++offset;
+               }
+               if (scan2 > funcEnd)
+                  goto finalize_relocate;
+
+               int alignHead = (last - cbegin) & 3;
+               int alignTail = (scan2 - cbegin) & 3;
+               if (alignTail > alignHead) { // elide
+                  int padCount = ((alignTail - alignHead) - 1);
+                  while (padCount-- > 0)
+                     *packed++ = NOP;
+               }
+               else if (!(alignTail == 0 && alignHead == 3)) { // pad
+                  int padCount = 3 - (alignHead - alignTail);
+                  while (padCount-- > 0)
+                     *packed++ = NOP;
+               }
+               scan = scan2 - 1;
+               nopRun = 0;
+               continue;
+            }
+            else
+               nopRun = 0;
+         }
+
          align = 1;
          while (currTarget < branchCount) {
             if (branchTarget[currTarget] == offset) {
-               if (align && ((mode != 0) ||
-                   branchAddr[permutation[currTarget]] > offset)) {
+               if (align && mode == IntraFunc &&
+                   branchAddr[permutation[currTarget]] > offset) {
                   /* quadword align loop branch target */
                   tmp = 4 - ((packed-funcBegin) & 3);
                   if (tmp != 4 && (scan-packed) >= tmp) {
@@ -3461,7 +3500,10 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
                branchAddr[currAddr++] = packed - funcBegin;
             }
          }
-         if (is_const(scan)) {
+         if (mode == InterFunc && *scan != NOP) {
+            *packed++ = *scan;
+         }
+         else if (is_const(scan)) {
             if (scan != packed) {
                tmp = find_const((scan-cbegin)*4);
                int iaddr = cremap[tmp-lowc].data_addr/4;
@@ -3493,8 +3535,7 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
             }
             else if ((*scan & 0x0e000000) == 0x0a000000) {
                if (*scan & (1<<24)) {
-                  // adjust bl instruction address
-                  // jk this is bogus since for mode 0 only
+                  // adjust bl instruction address for IntraFunc mode
                   *scan += scan - packed;
                }
                *packed++ = *scan;
@@ -3504,6 +3545,8 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
          }
       }
 
+finalize_relocate:
+
       /* fixup branch instructions with new target address */
       for (ii = 0; ii < branchCount; ++ii) {
          tmp = branchAddr[permutation[ii]];
@@ -3511,14 +3554,14 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
                       ((branchTarget[ii] - tmp - 2) & 0x00ffffff);
       }
 
-      retVal = packed - 1;
+      retVal = packed ; // pointer just past end of code
 
       while (packed<=funcEnd) {
          *packed++ = NOP;
       }
 
       // update const_pool load operations
-      if (cremap_size) {
+      if (mode == IntraFunc && cremap_size) {
          for (ii=0; ii < cremap_size; ++ii) {
             tmp = cremap[ii].data_addr / 4;
             for (inst = &cremap[ii].inst; *inst != 0; inst = &(*inst)->next) {
@@ -3852,10 +3895,11 @@ static void create_pushpop_map2b(int *instInfo, int *funcBegin, int *funcEnd)
    int *stack[10];
    int *scan;
    int np = 0;
+   int *safeEnd = funcEnd - 6;
 
    create_inst_info(instInfo, funcBegin, funcEnd);
 
-   for (scan = funcBegin; scan < funcEnd; ++scan) {
+   for (scan = funcBegin; scan < safeEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
       if ( (*scan & 0xffff0fff) == 0xe52d0004 && // push {rx}
@@ -4225,13 +4269,14 @@ static void create_pushpop_map4(int *instInfo, int *funcBegin, int *funcEnd,
    int *stack[10];
    int *scan;
    int np = 0;
+   int *safeEnd = funcEnd - 6;
 
    if (dofloat)
       create_inst_info_f(instInfo, funcBegin, funcEnd);
    else
       create_inst_info(instInfo, funcBegin, funcEnd);
 
-   for (scan = funcBegin; scan < funcEnd; ++scan) {
+   for (scan = funcBegin; scan < safeEnd; ++scan) {
       scan = skip_nop(scan, S_FWD);
 
       guard = dofloat ?
@@ -5121,9 +5166,9 @@ nextUse:
 /********* Peephole optimization driver function **********/
 /**********************************************************/
 
-int squint_opt(int *begin, int *end)
+int *squint_opt(int *begin, int *end)
 {
-   int optApplied = 0 ;
+   int *lastInstruction = 0 ;
    int *scan = begin;
    int *tmpbuf = (int *) malloc((end-begin+2)*sizeof(int));
    int noFloatConst;
@@ -5259,17 +5304,16 @@ int squint_opt(int *begin, int *end)
          // if (noFloatConst)
          //    simplify_frame(funcBegin, retAddr); Also,
          //    re-enable guard at top of rename_register1()
-         funcEnd = relocate_nop(funcBegin, funcEnd, 0);
-
-         optApplied = 1;
+         lastInstruction = relocate_nop(funcBegin, funcEnd, IntraFunc);
       }
       else {
          ++scan;
       }
    }
+   lastInstruction = relocate_nop(begin, end - 1, InterFunc);
    destroy_const_map();
    free(tmpbuf);
-   return optApplied;
+   return lastInstruction;
 }
 
 #ifndef SQUINT_SO

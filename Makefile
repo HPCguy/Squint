@@ -64,6 +64,7 @@ check: $(EXEC) $(TEST_OBJ)
 	$(Q)if [ "$(shell $(ARM_EXEC) ./$(BIN) $(BIN).c tests/hello.c)" = "hello, world" ]; then \
 	$(call pass); \
 	fi
+	@echo
 	@echo "Type 'make show_asm' to create assembly listing in ASM directory"
 
 bench: $(EXEC) $(OBJ_DIR)/$(BIN)-opt
