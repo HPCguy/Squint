@@ -92,7 +92,7 @@ enum { CHAR = 0, INT = 4, FLOAT = 8, ATOM_TYPE = 11,
        PTR = 0x1000, PTR2 = 0x2000 };
 
 char *p, *lp, *freep; // current position in source code
-char *data, *freedata, *_data;   // data/bss pointer
+char *data, *_data;   // data/bss pointer
 
 int *lastLEV;       // needed to close out functions
 char *idn, *idp;    // decouples ids from program source code
@@ -2581,7 +2581,7 @@ do_typedef:
             *p++ = 0;
             if (ld > maxld) maxld = ld;
             *--n = maxld - loc; *--n = Enter;
-            if (oname && n[1] > 64 && osize > 64)
+            if (oname && n[1] > 255 && osize > 255)
                printf("--> %d: move %s to global scope for performance.\n",
                       oline, oname);
             cas = 0;
@@ -3516,6 +3516,7 @@ int *codegen(int *jitmem, int *jitmap)
       }
    }
    if (il > immloc) die("codegen: not terminated by a LEV");
+   while ((int) je & 0x0f) *je++ = 0xe1a00000; // pad NOP alignment
    tje = je;
 
    // second pass
@@ -3605,7 +3606,7 @@ int jit(int poolsz, int *main, int argc, char **argv)
 
 int ELF32_ST_INFO(int b, int t) { return (b << 4) + (t & 0xf); }
 enum {
-   EHDR_SIZE = 52, ET_EXEC = 2, EM_ARM = 40,
+   EHDR_SIZE = 64, ET_EXEC = 2, EM_ARM = 40,
    PHDR_ENT_SIZE = 32, SHDR_ENT_SIZE = 40,
    SYM_ENT_SIZE = 16, REL_ENT_SIZE = 8, PLT_ENT_SIZE = 12,
    DYN_ENT_SIZE = 8
@@ -3781,11 +3782,10 @@ void elf32_init(int poolsz)
 int elf32(int poolsz, int *main, int elf_fd)
 {
    int i;
-   char *freecode;
-   char *code = freecode = (char *) malloc(poolsz);
+   char *freecode = (char *) malloc(poolsz);
+   char *code = (char *) (((int) freecode + 0x0f) & ~0x0f);
    char *buf = freebuf;
    int *jitmap = (int *) (code + (poolsz >> 1));
-   // memset(buf, 0, poolsz); // not strictly necessary
    char *o = buf = (char *) (((int) buf + PAGE_SIZE - 1) & -PAGE_SIZE);
    code = (char *) (((int) code + PAGE_SIZE - 1) & -PAGE_SIZE);
 
@@ -3866,6 +3866,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    // e_shentsize & e_shnum
    *o++ = SHDR_ENT_SIZE; *o++ = 0; *o++ = SHDR_NUM; *o++ = 0;
    *o++ =  1; *o++ = 0;
+   for (i = 0; i < 12; ++i) *o++ = 0;
 
    int phdr_size = PHDR_ENT_SIZE * PHDR_NUM;
    char *phdr = o; o += phdr_size;
@@ -3893,6 +3894,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    *(int *) entry = (int) code_addr;
 
    // .data
+   while ((int) data & 0x0f) *data++ = 0; // quad align data
    char *_data_end = data;
    // Use load_bias to align offset and v_addr, the elf loader
    // needs PAGE_SIZE align to do mmap().
@@ -3916,10 +3918,14 @@ int elf32(int poolsz, int *main, int elf_fd)
 
    // .interp (embedded in PT_LOAD of data)
    char *interp_str = "/lib/ld-linux-armhf.so.3";
-   int interp_str_size = 25; // strlen(interp_str) + 1
+   int interp_str_size = strlen(interp_str) + 1;
    char *interp = data;
    memcpy(interp, interp_str, interp_str_size);
-   int interp_off = pt_dyn_off + pt_dyn_size; data += interp_str_size;
+   int interp_off = pt_dyn_off + pt_dyn_size;
+   data += interp_str_size;
+   i = ((interp_str_size + 0x0f) & ~0x0f) - interp_str_size;
+   interp_str_size += i;
+   while (i-- > 0) *data++ = 0;
    o += interp_str_size;
 
    // .shstrtab (embedded in PT_LOAD of data)
@@ -3941,6 +3947,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    shdr_names[SREL] = append_strtab(&data, ".rel.plt") - shstrtab_addr;
    shdr_names[SPLT] = append_strtab(&data, ".plt") - shstrtab_addr;
    shdr_names[SGOT] = append_strtab(&data, ".got") - shstrtab_addr;
+   while ((int) data & 0x0f) *data++ = 0; // pad/align
    shstrtab_size = data - shstrtab_addr;
    o += shstrtab_size;
 
@@ -3959,6 +3966,7 @@ int elf32(int poolsz, int *main, int elf_fd)
    for (i = 0; i < ef_count; ++i)
       func_entries[i] = append_strtab(&data, ef_cache[i]->name) - dynstr_addr;
 
+   while ((int) data & 0x0f) *data++ = 0; // pad/align
    int dynstr_size = data - dynstr_addr;
    o += dynstr_size;
 
@@ -4179,6 +4187,8 @@ int main(int argcc, char **argvv)
    int fd, i, otk;
    int poolsz = 4 * 1024 * 1024; // arbitrary size
    char **argv;
+   int *textp;
+   char *datap;
 
 #ifdef SQUINT_SO
    peephole = 1;
@@ -4220,12 +4230,11 @@ int main(int argcc, char **argvv)
    next(); id->class = Clz; id->type = INT;
            id->val = CLZ; id->ftype[0] = 1;
 
-   if (!(freedata = _data = data = (char *) malloc(poolsz)))
-      printf("could not allocat data area");
-   memset(data, 0, poolsz);
-   if (!(tsize = (int *) malloc(SMALL_TBL_SZ * sizeof(int))))
+   if (!(datap = (char *) calloc(1, poolsz)))
+      printf("could not allocate data area");
+   _data = data = (char *) (((int) datap + 0x0f) & ~0x0f);
+   if (!(tsize = (int *) calloc(SMALL_TBL_SZ, sizeof(int))))
       die("could not allocate tsize area");
-   memset(tsize,   0, SMALL_TBL_SZ * sizeof(int)); // not strictly necessary
    if (!(freed_ast = ast = (int *) malloc(poolsz)))
       die("could not allocate abstract syntax tree area");
    // memset(ast, 0, poolsz); // not strictly necessary
@@ -4303,18 +4312,17 @@ int main(int argcc, char **argvv)
       printf("could not open(%s)\n", *argv); return -1;
    }
 
-   if (!(text = le = e = (int *) malloc(poolsz)))
+   if (!(textp = (int *) malloc(poolsz)))
       die("could not allocate text area");
+   text = le = e = (int *) (((int) textp + 0x0f) & ~0x0f);
    if (!(members = (struct member_s **)
-                   malloc(SMALL_TBL_SZ * sizeof(struct member_s *))))
+                   calloc(SMALL_TBL_SZ, sizeof(struct member_s *))))
       die("could not malloc() members area");
    if (!(ef_cache = (struct ef_s **)
                     malloc(SMALL_TBL_SZ * sizeof(struct ef_s *))))
       die("could not malloc() external function cache");
 
    // memset(e, 0, poolsz); // not strictly necessary
-
-   memset(members, 0, SMALL_TBL_SZ * sizeof(struct member_s *));
 
    if (elf) elf32_init(poolsz); // call before source code parsing
 
@@ -4349,10 +4357,10 @@ int main(int argcc, char **argvv)
    int ret = elf ? elf32(poolsz, (int *) idmain->val, elf_fd) :
                    jit(poolsz,   (int *) idmain->val, argc, argv);
    free(freep);
-   free(text);
+   free(textp);
    free(freed_ast);
    free(tsize);
-   free(freedata);
+   free(datap);
    free(idln);
    free(idn);
    free(sym);
