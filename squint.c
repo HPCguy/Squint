@@ -1324,12 +1324,18 @@ static void apply_peepholes4_2(int *instInfo, int *funcBegin, int *funcEnd)
             if (((fp = (*scanp2 & 0xff300f00) == 0xed100a00) || // vldr sd, [rn]
                 (*scanp2 & 0xff700000) == 0xe5100000) &&       // ldr rd, [rn]
                 (*scanp2 & RI_Rn) == ((*scanp1 & RI_Rd) << 4)) {
-               cnstPtr = (scan + 2 + (*scan & 0xfff)/4);
                moff = (*scanp2 & (fp ? 0xff : 0xfff)) *
                       ((*scanp2 & (1<<23)) ? 1 : -1);
-               off = *cnstPtr/(fp ? 4 : 1) + moff;
-               add = 1<<23;
-               if (off < 0) { off = -off; add = 0; }
+               cnstPtr = (scan + 2 + (*scan & 0xfff)/4);
+               off = *cnstPtr;
+               if (fp) off /= 4;
+               if ((*scanp1 & 0xfff00700) == 0xe0400000) off = -off;
+               off += moff;
+               add = 0;
+               if (off >= 0)
+                  add = (1 << 23);
+               else
+                  off = -off;
                if (off < (fp ? 0x100 : 0x1000)) {
                   *scanp2 = (*scanp2 & (fp ? 0xff70ff00 : 0xff70f000)) |
                             add | (*scanp1 & RI_Rn) | off;
@@ -3554,11 +3560,15 @@ finalize_relocate:
                       ((branchTarget[ii] - tmp - 2) & 0x00ffffff);
       }
 
+      if (mode == InterFunc) { // for ELF alignment
+         while ((int) packed & 0x0f)
+            *packed++ = NOP;
+      }
+
       retVal = packed ; // pointer just past end of code
 
-      while (packed<=funcEnd) {
+      while (packed<=funcEnd)
          *packed++ = NOP;
-      }
 
       // update const_pool load operations
       if (mode == IntraFunc && cremap_size) {
@@ -3650,15 +3660,20 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
              ((*scanm1 & 0xfffff000) == 0xe28b0000 ||  // add r0, fp, #X
               (*scanm1 & 0xfffff000) == 0xe24b0000 )) { // sub r0, fp, #X
             int off = arith_off(*scanm1);
-            if (off > ((*scanp1 == 0xed810a00) ? 1024 : 4096)) continue;
-            int addOffsetBit =
-               ((*scanm1 & 0xffffff00) == 0xe28b0000) ? (1<<23) : 0;
+            if (*scanp1 == 0xed810a00) { // vstr
+               off /= 4;
+               if (off >= 256) continue;
+            }
+            else { // str[b]
+               if (off >= 4096) continue;
+            }
+            if ((*scanm1 & 0xfffff000) == 0xe2800000) // add
+               off |= 1 << 23;
             if (&funcBegin[r0d-instInfo] < scanp1 && r0u == r0d) {
                if (funcBegin[r0d-instInfo] == 0xe5900000 || //  ldr r0, [r0]
                    funcBegin[r0d-instInfo] == 0xed900a00) { // vldr s0, [r0]
                   funcBegin[r0d-instInfo] =
-                     (funcBegin[r0d-instInfo] & 0xff70ff00) | addOffsetBit |
-                      0x000b0000 | ((*scanp1 == 0xed810a00) ? (off / 4) : off);
+                     (funcBegin[r0d-instInfo] & 0xff70ff00) | 0x000b0000 | off;
                   *r0d |= 0xb0000; // rn = fp
                }
                else {
@@ -3672,8 +3687,7 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
             instInfo[pair[i].push-funcBegin] &= RI_bb;
             *pair[i].pop  = NOP;
             instInfo[pair[i].pop-funcBegin] &= RI_bb;
-            *scanp1 = (*scanp1 & 0xff70ff00) | addOffsetBit |
-                      0x000b0000 | ((*scanp1 == 0xed810a00) ? (off / 4) : off);
+            *scanp1 = (*scanp1 & 0xff70ff00) | 0x000b0000 | off;
             instInfo[scanp1-funcBegin] |= 0xb0000; // rn = 1 | b == b
          }
          else if (r0d < r0u &&
@@ -3689,7 +3703,19 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
             instInfo[pair[i].push-funcBegin] &= RI_bb;
          }
          else if (r0d < r0u &&
-                 ((*scanm1 & 0xffffff00) == 0xe2800000)) { // add r0, r0, #X
+                 ((*scanm1 & 0xfffff000) == 0xe2800000 ||  // add r0, r0, #X
+                  (*scanm1 & 0xfffff000) == 0xe2400000)) { // sub r0, r0, #X
+            int off = arith_off(*scanm1);
+            if (*scanp1 == 0xed810a00) { // vstr
+               off /= 4;
+               if (off >= 256) continue;
+            }
+            else { // str[b]
+               if (off >= 4096) continue;
+            }
+            if ((*scanm1 & 0xfffff000) == 0xe2800000) // add
+               off |= 1 << 23;
+
             scanm2 = active_inst(scanm1,-1);
             if (*scanm2 == 0xe5900000) {  // ldr r0, [r0]
                int *scan2 = pair[i].push + 1;
@@ -3703,8 +3729,7 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
                    (r0d == 0 || r0d > pair[i].pop)) {
                   *scanm2 = *scanm2 | (2 << 12);
                   instInfo[scanm2-funcBegin] |= 2<<12;
-                  *scanp1 = (*scanp1 & 0xff70ff00) | (1 << 23) |
-                       0x00020000 | (*scanm1 & 0xff);
+                  *scanp1 = (*scanp1 & 0xff70ff00) | 0x00020000 | off;
                   instInfo[scanp1-funcBegin] += 0x10000;
                   *scanm1 = NOP;
                   instInfo[scanm1-funcBegin] &= RI_bb;
