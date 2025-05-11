@@ -283,7 +283,7 @@ static void const_imm_opt(int *begin, int *end)
       if (aoff != -1 || (-256 <= val && val < 0)) {
          struct ia_s *inst = cnst_pool[i].inst;
          while (inst != 0) {
-            int *next = inst->next;
+            struct ia_s *next = inst->next;
             int *newinst = cbegin + inst->inst_addr/4;
             if ((*newinst & 0xffbf0f00) != 0xed9f0a00) { // vldr
                if (aoff != -1) {
@@ -613,6 +613,9 @@ static void create_inst_info(int *instInfo, int *funcBegin, int *funcEnd)
             *rInfo = RI_RdAct | RI_RdDest;
          else if ((inst & 0xfff00f7f) == 0xee000a10)   // fmsr
             *rInfo = RI_RdAct;
+      }
+      else if ((inst & 0xfff0f0f0) == 0xe750f010) {  // smmul
+         info |= RI_RnAct | RI_RsAct | RI_RmAct | RI_RnDest;
       }
 
       /* Mask out any registers outside of rename range */
@@ -1296,7 +1299,7 @@ static void apply_peepholes4(int *funcBegin, int *funcEnd)
             *scanp1 = 0xe2810000 | ((*scan & 0xff) + 1); // add r0,r1,#(-X+1)
             *scan = NOP; scan = scanp1;
          }
-         else if ((*scan & 0xff) == 0 && *scanp1 == 0xe0000091) { // mul r0, r1, r0
+         else if ((*scan & 0xff) == 0 && *scanp1 == 0xe0000091){ //mul r0,r1,r0
             *scanp1 = 0xe2610000; // rsb r0, r1, #0
             *scan = NOP; scan = scanp1;
          }
@@ -3412,6 +3415,12 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
             branchAddr[branchCount] = (scan - funcBegin);
             tmp = (*scan & 0x00ffffff) |
                   ((*scan & 0x00800000) ? 0xff000000 : 0);
+            if (mode == IntraFunc) {
+               // advance branch target to non-NOP
+               int *active = scan + 2 + tmp;
+               while (*active == NOP) { ++active; ++tmp; }
+               *scan = (*scan & 0xff000000) | (tmp & 0x00ffffff);
+            }
             branchTarget[branchCount] = (scan - funcBegin) + 2 + tmp;
             ++branchCount;
          }
@@ -3486,7 +3495,9 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
          while (currTarget < branchCount) {
             if (branchTarget[currTarget] == offset) {
                if (align && mode == IntraFunc &&
-                   branchAddr[permutation[currTarget]] > offset) {
+                   branchAddr[permutation[currTarget]] > offset &&
+                   (*scan & 0xfff00000) != 0xe1500000 && // cmp
+                   (*scan & 0xfff00000) != 0xe3500000) {
                   /* quadword align loop branch target */
                   tmp = 4 - ((packed-funcBegin) & 3);
                   if (tmp != 4 && (scan-packed) >= tmp) {
@@ -3813,7 +3824,9 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
                if (m1modifiable && r0push1u > r0push1d) {
                   if ((*scanm1 & 0xf0000000) == 0xe0000000) { // uncond op
                      *scanm1 |=
-                        (((*scanm1 & 0x0e0000f0) == 0x90) ? (1<<16) : (1<<12));
+                        (((*scanm1 & 0x0e0000f0) == 0x90 ||
+                          (*scanm1 & 0x0ff000f0) == 0x07500010) ?
+                        (1<<16) : (1<<12));
                      *pair[i].push = NOP;
                      *pair[i].pop  = NOP;
                   }
@@ -4217,7 +4230,8 @@ static int create_pushpop_map3(int *instInfo, int *funcBegin, int *funcEnd,
                ((reg & 0x0f) << 12) | ((reg & 0x10) << 18);
          }
          else {
-            if (((*scanm1 & 0x0e0000f0) == 0x90)) {
+            if (((*scanm1 & 0x0e0000f0) == 0x90) ||
+                 (*scanm1 & 0x0ff000f0) == 0x07500010) {
                *scanm1 = (*scanm1 & ~RI_Rn) | (reg<<16);
                instInfo[scanm1-funcBegin] = (info & ~RI_Rn) | (reg<<16);
             }
