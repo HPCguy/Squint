@@ -192,6 +192,7 @@ enum {
    AddF, SubF, MulF, DivF,       // float type operators (hidden)
    EqF, NeF, GeF, LtF, GtF, LeF,
    CastF, Inc, Dec, Dot, Arrow, Bracket, // operator: ++, --, ., ->, [
+   DivCnst, // lit-constant division via magic reciprocal multiply
    Phf // inform peephole optimizer a function call is beginning
 };
 
@@ -344,6 +345,7 @@ enum {
    PHF,  /* 55 Inform peephole optimizer a function call is beginning */
    PHR0, /* 56 Inform PeepHole optimizer that R0 holds a return value */
    CBLK, /* 57 Statement boundary -- good place to store istream const */
+   MMUL, /* 58 reciprocal multiply special case */
 
    INVALID
 };
@@ -459,6 +461,30 @@ void eol2semi(char *ss) // preprocessor support
    if (*s) *s = ';';
 }
 
+int kh[46] = {
+   0,11,3,13,0,18,0,4,16,0,7,0,10,0,0,0,11,0,0,2,0,3,
+   0,0,0,6,0,2,2,0,0,9,21,0,0,14,4,0,10,0,0,7,0,0,0,0
+};
+
+// perfect keyword hash created by https://github.com/rurban/nbperf.git
+struct ident_s *keyword_hash(int key)
+{
+   int h = key * 0x7123f7d4 + 1;
+
+   int low = h & 0xffff;
+   int lowMod = low % 45;
+
+   int high = (h >> 16) & 0xffff;
+   int highMod = high % 45;
+
+   int idx = kh[lowMod] + kh[highMod];
+   // int idxMod = idx % 22;
+   int idxMod = (idx < 22) ? idx : (idx - 22);
+
+   struct ident_s *retVal = &sym[idxMod];
+   return (retVal->hash == key) ? retVal : (struct ident_s *) 0;
+}
+
 /* parse next token
  * 1. store data into id and then set the id to current lexcial form
  * 2. set tk to appropriate type
@@ -473,9 +499,8 @@ void next()
 
 text_sub:
    while ((tl = *s)) {
-      int lower;
       ++s;
-      if ((lower = (tl >= 'a' && tl <= 'z')) || (tl >= 'A' && tl <= 'Z') ||
+      if ((tl >= 'a' && tl <= 'z') || (tl >= 'A' && tl <= 'Z') ||
           (tl == '_') || (tl == '$')) {
          pp = s - 1;
          while ((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
@@ -485,21 +510,10 @@ text_sub:
          int nlen = s - pp;
          tl = (tl << 6) + nlen;  // hash plus symbol length
 
-         if (nlen >= 2 && nlen <= 8 &&
-             (lower && ((1 << (*pp-'a')) & 0x7e017e)) &&
-             (pp[1] >= 'a' && pp[1] <= 'z' &&
-              ((1 << (pp[1]-'a')) & 0x14a69b1))) {
-            // if (nlen >= 3 && (pp[2] >= 'a' && pp[2] <= 'z' &&
-            //     ((1 << (pp[2]-'a')) & 0x1e116ce))) {
-            //    goto not_a_keyword;
-            // }
-            for (il = sym; il < symk; ++il) { // check for keywords
-               if (tl == il->hash && il->name[nlen] == 0 &&
-                   !memcmp(il->name, pp, nlen)) {
-                  tl = il->tk; id = il;
-                  goto ret;
-               }
-            }
+         // check for keyword using perfect hash
+         if (nlen > 1 && (il = keyword_hash(tl)) != (struct ident_s *) 0) {
+            tl = il->tk; id = il;
+            goto ret;
          }
 // not_a_keyword:
          if (tokloc) {
@@ -758,6 +772,65 @@ int popcount32(int ii)
    i = (i & 0x33333333) + ((i >> 2) & 0x33333333); // quads
    i = (i + (i >> 4)) & 0x0F0F0F0F; // groups of 8
    return (i * 0x01010101) >> 24; // horizontal sum of bytes
+}
+
+// Following function from Hacker's Delight, 2nd Edition
+// converts literal-constant integer division into a multiply
+
+struct muldiv {int M; int s;}; // Recip mult and shift amount
+
+void irecip(int d, struct muldiv *mag) {
+   int p;
+   int ad, anc, delta, q1, r1, q2, r2, t;
+   int two31 = 0x80000000;     // 2**31.
+
+   ad = (d < 0) ? -d : d;
+   t = (0x7fffffff  - d) + ((d < 0) ? 1 : 0) + 1;
+   anc = 0x7fffffff - t%ad + ((d < 0) ? 1 : 0);
+
+   p = 31;                 // Init. p.
+   q1 = -(two31/anc);      // Init. q1 = 2**p/|nc|.
+   r1 = two31 - q1*anc;    // Init. r1 = rem(2**p, |nc|).
+   q2 = two31/ad;          // Init. q2 = 2**p/|d|.
+   r2 = -(two31 - q2*ad);  // Init. r2 = rem(2**p, |d|).
+   q2 = -q2;
+   do {
+      p = p + 1;
+      q1 = 2*q1;           // Update q1 = 2**p/|nc|.
+      r1 = 2*r1;           // Update r1 = rem(2**p, |nc|).
+      if (r1 >= anc) {     // (Must be an unsigned
+         q1 = q1 + 1;      // comparison here).
+         r1 = r1 - anc;}
+      q2 = 2*q2;           // Update q2 = 2**p/|d|.
+      r2 = 2*r2;           // Update r2 = rem(2**p, |d|).
+      if (r2 >= ad) {      // (Must be an unsigned
+         q2 = q2 + 1;      // comparison here).
+         r2 = r2 - ad;}
+      delta = ad - r2;
+   } while (q1 < delta || (q1 == delta && r1 == 0));
+
+   mag->M = q2 + 1;
+   if (d < 0) mag->M = -mag->M; // Magic number and
+   mag->s = p - 32;            // shift amount to return.
+}
+
+void const_div_AST(int *enode)
+{
+   struct muldiv mag;
+   int *a, divisor = n[2];
+
+   irecip(divisor, &mag);
+   n[2] = mag.M; *--n = DivCnst;
+   if (divisor > 0 && mag.M < 0) {
+      *--n = (int) enode; *--n = Add;
+   }
+   else if (divisor < 0 && mag.M > 0) {
+      *--n = (int) enode; *--n = Sub;
+   }
+   if (mag.s > 0) {
+      a = n; *--n = mag.s; *--n = Num;
+      *--n = (int) a; *--n = Shr;
+   }
 }
 
 // verify binary operations are legal
@@ -1679,7 +1752,7 @@ careful_addition:
                         }
                         else {
                            *--n = sz; *--n = Num; --n; *n = (int) (n + 3);
-                           *--n = Div; ef_getidx("__aeabi_idiv");
+                           const_div_AST(n+3);
                         }
                      }
                   }
@@ -1788,11 +1861,15 @@ mod1_to_mul0:
             }
             else {
                *--n = (int) b;
-               if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
-                  n[2] = popcount32(n[2] - 1); *--n = Shr; // 2^n
+               if (n[1] == Num && n[2] > 0) {
+                  if ((n[2] & (n[2] - 1)) == 0) {
+                     n[2] = popcount32(n[2] - 1); *--n = Shr; // 2^n
+                  }
+                  else { // efficient literal const divisor
+                     const_div_AST(b);
+                  }
                } else {
-                  *--n = Div;
-                  ef_getidx("__aeabi_idiv");
+                  *--n = Div; ef_getidx("__aeabi_idiv");
                }
             }
             ty = INT;
@@ -1800,25 +1877,35 @@ mod1_to_mul0:
          break;
       case Mod:
          next();
-         if (compound) { compound = 0; expr(Assign); }
+         if (compound) { compound = 0; expr(Assign); compound = 1; }
          else expr(Inc);
          if ((*n == Num || *n == NumF) && n[1] == 0) fatal("division by zero");
          typecheck(Mod, t, ty);
          if ((*n == Num && n[1] == 1) ||
                   (*n == NumF && n[1] == 0x3f800000)) {
-            n[1] = 0; goto mod1_to_mul0;
+            n[1] = 0; compound = 0; goto mod1_to_mul0;
          }
          if (ty == FLOAT) fatal("use fmodf() for float modulo");
          if (*n == Num && *b == Num) { b[1] %= n[1]; n += 2; }
          else {
             *--n = (int) b;
-            if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
-               --n[2]; *--n = And; // 2^n
+            if (n[1] == Num && n[2] > 0) {
+               if ((n[2] & (n[2] - 1)) == 0) {
+                  --n[2]; *--n = And; // 2^n
+               }
+               else {
+                  if (compound) goto skip_ModAssign; // tricky refactor needed
+                  int mulFact = n[2];
+                  const_div_AST(b); // b - (b/n)*n
+                  c = n; *--n = mulFact; *--n = Num;
+                  *--n = (int) c; *--n = Mul; *--n = (int) b; *--n = Sub;
+               }
             } else {
-               *--n = Mod;
-               ef_getidx("__aeabi_idivmod");
+skip_ModAssign:
+               *--n = Mod; ef_getidx("__aeabi_idivmod");
             }
          }
+         compound = 0;
          ty = INT;
          break;
       case Dot:
@@ -2015,10 +2102,10 @@ void gen(int *n)
       *++e = (n[1] >= PTR) ? LI : LC + (n[1] >> 2);
       break;
    case Loc: *++e = LEA; *++e = n[1]; break;       // get address of variable
-   case '{': if (*e != CBLK) *++e = CBLK;
+   case '{': if (!src && *e != CBLK) *++e = CBLK;
              gen((int *) n[1]); gen(n + 2); break; // parse AST expr or stmt
    case Assign: // assign the value to variables
-      if (*e != CBLK) *++e = CBLK;
+      if (!src && *e != CBLK) *++e = CBLK;
       gen((int *) n[2]); *++e = PSH; gen(n + 3); l = n[1] & 0xffff;
       // Add SC/SI instruction to save value in register to variable address
       // held on stack.
@@ -2092,6 +2179,7 @@ void gen(int *n)
               *++e = PSH; gen(n + 2); *++e = DIV;
               if (peephole) *++e = PHR0;
               break;
+   case DivCnst: gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = MMUL; break;
    case Mod:  if (peephole) *++e = PHF;
               gen((int *) n[1]);
               if (peephole) *++e = PHD;
@@ -2112,7 +2200,7 @@ void gen(int *n)
    case Func:
    case Syscall:
    case ClearCache:
-      if (*e != CBLK) *++e = CBLK;
+      if (!src && *e != CBLK) *++e = CBLK;
       b = (int *) n[1]; k = b ? n[3] : 0;
       if (k) {
          if (i == Syscall) {
@@ -2599,8 +2687,8 @@ do_typedef:
                          "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
                          "ADDF SUBF MULF DIVF FTOI ITOF "
                          "EQF  NEF  GEF  LTF  GTF  LEF  "
-                         "FNEG FABS SQRT CLZ  "
-                         "SYSC CLCA VENT VLEV PHD  PHF  PHR0 CBLK" [*++le *5]);
+                         "FNEG FABS SQRT CLZ  SYSC CLCA "
+                         "VENT VLEV PHD  PHF  PHR0 CBLK MMUL" [*++le *5]);
                   if (*le < ADJ) {
                      struct ident_s *scan;
                      ++le;
@@ -3245,6 +3333,9 @@ int *codegen(int *jitmem, int *jitmap)
          break;
       case MUL:
          *je++ = 0xe49d1004; *je++ = 0xe0000091; // pop {r1}; mul r0, r1, r0
+         break;
+      case MMUL:
+         *je++ = 0xe49d1004; *je++ = 0xe750f011; // pop {r1}; smmul r0, r1, r0
          break;
       case DIV:
       case MOD:
