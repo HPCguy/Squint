@@ -321,9 +321,8 @@ enum {
    GE  , /* 23 */  LT  , /* 24 */  GT  , /* 25 */ LE  , /* 26 */
    SHL , /* 27 */  SHR , /* 28 */
    ADD , /* 29 */  SUB , /* 30 */  MUL , /* 31 */ DIV , /* 32 */ MOD, /* 33 */
-   ADDF, /* 34 */  SUBF, /* 35 */  MULF, /* 36 */ DIVF, /* 37 */
-   FTOI, /* 38 */  ITOF, /* 39 */  EQF , /* 40 */ NEF , /* 41 */
-   GEF , /* 42 */  LTF , /* 43 */  GTF , /* 44 */ LEF , /* 45 */
+   MMUL, /* 34 reciprocal multiply special case */
+   ADDF, /* 35 */  SUBF, /* 36 */  MULF, /* 37 */ DIVF, /* 38 */
    /* arithmetic instructions
     * Each operator has two arguments: the first one is stored on the top
     * of the stack while the second is stored in R0.
@@ -331,21 +330,23 @@ enum {
     * off and the result will be stored in R0.
     */
 
-   FNEG, /* 46 float fnegf(float); returns -arg */
-   FABS, /* 47 float fabsf(float); */
-   SQRT, /* 48 float sqrtf(float); */
-   CLZ,  /* 49 int clz(int); */
-   SYSC, /* 50 system call */
-   CLCA, /* 51 clear cache, used by JIT compilation */
+   FTOI, /* 39 */  ITOF, /* 40 */  EQF , /* 41 */ NEF , /* 42 */
+   GEF , /* 43 */  LTF , /* 44 */  GTF , /* 45 */ LEF , /* 46 */
 
-   VENT, /* 52 Needed fo Varargs ABI, which requires 8-byte stack align */
-   VLEV, /* 53 */
+   FNEG, /* 47 float fnegf(float); returns -arg */
+   FABS, /* 48 float fabsf(float); */
+   SQRT, /* 49 float sqrtf(float); */
+   CLZ,  /* 50 int clz(int); */
+   SYSC, /* 51 system call */
+   CLCA, /* 52 clear cache, used by JIT compilation */
 
-   PHD,  /* 54 PeepHole Disable next assembly instruction in optimizer */
-   PHF,  /* 55 Inform peephole optimizer a function call is beginning */
-   PHR0, /* 56 Inform PeepHole optimizer that R0 holds a return value */
-   CBLK, /* 57 Statement boundary -- good place to store istream const */
-   MMUL, /* 58 reciprocal multiply special case */
+   VENT, /* 53 Needed fo Varargs ABI, which requires 8-byte stack align */
+   VLEV, /* 54 */
+
+   PHD,  /* 55 PeepHole Disable next assembly instruction in optimizer */
+   PHF,  /* 56 Inform peephole optimizer a function call is beginning */
+   PHR0, /* 57 Inform PeepHole optimizer that R0 holds a return value */
+   CBLK, /* 58 Statement boundary -- good place to store istream const */
 
    INVALID
 };
@@ -470,17 +471,12 @@ int kh[46] = {
 struct ident_s *keyword_hash(int key)
 {
    int h = key * 0x7123f7d4 + 1;
-
    int low = h & 0xffff;
    int lowMod = low % 45;
-
    int high = (h >> 16) & 0xffff;
    int highMod = high % 45;
-
    int idx = kh[lowMod] + kh[highMod];
-   // int idxMod = idx % 22;
-   int idxMod = (idx < 22) ? idx : (idx - 22);
-
+   int idxMod = (idx < 22) ? idx : (idx - 22); // idx % 22;
    struct ident_s *retVal = &sym[idxMod];
    return (retVal->hash == key) ? retVal : (struct ident_s *) 0;
 }
@@ -636,9 +632,7 @@ new_block_def:
                   ndd->type = (*n == Num) ? INT : FLOAT;
                   n += 2; // remove expr from AST
                   break;
-               }
-               else
-                  fatal("Bad #define syntax");
+               } else fatal("Bad #define syntax");
             }
             else {
                fatal("Bad #define syntax");
@@ -656,8 +650,7 @@ new_block_def:
                tl = tk; pplevt = t;
                n = nbase; ppactive = 1;
             }
-         }
-         else if (!strncmp(s, "if", 2)) {
+         } else if (!strncmp(s, "if", 2)) {
             int *nbase = n;
             s += 2;
             ++pplev;
@@ -672,24 +665,19 @@ new_block_def:
                   tl = tk; pplevt = t;
                   n = nbase; ppactive = 1;
                }
-            }
-            else
+            } else
                fatal("#if expression does not evaluate to const value");
-         }
-         else if(!strncmp(s, "endif", 5)) {
+         } else if(!strncmp(s, "endif", 5)) {
             s += 5;
             if (--pplev < 0) fatal("preprocessor context nesting error");
             if (pplev == pplevt) goto ret;
-         }
-         else if (!strncmp(s, "else", 4) || !strncmp(s, "elif", 4)) {
+         } else if (!strncmp(s, "else", 4) || !strncmp(s, "elif", 4)) {
             s += 4;
             if (ppactive) fatal("#else/elif not supported in preprocessor");
-         }
-         else if (!strncmp(s, "error", 5)) {
+         } else if (!strncmp(s, "error", 5)) {
             s += 5;
             if (ppactive) fatal ("#error encountered");
-         }
-         else {
+         } else {
             while (*s && *s != '\n') ++s;
          }
          break;
@@ -783,11 +771,9 @@ void irecip(int d, struct muldiv *mag) {
    int p;
    int ad, anc, delta, q1, r1, q2, r2, t;
    int two31 = 0x80000000;     // 2**31.
-
    ad = (d < 0) ? -d : d;
-   t = (0x7fffffff  - d) + ((d < 0) ? 1 : 0) + 1;
+   t = 0x7fffffff + ((d < 0) ? (1+d) : -d) + 1;
    anc = 0x7fffffff - t%ad + ((d < 0) ? 1 : 0);
-
    p = 31;                 // Init. p.
    q1 = -(two31/anc);      // Init. q1 = 2**p/|nc|.
    r1 = two31 - q1*anc;    // Init. r1 = rem(2**p, |nc|).
@@ -808,7 +794,6 @@ void irecip(int d, struct muldiv *mag) {
          r2 = r2 - ad;}
       delta = ad - r2;
    } while (q1 < delta || (q1 == delta && r1 == 0));
-
    mag->M = q2 + 1;
    if (d < 0) mag->M = -mag->M; // Magic number and
    mag->s = p - 32;            // shift amount to return.
@@ -818,18 +803,12 @@ void const_div_AST(int *enode)
 {
    struct muldiv mag;
    int *a, divisor = n[2];
-
    irecip(divisor, &mag);
    n[2] = mag.M; *--n = DivCnst;
-   if (divisor > 0 && mag.M < 0) {
-      *--n = (int) enode; *--n = Add;
-   }
-   else if (divisor < 0 && mag.M > 0) {
-      *--n = (int) enode; *--n = Sub;
-   }
+   if (divisor > 0 && mag.M < 0) { *--n = (int) enode; *--n = Add; }
+   else if (divisor < 0 && mag.M > 0) { *--n = (int) enode; *--n = Sub; }
    if (mag.s > 0) {
-      a = n; *--n = mag.s; *--n = Num;
-      *--n = (int) a; *--n = Shr;
+      a = n; *--n = mag.s; *--n = Num; *--n = (int) a; *--n = Shr;
    }
 }
 
@@ -858,8 +837,7 @@ void typecheck(int op, int tl, int tr)
          if (op != Assign && op != Sub &&
             (op < Eq || op > Le)) // pointers to same type
          fatal("bad pointer arithmetic");
-      }
-      else
+      } else
          fatal("pointer cast needed");
    }
 
@@ -921,11 +899,9 @@ int elideZero(int *aa, int *b, int bt, int op) // n and ty are global
    if ((aa-n) == 2 && *n == Num) {
       if (*b == Num) elide = 1;
       else if (n[1] == 0) { n += 2; ty = bt; elide = 2; }
-   }
-   else if (aa == b && *b == Num && b[1] == 0) {
+   } else if (aa == b && *b == Num && b[1] == 0) {
       swapDrop(b, 2); elide = 2;
    }
-
    return elide;
 }
 
@@ -1069,8 +1045,7 @@ resolve_fnproto:
                   if (d->val == 0) fatal("inline level exceeded");
                }
                else { fidx = ((int) d->tsub) - 1; inln_func = 1; }
-            }
-            else {
+            } else {
                for (fidx = 0; fidx < numfspec; ++fidx)
                   if (!strcmp(d->name, (char *)fspec[fidx][0])) break;
             }
@@ -1100,8 +1075,7 @@ resolve_fnproto:
                }
                while (*p == ' ' || *p == 0x0a) if (*p++ == 0x0a) ++line;
                psave = p;
-            }
-            else expr(Assign);
+            } else expr(Assign);
             *--n = (int) b; b = n; ++t;
             if (ty == FLOAT) { ++nf; tt[(t+11)/32] |= 1 << ((t+11) % 32); }
             if (tk == ',') {
@@ -1185,8 +1159,7 @@ resolve_fnproto:
                   id->val = recursive; // recursion flags
                   id->type = id->etype = 0;
                   id->tsub = ts[i];
-               }
-               else { // literal constant
+               } else { // literal constant
                   id = --symlh ;
                   id->name = tsn; id->hash = tk;
                   tk = id->tk = Id;  // token type identifier
@@ -1211,9 +1184,8 @@ resolve_fnproto:
                 (n[5] == (int) retlabel[numpts-1])) {
                --(retlabel[numpts-1]->flags);
                *--saven = n[7]; *--saven = n[6]; n = saven;
-            }
-            else if ((saven - n) == 5 &&
-                     (n[2] == Num || n[2] == NumF)) {
+            } else if ((saven - n) == 5 &&
+                       (n[2] == Num || n[2] == NumF)) {
                *--saven = n[3]; *--saven = n[2]; n = saven;
             }
             else if (n[2] == '{' && n[3] == ((int) (n + 6)) &&
@@ -1238,8 +1210,7 @@ resolve_fnproto:
             line = tsline[numpts];
 
             next();
-         }
-         else {
+         } else {
             next();
             // function or system call id
             *--n = tt[1]; *--n = tt[0]; *--n = t;
@@ -1252,8 +1223,7 @@ resolve_fnproto:
       // enumeration, only enums have ->class == Num
       else if (d->class == Num || d->class == NumF) {
          *--n = d->val; *--n = d->class; ty = d->type; d->flags |= 32; // read
-      }
-      else {
+      } else {
          // Variable get offset
          switch (d->class) {
          case Par: d->flags |= 4; // all args are inited -- fall through to Loc
@@ -1271,8 +1241,7 @@ resolve_fnproto:
          else if (d->flags & 16) fatal("Can't assign to an Alias");
          if ((d->type & 3) && d->class != Par) { // push reference address
             ty = d->type & ~3;
-         }
-         else {
+         } else {
             *--n = (ty = d->type & ~3); *--n = Load;
          }
       }
@@ -1296,8 +1265,7 @@ resolve_fnproto:
          d = id; ty = d->type;
          if (ty & 3) t *= tensor_size(ty & 3, d->etype);
          next();
-      }
-      else {
+      } else {
          ty = INT; // Enum
          switch (tk) {
          case Char:
@@ -1350,8 +1318,7 @@ resolve_fnproto:
                   *n = NumF; c1 = (union conv *) &n[1]; c1->f = (float) c1->i;
                }
                else { b = n; *--n = ITOF; *--n = (int) b; *--n = CastF; }
-            }
-            else if (t < FLOAT && ty == FLOAT) { // float to int
+            } else if (t < FLOAT && ty == FLOAT) { // float to int
                if (*n == NumF) {
                   *n = Num; c1 = (union conv *) &n[1]; c1->i = (int) c1->f;
                }
@@ -1500,16 +1467,14 @@ resolve_fnproto:
          next(); expr(Lan);
          if (*n == Num && *b == Num) {
             b[1] = (b[1] || n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-         }
-         else { *--n = (int) b; *--n = Lor; }
+         } else { *--n = (int) b; *--n = Lor; }
          ty = INT;
          break;
       case Lan: // short circuit, logic and
          next(); expr(Or);
          if (*n == Num && *b == Num) {
             b[1] = (b[1] && n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-         }
-         else { *--n = (int) b; *--n = Lan; }
+         } else { *--n = (int) b; *--n = Lan; }
          ty = INT;
          break;
       case Or: // push the current value, calculate the right value
@@ -1560,13 +1525,11 @@ resolve_fnproto:
                c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f == c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
-            }
-            else { *--n = (int) b; *--n = EqF; }
+            } else { *--n = (int) b; *--n = EqF; }
          } else {
             if (*n == Num && *b == Num) {
                b[1] = (b[1] == n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-            }
-            else { *--n = (int) b; *--n = Eq; }
+            } else { *--n = (int) b; *--n = Eq; }
          }
          ty = INT;
          break;
@@ -1577,13 +1540,11 @@ resolve_fnproto:
                c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f != c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
-            }
-            else { *--n = (int) b; *--n = NeF; }
+            } else { *--n = (int) b; *--n = NeF; }
          } else {
             if (*n == Num && *b == Num) {
                b[1] = (b[1] != n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-            }
-            else { *--n = (int) b; *--n = Ne; }
+            } else { *--n = (int) b; *--n = Ne; }
          }
          ty = INT;
          break;
@@ -1594,13 +1555,11 @@ resolve_fnproto:
                c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f >= c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
-            }
-            else { *--n = (int) b; *--n = GeF; }
+            } else { *--n = (int) b; *--n = GeF; }
          } else {
             if (*n == Num && *b == Num) {
                b[1] = (b[1] >= n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-            }
-            else { *--n = (int) b; *--n = Ge; }
+            } else { *--n = (int) b; *--n = Ge; }
          }
          ty = INT;
          break;
@@ -1611,13 +1570,11 @@ resolve_fnproto:
                c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f < c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
-            }
-            else { *--n = (int) b; *--n = LtF; }
+            } else { *--n = (int) b; *--n = LtF; }
          } else {
             if (*n == Num && *b == Num) {
                b[1] = (b[1] < n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-            }
-            else { *--n = (int) b; *--n = Lt; }
+            } else { *--n = (int) b; *--n = Lt; }
          }
          ty = INT;
          break;
@@ -1628,13 +1585,11 @@ resolve_fnproto:
                c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f > c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
-            }
-            else { *--n = (int) b; *--n = GtF; }
+            } else { *--n = (int) b; *--n = GtF; }
          } else {
             if (*n == Num && *b == Num) {
                b[1] = (b[1] > n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-            }
-            else { *--n = (int) b; *--n = Gt; }
+            } else { *--n = (int) b; *--n = Gt; }
          }
          ty = INT;
          break;
@@ -1645,13 +1600,11 @@ resolve_fnproto:
                c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->i = (c2->f <= c1->f) ? (btrue ? -1 : 1) : 0;
                n += 2; *b = Num;
-            }
-            else { *--n = (int) b; *--n = LeF; }
+            } else { *--n = (int) b; *--n = LeF; }
          } else {
             if (*n == Num && *b == Num) {
                b[1] = (b[1] <= n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-            }
-            else { *--n = (int) b; *--n = Le; }
+            } else { *--n = (int) b; *--n = Le; }
          }
          ty = INT;
          break;
@@ -1703,8 +1656,7 @@ resolve_fnproto:
                case 0: goto careful_addition;
                case 1: b[1] += n[1]; n += 2;
             }
-         }
-         else { // either (1) both int (2) one is ptr, one is int
+         } else { // either (1) both int (2) one is ptr, one is int
 careful_addition:
             tc = ((t | ty) & (PTR | PTR2)) ? (t >= PTR) : (t >= ty);
             c = n; if (tc) ty = t; // set result type
@@ -1742,35 +1694,30 @@ careful_addition:
                if (ty >= PTR) { // ptr - ptr
                   if (*n == Num && *b == Num) {
                      b[1] = (b[1] - n[1]) / sz; n += 2;
-                  }
-                  else {
+                  } else {
                      *--n = (int) b; *--n = Sub;
                      if (sz > 1) {
                         if ((sz & (sz - 1)) == 0) { // 2^n
                            *--n = popcount32(sz - 1); *--n = Num;
                            --n; *n = (int) (n + 3); *--n = Shr;
-                        }
-                        else {
+                        } else {
                            *--n = sz; *--n = Num; --n; *n = (int) (n + 3);
                            const_div_AST(n+3);
                         }
                      }
                   }
                   ty = INT;
-               }
-               else { // ptr - int
+               } else { // ptr - int
                   if (*n == Num) {
                      n[1] *= sz;
                      if (*b == Num) { b[1] -= n[1]; n += 2; }
                      else { *--n = (int) b; *--n = Sub; }
-                  }
-                  else {
+                  } else {
                      if (sz > 1) {
                         if ((sz & (sz - 1)) == 0) { // 2^n
                            *--n = popcount32(sz - 1); *--n = Num;
                            --n; *n = (int) (n + 3); *--n = Shl;
-                        }
-                        else {
+                        } else {
                            *--n = sz; *--n = Num;
                            --n; *n = (int) (n + 3); *--n = Mul;
                         }
@@ -1779,8 +1726,7 @@ careful_addition:
                   }
                   ty = t;
                }
-            }
-            else { // int - int
+            } else { // int - int
                if (*n == Num && *b == Num) { b[1] -= n[1]; n += 2; }
                else { *--n = (int) b; *--n = Sub; }
                ty = INT;
@@ -1820,8 +1766,7 @@ mod1_to_mul0:
                *--n = (int) b;
                if (n[1] == Num && n[2] > 0 && (n[2] & (n[2] - 1)) == 0) {
                   n[2] = popcount32(n[2] - 1); *--n = Shl; // 2^n
-               }
-               else *--n = Mul;
+               } else *--n = Mul;
             }
             ty = INT;
          }
@@ -1852,25 +1797,17 @@ mod1_to_mul0:
             if (*n == NumF && *b == NumF) {
                c1 = (union conv *) &n[1]; c2 = (union conv *) &b[1];
                c2->f /= c1->f; n += 2;
-            }
-            else { *--n = (int) b; *--n = DivF; }
-         }
-         else {
+            } else { *--n = (int) b; *--n = DivF; }
+         } else {
             if (*n == Num && *b == Num) {
                b[1] /= n[1]; n += 2;
-            }
-            else {
+            } else {
                *--n = (int) b;
                if (n[1] == Num && n[2] > 0) {
                   if ((n[2] & (n[2] - 1)) == 0) {
                      n[2] = popcount32(n[2] - 1); *--n = Shr; // 2^n
-                  }
-                  else { // efficient literal const divisor
-                     const_div_AST(b);
-                  }
-               } else {
-                  *--n = Div; ef_getidx("__aeabi_idiv");
-               }
+                  } else const_div_AST(b); // literal const divisor
+               } else { *--n = Div; ef_getidx("__aeabi_idiv"); }
             }
             ty = INT;
          }
@@ -1892,18 +1829,12 @@ mod1_to_mul0:
             if (n[1] == Num && n[2] > 0) {
                if ((n[2] & (n[2] - 1)) == 0) {
                   --n[2]; *--n = And; // 2^n
-               }
-               else {
-                  if (compound) goto skip_ModAssign; // tricky refactor needed
-                  int mulFact = n[2];
-                  const_div_AST(b); // b - (b/n)*n
-                  c = n; *--n = mulFact; *--n = Num;
+               } else { // b - (b/n)*n
+                  int mulFact = n[2]; if (compound) *n += 8; // ModAssign hack
+                  const_div_AST(b); c = n; *--n = mulFact; *--n = Num;
                   *--n = (int) c; *--n = Mul; *--n = (int) b; *--n = Sub;
                }
-            } else {
-skip_ModAssign:
-               *--n = Mod; ef_getidx("__aeabi_idivmod");
-            }
+            } else { *--n = Mod; ef_getidx("__aeabi_idivmod"); }
          }
          compound = 0;
          ty = INT;
@@ -1957,8 +1888,7 @@ skip_ModAssign:
                   if (*b == Add && b[2] == Num) b[3] += factor * n[1] * sz;
                   else sum += factor * n[1];
                   n += 2; // delete the subscript constant
-               }
-               else {
+               } else {
                   // generate code to add a term
                   if (factor > 1) {
                      *--n = factor; *--n = Num;
@@ -1974,10 +1904,8 @@ skip_ModAssign:
                if (f) {
                   *--n = sum; *--n = Num;
                   *--n = (int) f; *--n = Add;
-               }
-               else { sum *= sz; sz = 1; *--n = sum; *--n = Num; }
-            }
-            else if (!f) goto add_simple;
+               } else { sum *= sz; sz = 1; *--n = sum; *--n = Num; }
+            } else if (!f) goto add_simple;
          }
          if (sz > 1) {
             if (*n == Num) n[1] *= sz;
@@ -2027,23 +1955,20 @@ void init_array(struct ident_s *tn, int extent[], int dim)
          if (cursor) --cursor;
          else fatal("overly nested initializer");
          empty = 1; continue;
-      }
-      else if (tk == '}') {
+      } else if (tk == '}') {
          next();
          // skip remainder elements on this level (or set 0 if cmdline opt)
          if ((off = i % inc[cursor+coff]) || empty)
             i += (inc[cursor+coff] - off);
          if (++cursor == dim - coff) break;
-      }
-      else {
+      } else {
          expr(Cond);
          if (*n != Num && *n != NumF) fatal("non-literal initializer");
 
          if (ty == CHAR + PTR) {
             if (match == CHAR + PTR2) {
                vi[i++] = n[1];
-            }
-            else if (match == CHAR + PTR) {
+            } else if (match == CHAR + PTR) {
                off = strlen((char *) n[1]) + 1;
                if (off > inc[0]) {
                   off = inc[0];
@@ -2052,8 +1977,7 @@ void init_array(struct ident_s *tn, int extent[], int dim)
                }
                memcpy((char *)vi + i, (char *) n[1], off);
                i += inc[0];
-            }
-            else fatal("can't assign string to scalar");
+            } else fatal("can't assign string to scalar");
          }
          else if (ty == match) { vi[i++] = n[1]; }
          else if (ty == INT) {
@@ -2231,11 +2155,9 @@ void gen(int *n)
          *++e = JSR;
          if (label->val == 0) {
             *++e = (int) label->chain; label->chain = e;
-         }
-         else
+         } else
             *++e = n[2];
-      }
-      else {
+      } else {
          *++e = n[2];
       }
       if (n[3] || i == Syscall) {
@@ -2378,8 +2300,7 @@ void loc_array_decl(int ct, int ext[3], int *dims, int *et, int *size)
       next();
       if (*dims == 0 && ct == Par && tk == ']') {
          ext[*dims] = 1; next();
-      }
-      else {
+      } else {
          expr(Cond);
          if (*n != Num) fatal("non-const array size");
          if (n[1] <= 0) fatal("non-positive array dimension");
@@ -2585,8 +2506,7 @@ do_typedef:
          next();
          if (tk == '(') {
             rtf = 0; rtt = (ty == 0 && !memcmp(dd->name, "void", 4)) ? -1 : ty;
-         }
-         else if (inln_func == 1) {
+         } else if (inln_func == 1) {
             fatal("inline keyword can only be applied to func definition");
          }
          dd = id; dd->type = ty;
@@ -2663,8 +2583,7 @@ do_typedef:
                   lp = p + 1;
                }
                if (*p == '\n') ++line;
-            }
-            else
+            } else
                fatal("char after function body decl must be whitespace");
             *p++ = 0;
             if (ld > maxld) maxld = ld;
@@ -2684,11 +2603,11 @@ do_typedef:
                        & "LEA  IMM  IMMF JMP  JSR  BZ   BNZ  ENT  ADJ  LEV  "
                          "PSH  PSHF LC   LI   LF   SC   SI   SF   "
                          "OR   XOR  AND  EQ   NE   GE   LT   GT   LE   "
-                         "SHL  SHR  ADD  SUB  MUL  DIV  MOD  "
+                         "SHL  SHR  ADD  SUB  MUL  DIV  MOD  MMUL "
                          "ADDF SUBF MULF DIVF FTOI ITOF "
                          "EQF  NEF  GEF  LTF  GTF  LEF  "
                          "FNEG FABS SQRT CLZ  SYSC CLCA "
-                         "VENT VLEV PHD  PHF  PHR0 CBLK MMUL" [*++le *5]);
+                         "VENT VLEV PHD  PHF  PHR0 CBLK" [*++le *5]);
                   if (*le < ADJ) {
                      struct ident_s *scan;
                      ++le;
@@ -2717,15 +2636,12 @@ do_typedef:
                               break;
                            }
                         if (!scan->tk) printf(" 0x%08x\n", cval);
-                     }
-                     else
+                     } else
                         printf(" %d\n", *le);
-                  }
-                  else if (*le == ADJ) {
+                  } else if (*le == ADJ) {
                      ++le;
                      printf(" %d\n", *le & 0xf);
-                  }
-                  else if (*le == SYSC) {
+                  } else if (*le == SYSC) {
                      printf(" %s\n", ef_cache[*(++le)]->name);
                   }
                   else printf("\n");
@@ -2742,8 +2658,7 @@ unwind_func:
                }
             }
             tokloc = 0;
-         }
-         else {
+         } else {
             if (ty > ATOM_TYPE && ty < PTR && tsize[bt >> 2] == 0)
                fatal("struct forward decl not supported... yet");
             dd->class = ctx;
@@ -2758,8 +2673,7 @@ unwind_func:
                dd->flags |= 4; // mark loc array inited as approximation
                ty = (i + PTR) | j; dd->type = ty;
                if (tokloc) ++tokloc;
-            }
-            else if (td && (td->type & 3)) {
+            } else if (td && (td->type & 3)) {
                dd->etype = td->etype;
                sz *= tensor_size(td->type & 3, td->etype);
             }
@@ -2785,8 +2699,7 @@ unwind_func:
                      ir_var[ir_count++].name = dd->name;
                   }
                }
-            }
-            else if (ctx == Par) {
+            } else if (ctx == Par) {
                dd->val = ld++; dd->flags |= 4; // mark func args as inited
                if (ty > ATOM_TYPE && ty < PTR) // local struct decl
                   fatal("struct parameters must be pointers");
@@ -2848,8 +2761,7 @@ unwind_func:
                               dd->flags |= 16; // alias declaration
                            }
                            else goto do_assign;
-                        }
-                        else {
+                        } else {
 do_assign:
                            fatal("This specific alias semantic not supported");
                            atk = Assign;
@@ -2860,8 +2772,7 @@ do_assign:
                         *--n = (int)a; *--n = (ty << 16) | i; *--n = Assign;
                         ty = i; *--n = (int) b; *--n = '{';
                      }
-                  }
-                  else { // ctx == Glo
+                  } else { // ctx == Glo
                      a = n; i = ty; expr(Cond); typecheck(Assign, i, ty);
                      if (a - n != 2 || (*n != Num && *n != NumF))
                         fatal("global assignment must eval to lit expr");
@@ -2934,8 +2845,7 @@ keepdeadcode_if:
                }
                n = c; maxld = j;
             }
-         }
-         else {
+         } else {
             labcheck = labt;
             c = n; j = maxld;
             ++pinlndef; ++deadzone; stmt(ctx); --deadzone; --pinlndef;
@@ -2946,8 +2856,7 @@ keepdeadcode_if:
             n = c; maxld = j; // discard if no labels created
             if (tk == Else) { next(); stmt(ctx); }
          }
-      }
-      else {
+      } else {
          if (tt == FLOAT) {
             *--n = 0; *--n = NumF; --n; *n = (int) (n + 3); *--n = NeF; b = n;
          }
@@ -2978,8 +2887,7 @@ keepdeadcode_while:
             goto keepdeadcode_while;
          }
          n = c; maxld = j; // discard if no labels created
-      }
-      else {
+      } else {
          if (tt == FLOAT) {
             *--n = 0; *--n = NumF; --n; *n = (int) (n + 3); *--n = NeF; b = n;
          }
@@ -2987,8 +2895,7 @@ keepdeadcode_while:
          --brkc; --cntc;
          if (c-b == 2 && (*b == Num || *b == NumF)) {
             *--n = (b[1] == 0) ? 1 : 2;
-         }
-         else *--n = 0;
+         } else *--n = 0;
          *--n = (int) b; *--n = (int) a; *--n = While;
       }
       return;
@@ -3007,8 +2914,7 @@ keepdeadcode_while:
       next();
       if (c-b == 2 && (*b == Num || *b == NumF)) {
          *--n = (b[1] == 0) ? 1 : 2;
-      }
-      else {
+      } else {
          if (ty == FLOAT) {
             *--n = 0; *--n = NumF; --n; *n = (int) (n + 3); *--n = NeF; b = n;
          }
@@ -3024,8 +2930,7 @@ keepdeadcode_while:
       *--n = ';';
       if (tk != ';') {
          stmt(ctx); if (tk == ';') next();
-      }
-      else next();
+      } else next();
       d = n;
       *--n = ';';
       expr(Assign); a = n; // Point to entry of for cond
@@ -3117,15 +3022,13 @@ keepdeadcode_while:
             *--n = (int) retlabel[numpts-1]; *--n = Goto;
             *--n = (int) a; *--n = '{';
          }
-      }
-      else {
+      } else {
          a = 0; next();
          if (tk != ';') {
             expr(Assign); a = n;
             if (rtt == -1) fatal("not expecting return value");
             typecheck(Eq, rtt, ty);
-         }
-         else {
+         } else {
             if (rtt != -1) fatal("return value expected");
          }
          if (!deadzone) ++rtf; // signal a return statement exists
@@ -3230,8 +3133,7 @@ int *codegen(int *jitmem, int *jitmap)
             if (tmp >= 64) {
                *il++ = (int) (je++); *iv++ = addcnst(tmp * 4);
                *je++ = 0xe08b0000;   // add r0, fp, r0
-            }
-            else {
+            } else {
                *il++ = (int) (je++); *iv++ = addcnst(-tmp * 4);
                *je++ = 0xe04b0000;   // sub r0, fp, r0
             }
@@ -3393,8 +3295,7 @@ int *codegen(int *jitmem, int *jitmap)
                   sz = sz + (sz & 1);
                   rMap[jj] = sz;
                   sz = sz + 2;
-               }
-               else {
+               } else {
                   rMap[jj] = sz;
                   sz = sz + 1;
                }
@@ -3419,8 +3320,7 @@ int *codegen(int *jitmem, int *jitmap)
                      *je++ = 0xeddd0a00 | (jj + (sz - 4));
                      *je++ = 0xeeb70ae0;
                      *je++ = 0xed8d0b00 | (rMap[jj]-4);
-                  }
-                  else { // int
+                  } else { // int
                      // ldr r0, [sp, #(sz + jj*4)]
                      // str r0, [sp, #rMap[jj]-4]
                      *je++ = 0xe59d0000 | ((sz - 4) + jj)*4;
@@ -3438,16 +3338,14 @@ int *codegen(int *jitmem, int *jitmap)
                   if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
                   *je++ = 0xec500b10 | (rMap[jj] << 12) |
                           ((rMap[jj] + 1) << 16) | (rMap[jj] >> 1);
-               }
-               else { // int
+               } else { // int
                   if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
                   // ldr r"rMap[jj]", [sp, #(sz + jj*4)]
                   *je++ = 0xe59d0000 | (rMap[jj] << 12) | ((sz - 4) + jj)*4;
                }
             }
             ++pc; // point at ADJ instruction
-         }
-         else {
+         } else {
             pc = pc + 3; kk = ni; // skip ADJ instruction
             for (jj = 0; jj < ii; ++jj) {
                if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
@@ -3470,8 +3368,7 @@ int *codegen(int *jitmem, int *jitmap)
          if (isPrtf) {
             if (sz > 4) *je++ = 0xe28dd000 | (sz - 4)*4; // add sp, sp, #off
             free(rMap);
-         }
-         else {
+         } else {
             if (ni > 4) {
                if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
                *je++ = 0xe28dd018;                // add sp, sp, #24
@@ -3516,8 +3413,7 @@ int *codegen(int *jitmem, int *jitmap)
          if ((EQ <= i && i <= LE) || (EQF <= i && i <= LEF)) {
             if (EQ <= i && i <= LE) {
                *je++ = 0xe49d1004; *je++ = 0xe1510000; // pop {r1}; cmp r1, r0
-            }
-            else {
+            } else {
                *je++ = 0xecfd0a01; *je++ = 0xeef40ac0; // pop {s1}; vcmpe s1,s0
                *je++ = 0xeef1fa10; i -= (EQF - EQ);    // vmrs APSR_nzcv, fpscr
                if (*pc == FTOI) *pc = PHR0;
@@ -4346,20 +4242,15 @@ int main(int argcc, char **argvv)
    while (argc > 0 && **argv == '-') {
       if ((*argv)[1] == 's') {
          src = ((*argv)[2] == 'i') ? 2 : 1; --argc; ++argv;
-      }
-      else if ((*argv)[1] == 'r') {
+      } else if ((*argv)[1] == 'r') {
          single_exit = 1; --argc; ++argv;
-      }
-      else if (!strcmp(*argv, "-fsigned-char")) {
+      } else if (!strcmp(*argv, "-fsigned-char")) {
          signed_char = 1; --argc; ++argv;
-      }
-      else if ((*argv)[1] == 'O' && (*argv)[2] == 'p') {
+      } else if ((*argv)[1] == 'O' && (*argv)[2] == 'p') {
          peephole = 1; --argc; ++argv;
-      }
-      else if ((*argv)[1] == 'm' && (*argv)[2] == 'a') {
+      } else if ((*argv)[1] == 'm' && (*argv)[2] == 'a') {
          ma = 1 - ma; --argc; ++argv;
-      }
-      else if ((*argv)[1] == 'o') {
+      } else if ((*argv)[1] == 'o') {
 #ifdef ARM64OS
          die("Only JIT execution allowed on 64-bit OS");
 #endif
@@ -4372,8 +4263,7 @@ int main(int argcc, char **argvv)
             printf("could not open(%s)\n", *argv); return -1;
          }
          --argc; ++argv;
-      }
-      else if ((*argv)[1] == 'D') {
+      } else if ((*argv)[1] == 'D') {
          p = &(*argv)[2]; next();
          if (tk != Id) fatal("bad -D identifier");
          struct ident_s *dd = id; next(); i = 0; otk = Num;
@@ -4387,12 +4277,10 @@ int main(int argcc, char **argvv)
          dd->class = otk; dd->val = i;
          dd->type = (otk == Num) ? INT : FLOAT;
          --argc; ++argv;
-      }
-      else if (!strcmp(*argv, "-btrue")) {
+      } else if (!strcmp(*argv, "-btrue")) {
          // so that boolean values can be mutiplied by "true"
          btrue = 1; --argc; ++argv;
-      }
-      else {
+      } else {
          argc = 0; // bad compiler option. Force exit.
       }
    }

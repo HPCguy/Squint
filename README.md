@@ -53,11 +53,11 @@ algorithms applied to bit arrays.
 ```
 $ make mc-so      # use gcc to build an enhanced version of the mc compiler
   CC+LD		mc-so
-$ time ./mc-so -DSQUINT_SO -Op mc.c -Op tests/sieve.c
+$ time ./mc-so -DSQUINT_SO mc.c tests/sieve.c
 
-real	0m1.031s
-user	0m0.999s
-sys	0m0.031s
+real  0m0.422s
+user  0m0.399s
+sys   0m0.022s
 ```
 
 ## Performance
@@ -72,7 +72,7 @@ Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
 
 | Benchmark | Mc compile time | Mc+Squint time | Gcc -O3 time |
 | --- | --- | --- | --- |
-| mc.c | ***0.140s*** | 0.919s | 6.71s |
+| mc.c | ***0.073s*** | 0.476s | 7.07s |
 
 | Benchmark |  Mc .text size | Mc+Squint .text | Gcc -O3 .text | Notes |
 | --- | --- | --- | --- | --- |

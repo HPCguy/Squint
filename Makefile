@@ -25,7 +25,7 @@ $(BIN): $(BIN).c
 
 $(BIN)-so: $(BIN).c $(PEEP).c
 	$(VECHO) "  CC+LD\t\t$@\n"
-	$(Q)if [ "$(shell uname -m)" != "aarch64" ]; then
+	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(Q)$(ARM_CC) -DSQUINT_SO $(CFLAGS) -c -fpic $(PEEP).c
 	$(Q)$(ARM_CC) -shared -o lib$(PEEP).so $(PEEP).o
 	$(Q)$(ARM_CC) -DSQUINT_SO -g $(CFLAGS) $(CURR_DIR)/lib$(PEEP).so -o $@ $< -ldl
@@ -40,7 +40,7 @@ $(BIN)-native: $(BIN).c
 	    -ldl
 
 $(PEEP): $(PEEP).c
-	$(Q)if [ "$(shell uname -m)" != "aarch64" ]; then
+	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(VECHO) "  CC+LD\t\t$@\n"
 	$(Q)$(ARM_CC) $(CFLAGS) -o $@ $< -g
 	fi
@@ -68,7 +68,7 @@ check: $(EXEC) $(TEST_OBJ)
 	@echo "Type 'make show_asm' to create assembly listing in ASM directory"
 
 bench: $(EXEC) $(OBJ_DIR)/$(BIN)-opt
-	$(Q)if [ "$(shell uname -m)" != "aarch64" ]; then
+	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/lulesh-opt $(TEST_DIR)/extra/lulesh.c
 	$(Q) scripts/peep $(OBJ_DIR)/lulesh-opt -e
 	$(Q) time $(ARM_EXEC) $(OBJ_DIR)/lulesh-opt
@@ -82,13 +82,13 @@ bench: $(EXEC) $(OBJ_DIR)/$(BIN)-opt
 	fi
 
 $(OBJ_DIR)/$(BIN): $(BIN)
-	$(Q)if [ "$(shell uname -m)" != "aarch64" ]; then
+	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(VECHO) "  SelfCC\t$@\n"
 	$(Q)$(ARM_EXEC) ./$^ -o $@ $(BIN).c
 	fi
 
 $(OBJ_DIR)/$(BIN)-opt: $(BIN) $(PEEP)
-	$(Q)if [ "$(shell uname -m)" != "aarch64" ]; then
+	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(VECHO) "  SelfCC\t$@\n"
 	$(Q)$(ARM_EXEC) ./$< $(OP) -o $@ $(BIN).c
 	$(Q) scripts/peep $@
@@ -103,7 +103,7 @@ $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
 	$(Q)$(ARM_EXEC) ./$(BIN) $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <JIT-opt> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN)-so $< 2 $(REDIR)
-	$(Q)if [ "$(shell uname -m)" != "aarch64" ]; then
+	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(VECHO) "[*** verify $< <ELF> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN) -o $(OBJ_DIR)/$(notdir $(basename $<)) $< $(REDIR)
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<)) 2 $(REDIR)
