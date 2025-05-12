@@ -1,5 +1,13 @@
 ARM_CC = gcc
 
+ARM_COMPILER := $(shell readlink -ne `which $(ARM_CC)`)
+
+ifneq (,$(findstring eabihf,$(ARM_COMPILER)))
+   ARM_ARCH = "aarch32"
+else
+   ARM_ARCH = "aarch64"
+endif
+
 # FIXME: check ld-linux.so as well
 ARM_LD_LINUX_PATH := $(shell cd $(shell $(ARM_CC) --print-sysroot) 2>/dev/null && pwd)
 ifeq ("$(ARM_LD_LINUX_PATH)","/") # packaged GNU toolchain
