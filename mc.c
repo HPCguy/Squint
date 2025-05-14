@@ -362,9 +362,7 @@ char *strrchr(char *s, int c);
 
 #ifdef SQUINT_SO
 int *squint_opt(int *begin, int *end);
-#ifdef ARM64OS
 #include "squint.c"
-#endif
 #endif
 
 char *append_strtab(char **strtab, char *str)
@@ -4251,9 +4249,6 @@ int main(int argcc, char **argvv)
       } else if ((*argv)[1] == 'm' && (*argv)[2] == 'a') {
          ma = 1 - ma; --argc; ++argv;
       } else if ((*argv)[1] == 'o') {
-#ifdef ARM64OS
-         die("Only JIT execution allowed on 64-bit OS");
-#endif
          elf = 1; --argc; ++argv;
          if (argc < 1 || **argv == '-') die("no output file argument");
          char *suffix = strrchr(*argv, '.');
