@@ -25,12 +25,12 @@ $(BIN): $(BIN).c
 
 $(BIN)-so: $(BIN).c $(PEEP).c
 	$(VECHO) "  CC+LD\t\t$@\n"
-	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
+	$(Q)if [ "$(shell uname -m)" != "aarch64" ]; then
 	$(Q)$(ARM_CC) -DSQUINT_SO $(CFLAGS) -c -fpic $(PEEP).c
 	$(Q)$(ARM_CC) -shared -o lib$(PEEP).so $(PEEP).o
 	$(Q)$(ARM_CC) -DSQUINT_SO -g $(CFLAGS) $(CURR_DIR)/lib$(PEEP).so -o $@ $< -ldl
 	else
-	$(Q)$(ARM_CC) -DSQUINT_SO -DARM64OS -g $(CFLAGS) -o $@ $< -ldl
+	$(Q)$(ARM_CC) -DSQUINT_SO -g $(CFLAGS) -o $@ $< -ldl
 	fi
 
 $(BIN)-native: $(BIN).c
@@ -40,10 +40,8 @@ $(BIN)-native: $(BIN).c
 	    -ldl
 
 $(PEEP): $(PEEP).c
-	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(VECHO) "  CC+LD\t\t$@\n"
 	$(Q)$(ARM_CC) $(CFLAGS) -o $@ $< -g
-	fi
 
 
 ## Run tests and show message
@@ -68,7 +66,6 @@ check: $(EXEC) $(TEST_OBJ)
 	@echo "Type 'make show_asm' to create assembly listing in ASM directory"
 
 bench: $(EXEC) $(OBJ_DIR)/$(BIN)-opt
-	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/lulesh-opt $(TEST_DIR)/extra/lulesh.c
 	$(Q) scripts/peep $(OBJ_DIR)/lulesh-opt -e
 	$(Q) time $(ARM_EXEC) $(OBJ_DIR)/lulesh-opt
@@ -79,20 +76,15 @@ bench: $(EXEC) $(OBJ_DIR)/$(BIN)-opt
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/nbody_arr-opt $(TEST_DIR)/extra/nbody_arr.c
 	$(Q) scripts/peep $(OBJ_DIR)/nbody_arr-opt -e
 	$(Q) time $(ARM_EXEC) $(OBJ_DIR)/nbody_arr-opt
-	fi
 
 $(OBJ_DIR)/$(BIN): $(BIN)
-	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(VECHO) "  SelfCC\t$@\n"
 	$(Q)$(ARM_EXEC) ./$^ -o $@ $(BIN).c
-	fi
 
 $(OBJ_DIR)/$(BIN)-opt: $(BIN) $(PEEP)
-	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(VECHO) "  SelfCC\t$@\n"
 	$(Q)$(ARM_EXEC) ./$< $(OP) -o $@ $(BIN).c
 	$(Q) scripts/peep $@
-	fi
 
 .ONESHELL:
 SHELL_HACK := $(shell mkdir -p $(IR_DIR) $(OBJ_DIR) $(ASM_DIR))
@@ -103,7 +95,6 @@ $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
 	$(Q)$(ARM_EXEC) ./$(BIN) $< 2 $(REDIR)
 	$(VECHO) "[*** verify $< <JIT-opt> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN)-so $< 2 $(REDIR)
-	$(Q)if [ "$(ARM_ARCH)" == "aarch32" ]; then
 	$(VECHO) "[*** verify $< <ELF> *******]\n"
 	$(Q)$(ARM_EXEC) ./$(BIN) -o $(OBJ_DIR)/$(notdir $(basename $<)) $< $(REDIR)
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<)) 2 $(REDIR)
@@ -116,7 +107,6 @@ $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
 	$(Q) scripts/peep $(OBJ_DIR)/$(notdir $(basename $<))-opt
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
-	fi
 	$(Q)$(call pass,$<)
 
 show_asm:

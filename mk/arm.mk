@@ -2,10 +2,8 @@ ARM_CC = gcc
 
 ARM_COMPILER := $(shell readlink -ne `which $(ARM_CC)`)
 
-ifneq (,$(findstring eabihf,$(ARM_COMPILER)))
-   ARM_ARCH = "aarch32"
-else
-   ARM_ARCH = "aarch64"
+ifeq (,$(findstring eabihf,$(ARM_COMPILER)))
+   $(error Squint requires a 32 bit ARM compiler with eabihf ABI)
 endif
 
 # FIXME: check ld-linux.so as well
