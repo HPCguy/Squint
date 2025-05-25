@@ -188,6 +188,7 @@ enum {
    Cond, // operator: ?
    Lor, Lan, Or, Xor, And,         // operator: ||, &&, |, ^, &
    Eq, Ne, Ge, Lt, Gt, Le,         // operator: ==, !=, >=, <, >, <=
+   Hs, Lo, Hi, Ls,        // unsigned operator: >=, <, >, <=    for ptrs
    Shl, Shr, Add, Sub, Mul, Div, Mod, // operator: <<, >>, +, -, *, /, %
    AddF, SubF, MulF, DivF,       // float type operators (hidden)
    EqF, NeF, GeF, LtF, GtF, LeF,
@@ -319,10 +320,11 @@ enum {
    OR  , /* 18 */  XOR , /* 19 */  AND , /* 20 */
    EQ  , /* 21 */  NE  , /* 22 */
    GE  , /* 23 */  LT  , /* 24 */  GT  , /* 25 */ LE  , /* 26 */
-   SHL , /* 27 */  SHR , /* 28 */
-   ADD , /* 29 */  SUB , /* 30 */  MUL , /* 31 */ DIV , /* 32 */ MOD, /* 33 */
-   MMUL, /* 34 reciprocal multiply special case */
-   ADDF, /* 35 */  SUBF, /* 36 */  MULF, /* 37 */ DIVF, /* 38 */
+   HS  , /* 27 */  LO  , /* 28 */  HI  , /* 29 */ LS  , /* 30 */
+   SHL , /* 31 */  SHR , /* 32 */
+   ADD , /* 33 */  SUB , /* 34 */  MUL , /* 35 */ DIV , /* 36 */ MOD, /* 37 */
+   MMUL, /* 38 reciprocal multiply special case */
+   ADDF, /* 39 */  SUBF, /* 40 */  MULF, /* 41 */ DIVF, /* 42 */
    /* arithmetic instructions
     * Each operator has two arguments: the first one is stored on the top
     * of the stack while the second is stored in R0.
@@ -330,23 +332,23 @@ enum {
     * off and the result will be stored in R0.
     */
 
-   FTOI, /* 39 */  ITOF, /* 40 */  EQF , /* 41 */ NEF , /* 42 */
-   GEF , /* 43 */  LTF , /* 44 */  GTF , /* 45 */ LEF , /* 46 */
+   FTOI, /* 43 */  ITOF, /* 44 */  EQF , /* 45 */ NEF , /* 46 */
+   GEF , /* 47 */  LTF , /* 48 */  GTF , /* 49 */ LEF , /* 50 */
 
-   FNEG, /* 47 float fnegf(float); returns -arg */
-   FABS, /* 48 float fabsf(float); */
-   SQRT, /* 49 float sqrtf(float); */
-   CLZ,  /* 50 int clz(int); */
-   SYSC, /* 51 system call */
-   CLCA, /* 52 clear cache, used by JIT compilation */
+   FNEG, /* 51 float fnegf(float); returns -arg */
+   FABS, /* 52 float fabsf(float); */
+   SQRT, /* 53 float sqrtf(float); */
+   CLZ,  /* 54 int clz(int); */
+   SYSC, /* 55 system call */
+   CLCA, /* 56 clear cache, used by JIT compilation */
 
-   VENT, /* 53 Needed fo Varargs ABI, which requires 8-byte stack align */
-   VLEV, /* 54 */
+   VENT, /* 57 Needed fo Varargs ABI, which requires 8-byte stack align */
+   VLEV, /* 58 */
 
-   PHD,  /* 55 PeepHole Disable next assembly instruction in optimizer */
-   PHF,  /* 56 Inform peephole optimizer a function call is beginning */
-   PHR0, /* 57 Inform PeepHole optimizer that R0 holds a return value */
-   CBLK, /* 58 Statement boundary -- good place to store istream const */
+   PHD,  /* 59 PeepHole Disable next assembly instruction in optimizer */
+   PHF,  /* 60 Inform peephole optimizer a function call is beginning */
+   PHR0, /* 61 Inform PeepHole optimizer that R0 holds a return value */
+   CBLK, /* 62 Statement boundary -- good place to store istream const */
 
    INVALID
 };
@@ -827,13 +829,13 @@ void typecheck(int op, int tl, int tr)
       if (op == Add && pt != 3 && (it & ~pt)) ; // ptr + int or int + ptr ok
       else if (op == Sub && pt == 2 && (it & 1)) ; // ptr - int ok
       else if (op == Assign && pt == 2 && *n == Num && n[1] == 0) ; // ok
-      else if (op >= Eq && op <= Le && *n == Num && n[1] == 0) ; // ok
+      else if (op >= Eq && op <= Ls && *n == Num && n[1] == 0) ; // ok
       else fatal("bad pointer arithmetic or cast needed");
    }
    else if (pt == 3) {
       if ((tl ^ tr) == 0) { // pointers to same type
          if (op != Assign && op != Sub &&
-            (op < Eq || op > Le)) // pointers to same type
+            (op < Eq || op > Ls)) // pointers to same type
          fatal("bad pointer arithmetic");
       } else
          fatal("pointer cast needed");
@@ -1557,7 +1559,7 @@ resolve_fnproto:
          } else {
             if (*n == Num && *b == Num) {
                b[1] = (b[1] >= n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-            } else { *--n = (int) b; *--n = Ge; }
+            } else { *--n = (int) b; *--n = ((ty < PTR) ? Ge : Hs); }
          }
          ty = INT;
          break;
@@ -1572,7 +1574,7 @@ resolve_fnproto:
          } else {
             if (*n == Num && *b == Num) {
                b[1] = (b[1] < n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-            } else { *--n = (int) b; *--n = Lt; }
+            } else { *--n = (int) b; *--n = ((ty < PTR) ? Lt : Lo); }
          }
          ty = INT;
          break;
@@ -1587,7 +1589,7 @@ resolve_fnproto:
          } else {
             if (*n == Num && *b == Num) {
                b[1] = (b[1] > n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-            } else { *--n = (int) b; *--n = Gt; }
+            } else { *--n = (int) b; *--n = ((ty < PTR) ? Gt : Hi); }
          }
          ty = INT;
          break;
@@ -1602,7 +1604,7 @@ resolve_fnproto:
          } else {
             if (*n == Num && *b == Num) {
                b[1] = (b[1] <= n[1]) ? (btrue ? -1 : 1) : 0; n += 2;
-            } else { *--n = (int) b; *--n = Le; }
+            } else { *--n = (int) b; *--n = ((ty < PTR) ? Le : Ls); }
          }
          ty = INT;
          break;
@@ -2090,6 +2092,10 @@ void gen(int *n)
    case Lt:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = LT; break;
    case Gt:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = GT; break;
    case Le:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = LE; break;
+   case Hs:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = HS; break;
+   case Lo:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = LO; break;
+   case Hi:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = HI; break;
+   case Ls:   gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = LS; break;
    case Shl:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = SHL; break;
    case Shr:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = SHR; break;
    case Add:  gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = ADD; break;
@@ -2600,7 +2606,8 @@ do_typedef:
                   printf("%04d: %8.4s", off,
                        & "LEA  IMM  IMMF JMP  JSR  BZ   BNZ  ENT  ADJ  LEV  "
                          "PSH  PSHF LC   LI   LF   SC   SI   SF   "
-                         "OR   XOR  AND  EQ   NE   GE   LT   GT   LE   "
+                         "OR   XOR  AND  EQ   NE   "
+                         "GE   LT   GT   LE   HS   LO   HI   LS   "
                          "SHL  SHR  ADD  SUB  MUL  DIV  MOD  MMUL "
                          "ADDF SUBF MULF DIVF FTOI ITOF "
                          "EQF  NEF  GEF  LTF  GTF  LEF  "
@@ -2824,9 +2831,12 @@ keepdeadcode_if:
       next();
       if (tk != '(') fatal("open parenthesis expected");
       next();
-      c = n; expr(Assign); tt = ty; a = n;
+      c = n; expr(Assign);
       if (tk != ')') fatal("close parenthesis expected");
-      next();
+      if (ty == FLOAT && !((c-n) == 2 && *n == NumF)) {
+         *--n = 0; *--n = NumF; --n; *n = (int) (n + 3); *--n = NeF;
+      }
+      a = n; next();
       // dead code elimination for const if-condition
       if (dodeadcode && (c-a == 2) && (*a == Num || *a == NumF)) {
          struct ident_s *labcheck;
@@ -2855,9 +2865,6 @@ keepdeadcode_if:
             if (tk == Else) { next(); stmt(ctx); }
          }
       } else {
-         if (tt == FLOAT) {
-            *--n = 0; *--n = NumF; --n; *n = (int) (n + 3); *--n = NeF; b = n;
-         }
          stmt(ctx); b = n;
          if (tk == Else) { next(); stmt(ctx); d = n; } else d = 0;
          *--n = (int)d; *--n = (int) b; *--n = (int) a; *--n = Cond;
@@ -3408,8 +3415,8 @@ int *codegen(int *jitmem, int *jitmap)
       case PHR0: *je++ = 0xe1a0d00d; break;      // mov sp, sp
       case CBLK: cnstBlk = 1;        break;
       default:
-         if ((EQ <= i && i <= LE) || (EQF <= i && i <= LEF)) {
-            if (EQ <= i && i <= LE) {
+         if ((EQ <= i && i <= LS) || (EQF <= i && i <= LEF)) {
+            if (EQ <= i && i <= LS) {
                *je++ = 0xe49d1004; *je++ = 0xe1510000; // pop {r1}; cmp r1, r0
             } else {
                *je++ = 0xecfd0a01; *je++ = 0xeef40ac0; // pop {s1}; vcmpe s1,s0
@@ -3421,8 +3428,12 @@ int *codegen(int *jitmem, int *jitmap)
             // movlt r0, #0; movge   r0, #0
             else if (i <= LT) { je[0] = 0xb3a00000; je[1] = 0xa3a00000; }
             // movgt r0, #0; movle r0, #0
-            else { je[0] = 0xc3a00000; je[1] = 0xd3a00000; }
-            if (i == EQ || i == LT || i == GT)
+            else if (i <= LE) { je[0] = 0xc3a00000; je[1] = 0xd3a00000; }
+            // movlo r0, #0; movhs   r0, #0
+            else if (i <= LO) { je[0] = 0x33a00000; je[1] = 0x23a00000; }
+            // movhi r0, #0; movls r0, #0
+            else { je[0] = 0x83a00000; je[1] = 0x93a00000; }
+            if (i == EQ || i == LT || i == GT || i == LO || i == HI)
                je[0] = je[0] | (btrue ? 0x400000 : 1); // use mvn if btrue
             else
                je[1] = je[1] | (btrue ? 0x400000 : 1);
