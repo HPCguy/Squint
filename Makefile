@@ -26,11 +26,11 @@ $(BIN): $(BIN).c
 $(BIN)-so: $(BIN).c $(PEEP).c
 	$(VECHO) "  CC+LD\t\t$@\n"
 	$(Q)if [ "$(shell uname -m)" != "aarch64" ]; then
-	$(Q)$(ARM_CC) -DSQUINT_SO $(CFLAGS) -c -fpic $(PEEP).c
+	$(Q)$(ARM_CC) -DSQUINT_SO=1 $(CFLAGS) -c -fpic $(PEEP).c
 	$(Q)$(ARM_CC) -shared -o lib$(PEEP).so $(PEEP).o
-	$(Q)$(ARM_CC) -DSQUINT_SO -g $(CFLAGS) $(CURR_DIR)/lib$(PEEP).so -o $@ $< -ldl
+	$(Q)$(ARM_CC) -DSQUINT_SO=1 -g $(CFLAGS) $(CURR_DIR)/lib$(PEEP).so -o $@ $< -ldl
 	else
-	$(Q)$(ARM_CC) -DSQUINT_SO -g $(CFLAGS) -o $@ $< -ldl
+	$(Q)$(ARM_CC) -DSQUINT_SO=1 -g $(CFLAGS) -o $@ $< -ldl
 	fi
 
 $(BIN)-native: $(BIN).c

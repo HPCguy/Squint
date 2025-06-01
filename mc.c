@@ -69,6 +69,7 @@ struct ident_s {
    int flags;    // funcID: 1 = fwd decl func, 2 = func not dead code
                  // varID: 4 = decl initalizer, 8 = assign
                  //        16 = alias initializer, 32 = var was read
+                 //        64 = var was written, 128 = null #define
                  // retlabel IDs: holds depth of recursive inlining
    int *chain;   // used for forward declaration IR inst ptr
 } *id,           // currently parsed identifier
@@ -323,7 +324,7 @@ enum {
    HS  , /* 27 */  LO  , /* 28 */  HI  , /* 29 */ LS  , /* 30 */
    SHL , /* 31 */  SHR , /* 32 */
    ADD , /* 33 */  SUB , /* 34 */  MUL , /* 35 */ DIV , /* 36 */ MOD, /* 37 */
-   MMUL, /* 38 reciprocal multiply special case */
+   RMUL, /* 38 reciprocal multiply special case */
    ADDF, /* 39 */  SUBF, /* 40 */  MULF, /* 41 */ DIVF, /* 42 */
    /* arithmetic instructions
     * Each operator has two arguments: the first one is stored on the top
@@ -516,6 +517,7 @@ text_sub:
             for (il = symlh; il < symlt; ++il) { // local ids
                if (tl == il->hash && il->name[nlen] == 0 &&
                    !memcmp(il->name, pp, nlen)) {
+                  if (il->flags & 128) goto text_sub; // null #define
                   if (tokloc == 2) {
                      if (il->val > lds[ldn])
                         fatal("redefinition of var within scope");
@@ -545,6 +547,7 @@ text_sub:
             for (il = symk; il < symgt; ++il) { // global ids
                if (tl == il->hash && il->name[nlen] == 0 &&
                    !memcmp(il->name, pp, nlen)) {
+                  if (il->flags & 128) goto text_sub; // null #define
                   tl = il->tk; id = il;
                   goto ret;
                }
@@ -622,7 +625,7 @@ new_block_def:
                if (ndd->class) fatal("can't redefine preprocessor symbol");
                while (*s == ' ') ++s;
                if (*s == '\n') {    // no value assigned
-                  ndd->class = Num; ndd->type = INT;
+                  ndd->class = Num; ndd->type = INT; ndd->flags = 128;
                   break;
                }
                eol2semi(s);
@@ -2107,7 +2110,7 @@ void gen(int *n)
               *++e = PSH; gen(n + 2); *++e = DIV;
               if (peephole) *++e = PHR0;
               break;
-   case DivCnst: gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = MMUL; break;
+   case DivCnst: gen((int *) n[1]); *++e = PSH; gen(n + 2); *++e = RMUL; break;
    case Mod:  if (peephole) *++e = PHF;
               gen((int *) n[1]);
               if (peephole) *++e = PHD;
@@ -2608,7 +2611,7 @@ do_typedef:
                          "PSH  PSHF LC   LI   LF   SC   SI   SF   "
                          "OR   XOR  AND  EQ   NE   "
                          "GE   LT   GT   LE   HS   LO   HI   LS   "
-                         "SHL  SHR  ADD  SUB  MUL  DIV  MOD  MMUL "
+                         "SHL  SHR  ADD  SUB  MUL  DIV  MOD  RMUL "
                          "ADDF SUBF MULF DIVF FTOI ITOF "
                          "EQF  NEF  GEF  LTF  GTF  LEF  "
                          "FNEG FABS SQRT CLZ  SYSC CLCA "
@@ -3241,7 +3244,7 @@ int *codegen(int *jitmem, int *jitmap)
       case MUL:
          *je++ = 0xe49d1004; *je++ = 0xe0000091; // pop {r1}; mul r0, r1, r0
          break;
-      case MMUL:
+      case RMUL:
          *je++ = 0xe49d1004; *je++ = 0xe750f011; // pop {r1}; smmul r0, r1, r0
          break;
       case DIV:
@@ -4280,6 +4283,7 @@ int main(int argcc, char **argvv)
                fatal("bad -D initializer");
             otk = *n; i = n[1]; n += 2;
          }
+         else dd->flags = 128; // null #define
          dd->class = otk; dd->val = i;
          dd->type = (otk == Num) ? INT : FLOAT;
          --argc; ++argv;
