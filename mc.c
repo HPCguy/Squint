@@ -364,8 +364,10 @@ char *strrchr(char *s, int c);
 #endif
 
 #ifdef SQUINT_SO
+#ifndef __MC__
 int *squint_opt(int *begin, int *end);
 #include "squint.c"
+#endif
 #endif
 
 char *append_strtab(char **strtab, char *str)

@@ -12,7 +12,7 @@ TEST_OBJ = $(TEST_SRC:.c=.o)
 
 BIN = mc
 PEEP = squint
-EXEC = $(BIN) $(BIN)-native $(PEEP) $(BIN)-so
+EXEC = $(BIN) $(BIN)-native $(PEEP) $(BIN)-so # $(BIN)o
 
 include mk/arm.mk
 include mk/common.mk
@@ -39,9 +39,36 @@ $(BIN)-native: $(BIN).c
 	    -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-format \
 	    -ldl
 
-$(PEEP): $(PEEP).c
+$(PEEP): $(BIN) $(PEEP).c
 	$(VECHO) "  CC+LD\t\t$@\n"
-	$(Q)$(ARM_CC) $(CFLAGS) -o $@ $< -g
+	# Build an optimizer with ICACHE packing disabled
+	$(Q)$(ARM_EXEC) ./$(BIN) -Op -DNO_PACK_ICACHE=1 -o $(PEEP).tmp $(PEEP).c
+	$(Q)$(ARM_EXEC) cp $(PEEP).tmp $(PEEP)
+	$(Q)$(ARM_EXEC) scripts/peep $(PEEP).tmp
+	$(Q)$(ARM_EXEC) cp $(PEEP).tmp $(PEEP)
+	# Build an optimizer that is not *itself* ICACHE packed
+	# but that will generate ICACHE packed executables.
+	$(Q)$(ARM_EXEC) ./mc -Op -o $(PEEP).tmp $(PEEP).c
+	$(Q)$(ARM_EXEC) scripts/peep $(PEEP).tmp
+	$(Q)$(ARM_EXEC) cp $(PEEP).tmp $(PEEP)
+	$(Q)$(ARM_EXEC) rm $(PEEP).tmp
+
+# All the floating point tests fail with this executable.
+# Needs to be re-enabled after that issue is fixed.
+# $(BIN)o: $(BIN) $(PEEP)
+# 	$(VECHO) "  CC+LD\t\t$@\n"
+# 	# Build an optimizer with ICACHE packing disabled
+# 	$(Q)$(ARM_EXEC) cat $(PEEP).c $(BIN).c > $(BIN)o.c
+# 	$(Q)$(ARM_EXEC) ./$(BIN) -Op -DSQUINT_SO=1 -o $(BIN)o $(BIN)o.c
+# 	$(Q)$(ARM_EXEC) scripts/peep $(BIN)o
+# 	# Build an optimizer that is not *itself* ICACHE packed
+# 	# but that will generate ICACHE packed executables.
+# 	# When this is enabled, comment out lines at end of $(PEEP) target
+# 	$(Q)$(ARM_EXEC) ./$(BIN) -Op -o $(PEEP).tmp $(PEEP).c
+# 	$(Q)$(ARM_EXEC) scripts/peep $(PEEP).tmp
+# 	$(Q)$(ARM_EXEC) cp $(PEEP).tmp $(PEEP)
+# 	$(Q)$(ARM_EXEC) rm $(PEEP).tmp
+# 	$(Q)$(ARM_EXEC) touch ./$(BIN)o
 
 
 ## Run tests and show message
@@ -107,6 +134,10 @@ $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
 	$(Q) scripts/peep $(OBJ_DIR)/$(notdir $(basename $<))-opt
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
+	# Re-enable this when mco FP bug is fixed.
+	# $(VECHO) "[*** verify $< <mco> *******]\n"
+	# $(Q)$(ARM_EXEC) ./$(BIN)o -o $(OBJ_DIR)/$(notdir $(basename $<))-opt $< $(REDIR)
+	# $(Q)$(ARM_EXEC) $(OBJ_DIR)/$(notdir $(basename $<))-opt 2 $(REDIR)
 	$(Q)$(call pass,$<)
 
 show_asm:

@@ -3357,6 +3357,7 @@ static void simplify_branch(int *funcBegin, int *funcEnd) {
 
 /* remove all NOP instructions ( mov r0, r0 ) and adjust branches */
 /* mode == 0: intra-function repack, mode != 0, inter-function */
+/* funcEnd points at last "active" instruction , which could be a NOP */
 static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
 {
    int *retVal = funcEnd;
@@ -3486,8 +3487,8 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
             if (*scan == NOP) {
                *packed++ = NOP;
                if (++nopRun < 8) continue;
-               // 4 consecutive nops means interfunc region found
-               int *last = scan - 8; // last instr from previous func
+               // 8 consecutive nops means interfunc region found
+               int *last = scan - 8; // last non-NOP instruction
                int *scan2 = scan + 1;
                packed -= 8;
                while (scan2 <= funcEnd && *scan2 == NOP) {
@@ -3544,13 +3545,13 @@ static int *relocate_nop(int *funcBegin, int *funcEnd, int mode)
                branchAddr[currAddr++] = packed - funcBegin;
             }
          }
-         if (mode == InterFunc && *scan != NOP) {
-            *packed++ = *scan;
+         if (mode == InterFunc) {
+            if (*scan != NOP) *packed++ = *scan;
          }
          else if (is_const(scan)) {
             if (scan != packed) {
                tmp = find_const((scan-cbegin)*4);
-               int iaddr = cremap[tmp-lowc].data_addr/4;
+               int iaddr = cnst_pool[tmp].data_addr/4;
                cnst_bit[iaddr/(sizeof(int)*8)] &=
                      ~(1 << (iaddr & ((sizeof(int)*8)-1)));
                iaddr = (packed-cbegin);
@@ -3857,17 +3858,24 @@ static void create_pushpop_map(int *instInfo, int *funcBegin, int *funcEnd)
                /* within push/pop, def of r0 happens before use... */
                if (m1modifiable && r0push1u > r0push1d) {
                   if ((*scanm1 & 0xf0000000) == 0xe0000000) { // uncond op
-                     *scanm1 |=
+                     int dstReg =
                         (((*scanm1 & 0x0e0000f0) == 0x90 ||
                           (*scanm1 & 0x0ff000f0) == 0x07500010) ?
                         (1<<16) : (1<<12));
+                     *scanm1 |= dstReg;
+                     *m1 |= dstReg;
                      *pair[i].push = NOP;
+                      instInfo[pair[i].push-funcBegin] = 0; // &= RI_bb;
                      *pair[i].pop  = NOP;
+                      instInfo[pair[i].pop-funcBegin] = 0; // &= RI_bb;
                   }
                }
                else {
                   *pair[i].push = 0xe1a01000; // mov r1, r0
+                  instInfo[pair[i].push-funcBegin] =
+                     RI_RdAct | RI_RdDest | RI_RmAct | (1 << 12);
                   *pair[i].pop  = NOP;
+                  instInfo[pair[i].pop-funcBegin] = 0; // &= RI_bb;
                }
             }
          }
@@ -5242,7 +5250,7 @@ nextUse:
 /********* Peephole optimization driver function **********/
 /**********************************************************/
 
-int *squint_opt(int *begin, int *end)
+int *squint_opt(int *begin, int *end) // "end" points past last inst
 {
    int *lastInstruction = end ;
    int *scan = begin;
@@ -5257,7 +5265,7 @@ int *squint_opt(int *begin, int *end)
 
    while (scan < end) {
       if (*scan == 0xe92d4800 && !is_const(scan)) { // push {fp, lr}
-         int *funcBegin = scan;
+         int *funcBegin = scan; // first instr of new func
          int *funcEnd;
          int *retAddr = 0;
          ++scan;
@@ -5266,12 +5274,12 @@ int *squint_opt(int *begin, int *end)
                break;
             }
             else if (*scan == 0xe8bd8800 && !is_const(scan)) { // pop {fp, pc}
-               retAddr = scan;
+               retAddr = scan; // last active inst in func
             }
             ++scan;
          }
          --scan;
-         funcEnd = scan; // inst before EOF or next func
+         funcEnd = scan; // inst before EOF or before next func
 
          // verify this function has been prepared for peephole opt
          if (funcBegin[3] != NOP) continue;
@@ -5380,13 +5388,18 @@ int *squint_opt(int *begin, int *end)
          // if (noFloatConst)
          //    simplify_frame(funcBegin, retAddr); Also,
          //    re-enable guard at top of rename_register1()
+
+         // relocate_nop *must* be the last optimization on a
+         // function due to 'destructive' remapping of const_data
          lastInstruction = relocate_nop(funcBegin, funcEnd, IntraFunc);
       }
       else {
          ++scan;
       }
    }
+#ifndef NO_PACK_ICACHE
    lastInstruction = relocate_nop(begin, end - 1, InterFunc);
+#endif
    destroy_const_map();
    free(tmpbuf);
    return lastInstruction;
