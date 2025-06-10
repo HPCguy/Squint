@@ -1836,8 +1836,8 @@ mod1_to_mul0:
                   --n[2]; *--n = And; // 2^n
                } else { // b - (b/n)*n
                   int mulFact = n[2]; if (compound) *n += 8; // ModAssign hack
-                  const_div_AST(b); c = n; *--n = mulFact; *--n = Num;
-                  *--n = (int) c; *--n = Mul; *--n = (int) b; *--n = Sub;
+                  const_div_AST(b); c = n; *--n = -mulFact; *--n = Num;
+                  *--n = (int) c; *--n = Mul; *--n = (int) b; *--n = Add;
                }
             } else { *--n = Mod; ef_getidx("__aeabi_idivmod"); }
          }
@@ -2538,7 +2538,7 @@ do_typedef:
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = (int) (e + 1);
             symlh = symlt; labt = lab; idl = idln; tokloc = 1; next();
-            nf = ir_count = ld = maxld = ldn = lds[0] = 0; // ld is param index
+            nf = ir_count = ld = maxld = ldn = lds[0] = 0;
             while (tk != ')') {
                stmt(Par);
                if (ty == FLOAT) {
