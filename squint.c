@@ -5431,8 +5431,8 @@ int main(int argc, char *argv[])
       exit(-1);
    }
 
-   offset = strtol(argv[2], 0, 16);
-   length = strtol(argv[3], 0, 16);
+   offset = strtoul(argv[2], 0, 16);
+   length = strtoul(argv[3], 0, 16);
 
    if (!(offset > 0 && length > 0)) {
        printf("last two arguments must be hex file offset and length\n");
