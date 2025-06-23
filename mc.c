@@ -55,6 +55,7 @@ int *e, *le, *text; // current position in emitted IR code
 // Function parameters and (nested) local id scopes grow downward
 // When a local block scope terminates, it relinquishes stack space
 // Carefully creating declarations with block scopes improves optimization
+#define MAX_TYPEID 256
 #define MAX_LABEL 16384
 struct ident_s {
    int tk;       // type-id or keyword
@@ -80,7 +81,9 @@ struct ident_s {
   *symlh,        // head for local symbols
   *symlt,        // tail for local symbols
   *labt,         // tail ptr for label Ids
+  **typet,       // Tail ptr for Typedefs
   *retlabel[INL_LEV], // label for end of inline function
+  *typeid[MAX_TYPEID],
   lab[MAX_LABEL];
 
 inline void gen(int *n);
@@ -494,7 +497,7 @@ void next()
    char *pp;
    int tl;
    int t;
-   struct ident_s *il;
+   struct ident_s *il, **typed;
 
 text_sub:
    while ((tl = *s)) {
@@ -513,6 +516,15 @@ text_sub:
          if (nlen > 1 && (il = keyword_hash(tl)) != (struct ident_s *) 0) {
             tl = il->tk; id = il;
             goto ret;
+         }
+         // check for global scope typedefs
+         for (typed = &typeid[0]; typed < typet; ++typed) {
+            il = *typed;
+            if (tl == il->hash && il->name[nlen] == 0 &&
+                !memcmp(il->name, pp, nlen)) {
+               tl = il->tk; id = il;
+               goto ret;
+            }
          }
 // not_a_keyword:
          if (tokloc) {
@@ -2538,7 +2550,7 @@ do_typedef:
             dd->ftype[0] = dd->ftype[1] = 0; dd->class = Func;
             dd->val = (int) (e + 1);
             symlh = symlt; labt = lab; idl = idln; tokloc = 1; next();
-            nf = ir_count = ld = maxld = ldn = lds[0] = 0;
+            nf = ir_count = ld = maxld = ldn = lds[0] = 0; // ld is param index
             while (tk != ')') {
                stmt(Par);
                if (ty == FLOAT) {
@@ -2688,7 +2700,13 @@ unwind_func:
                sz *= tensor_size(td->type & 3, td->etype);
             }
             if (tdef) {
-               dd->tk = TypeId; goto next_type;
+               dd->tk = TypeId;
+               if (tokloc == 0) {
+                  if (typet - &typet[0] == MAX_TYPEID)
+                     fatal("global typedef limit exceeded");
+                  *typet = dd; ++typet;
+               }
+               goto next_type;
             }
             sz = (sz + (sizeof(int) - 1)) & -sizeof(int);
             if (ctx == Loc && sz > osize) {
@@ -4196,6 +4214,7 @@ int main(int argcc, char **argvv)
 #endif
 
    labt = lab; // initialize label Ids
+   typet = &typeid[0]; // initialize global typedef ids
 
    if (!(sym = symk = symgt = (struct ident_s *) malloc(poolsz)))
       die("could not allocate symbol area");
