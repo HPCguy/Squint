@@ -8,12 +8,15 @@ to the AMaCC compiler.  See the AMaCC documentation referenced below for
 more information.
 
 This compiler was developed on a Cortex-A72 Raspberry Pi computer running
-32 bit Buster Linux.  See the "Discussion" tab above for instructions on
-using this compiler with an ARM Chromebook.
+32 bit Buster Linux, but will also run in an aarch64 OS environment with
+an arm-linux-gnueabihf-gcc (cross) compiler installed.  Finally, see the
+"Discussion" tab above for instructions on using this compiler with an
+ARM Chromebook.
 
 > [!IMPORTANT]  
 > The mc compiler (extended version of AMaCC compiler) is relatively bug free.
-> The optimizer has bugs, so I recommend running non-optimized to compare.
+> That said, the optimizer that lives inside the compiler (squint) can be buggy,
+> so I recommend running non-optimized, or using a commercial compiler, to compare.
 
 ## Quick-Start
 ```
@@ -42,7 +45,7 @@ int main()
 
 ```
 % gcc -o mc mc.c -ldl  # (Optional) Creates non-optimized compiler
-% make mc-so           # Creates optimized compiler
+% make mc-so           # Creates optimizing compiler
 %
 % ./mc-so -o bench bench.c  # Optimized compilation
 % time ./bench
@@ -73,7 +76,7 @@ This compiler supports the following features beyond AMaCC:
 * The Squint peephole optimizer that
 ***roughly halves the number of executable instructions in compiled code***.
 The tests/sieve.c benchmark provides an optimization example, and runs roughly
-***4x faster after peephole optimization***.
+***6x faster after peephole optimization***.
 
 * Greatly improved type checking, error checking, and IR code generation (try -si option).
 
@@ -128,12 +131,15 @@ gcc compiler options "-mfloat-abi=hard -mtune=cortex-a72 -lm" included for all c
 
 Notes: Tests in the repo were "scaled up" to run longer.  Third best time of 20 runs to eliminate outliers.
 
-***The 4.075s time listed in the table for the shock benchmark is not a typo/transposition.***
+*The 4.075s time listed in the table for the shock benchmark is not a typo/transposition.*
 
 ### Time to compile the mc compiler
 | Benchmark | Mc compile time | Mc+Squint time (optimized compiler) | Gcc -O3 time |
 | --- | --- | --- | --- |
-| mc.c | ***0.034s*** | 0.457s | 7.057s |
+| mc.c | ***0.034s*** | 0.239s | 7.057s |
+
+> [!TIP]  
+> Mc+squint time found by "time ( ELF/mc-opt -Op -o mc mc.c && scripts/peep mc )"
 
 ### Size of .txt section, executed subset
 | Benchmark |  Mc .text size | Mc+Squint .text (optimized) | Gcc -O3 .text | Notes |
@@ -424,8 +430,9 @@ parallel partitions, unlike the mess created by C standard semantics.
     - Select `arm-linux-none-gnueabihf` (AArch32 target with hard float)
 
 ## Test environment:
-* Raspberry Pi 4B (SoC: bcm2711, ARMv8-A architecture)
-* Raspbian GNU/Linux, kernel 5.10.17-v7l+, gcc 8.3.0 (armv7l userland)
+* Raspberry Pi 4B or Pi 400 (SoC: bcm2711, ARMv8-A architecture)
+* Raspbian GNU/Linux, kernel 5.10.17-v7l+, gcc 8.3.0 (armv7l userland) or aarch64
+  OS environment on Pi 400 with arm-linux-gnueabihf-gcc (cross) compiler installed.
 * See the "Discussion" tab in this repo to run Squint on your ARM Chromebook.
 
 The architecture support targets armv7hf with Linux ABI, verified on
