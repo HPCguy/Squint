@@ -126,7 +126,9 @@ gcc compiler options "-mfloat-abi=hard -mtune=cortex-a72 -lm" included for all c
 | shock_struct_p (float) | 52.541s | ***4.075s*** | 13.331s | 5.197s | 4.700s | shock tube |
 | fannkuch_p 11 (int) | 89.227s | 7.379s | 19.249s | ***6.551s*** | 8.612s | well known benchmark |
 
-Notes: Tests in the repo were "scaled up" to run longer.  Third best time of 20 runs to eliminate outliers. The 4.075s time for shock is not a typo/transposition.
+Notes: Tests in the repo were "scaled up" to run longer.  Third best time of 20 runs to eliminate outliers.
+
+***The 4.075s time listed in the table for the shock benchmark is not a typo/transposition.***
 
 ### Time to compile the mc compiler
 | Benchmark | Mc compile time | Mc+Squint time (optimized compiler) | Gcc -O3 time |
