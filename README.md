@@ -48,7 +48,7 @@ int main()
 % time ./bench
 1000000000 1000000005
 
-real  0m2.672s
+real  0m2.672s        # <-------  My compiler almost twice as fast as Gcc
 user  0m2.672s
 sys   0m0.001s
 %
@@ -56,7 +56,7 @@ sys   0m0.001s
 % time ./a.out
 1000000000 1000000005
 
-real  0m4.673s
+real  0m4.673s           # <------- Optimized Gcc !!!
 user  0m4.673s
 sys   0m0.001s
 %
