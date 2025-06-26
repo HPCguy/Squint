@@ -1,24 +1,72 @@
 # Squint: A peephole optimizer for stack VM compilers
 
-## Introduction
+## Introduction (Updated June 2025)
 Short summary: This repo contains a highly functional, but not quite
 complete, C compiler (mc.c) that supports JIT execution, ELF executable
 generation, dynamic linking, and peephole optimization.  mc.c is a follow-on
 to the AMaCC compiler.  See the AMaCC documentation referenced below for
 more information.
 
-This compiler was developed on a Raspberry Pi computer running 32 bit
-Buster Linux.  See the "Discussion" tab above for instructions on using
-this compiler with an ARM Chromebook.
+This compiler was developed on a Cortex-A72 Raspberry Pi computer running
+32 bit Buster Linux.  See the "Discussion" tab above for instructions on
+using this compiler with an ARM Chromebook.
 
-The MC C compiler found in this repository is a subset of
-***the full MC HPC compiler which is
-being developed offline.  That said, results from the full MC HPC compiler
-are shown [below](#assembly-language-quality)***.
+> [!IMPORTANT]  
+> The mc compiler (extended version of AMaCC compiler) is relatively bug free.
+> The optimizer has bugs, so I recommend running non-optimized to compare.
+
+## Quick-Start
+```
+// bench.c
+#include <stdio.h>
+
+void bench(int *s1, int *s2)
+{
+   int sum1 = 0, sum2 = 0;
+   for (int i=1000000000; i>0; --i) {
+      sum1 += i % 3;
+      sum2 += i / 333333333;
+   }
+   *s1 = sum1;
+   *s2 = sum2;
+}
+
+int main()
+{
+   int sum1, sum2;
+   bench(&sum1, &sum2);
+   printf("%d %d\n", sum1, sum2);
+   return 0;
+}
+```
+
+```
+% gcc -o mc mc.c -ldl  # (Optional) Creates non-optimized compiler
+% make mc-so           # Creates optimized compiler
+%
+% ./mc-so -o bench bench.c  # Optimized compilation
+% time ./bench
+1000000000 1000000005
+
+real  0m2.672s
+user  0m2.672s
+sys   0m0.001s
+%
+% gcc -mtune=cortex-a72 -O3 bench.c  # Processor used for benchmarking
+% time ./a.out
+1000000000 1000000005
+
+real  0m4.673s
+user  0m4.673s
+sys   0m0.001s
+%
+```
+
+## Further Introduction
 
 This compiler supports the following features beyond AMaCC:
 
-* ***Float*** data types (AMaCC is an integer based compiler).
+* ***Float*** data type (AMaCC is an integer-only based compiler).
 
 * Array declarations and initializers. (e.g. float foo[4][4] = { { 0.0, ... }, { 0.0 ... }, ... };
 
@@ -29,9 +77,14 @@ The tests/sieve.c benchmark provides an optimization example, and runs roughly
 
 * Greatly improved type checking, error checking, and IR code generation (try -si option).
 
+The MC C compiler found in this repository is a subset of
+***the full MC HPC compiler which is
+being developed offline.  That said, results from the full MC HPC compiler
+are shown [below](#assembly-language-quality)***.
+
 Source code size (public code version, this repository):
-* mc C compiler -- 4035 SLOC
-* squint optimizer -- 3836 SLOC
+* mc C compiler -- 4150 SLOC
+* squint optimizer -- 5300 SLOC
 
 The original AMaCC compiler is based on the phenomenal work of the 
 team at https://github.com/jserv/amacc , and I strongly suggest
@@ -42,10 +95,10 @@ educational compiler. The README there expands upon this README and
 is where you will learn the most about the AMaCC compiler that was
 used as a starting point for this work.
 
-## Example
+## Compilation time and features
 The following time command uses the mc compiler to JIT compile an optimized verison
 of the mc compiler, using an external optimizer linked as a shared object library,
-and then that optimized JIT complier is used to JIT compile an optimized version of
+and then runs that optimized JIT complier to  then JIT compile an optimized version of
 Sieve of Eratosthenes (again using a shared object optimizer), and then the
 sieve benchmark is JIT executed.  The time shown is the time it takes to do
 everything in this paragraph, sieving 8388608 values using three different
@@ -53,34 +106,41 @@ algorithms applied to bit arrays.
 ```
 $ make mc-so      # use gcc to build an enhanced version of the mc compiler
   CC+LD		mc-so
-$ time ./mc-so -DSQUINT_SO mc.c tests/sieve.c
+$ time ./mc-so -DSQUINT_SO=1 mc.c tests/sieve.c
 
-real  0m0.422s
-user  0m0.399s
-sys   0m0.022s
+real  0m0.370s
+user  0m0.369s
+sys   0m0.001s
 ```
 
-## Performance
+## Performance vs Gcc
 
-| Benchmark | Mc runtime | Mc+Squint | Gcc | Gcc -O1 | Gcc -03 |
-| --- | --- | --- | --- | --- | --- |
-| sieve (int) | 3.676s |  ***0.936s*** | 1.642s | 0.942s | 0.962s |
-| shock (float) | 39.192s | ***3.125s*** | 9.346s | 4.092s | 3.217s |
-| nbody_arr (float) | 40.43s | ***3.10s*** | 12.28s | 3.25s | 3.21s |
+gcc compiler options "-mfloat-abi=hard -mtune=cortex-a72 -lm" included for all compiles.
 
-Note: shock run with 8192 elements, 4096 timesteps, no output. Best of 20 runs.
+### Time to run executable
+| Benchmark | Mc runtime | Mc+Squint | Gcc | Gcc -O1 | Gcc -03 | Desc |
+| --- | --- | --- | --- | --- | --- | --- |
+| sieve (int) | 1.697s |  ***0.266s*** | 0.655s | ***0.266s*** | 0.272s | Eratosthenes |
+| i2a2i (int) | 21.386s | ***1.631s*** | 8.842s | 2.230s | 2.654s | int -> string -> int |
+| sort_p (float/int) | 61.628s | 3.357s | 31.479s | 5.071s | ***3.012s*** | sort positive float array |
+| shock_struct_p (float) | 52.541s | ***4.075s*** | 13.331s | 5.197s | 4.700s | shock tube |
+| fannkuch_p 11 (int) | 89.227s | 7.379s | 19.249s | ***6.551s*** | 8.612s | well known benchmark |
 
-| Benchmark | Mc compile time | Mc+Squint time | Gcc -O3 time |
+Notes: Tests in the repo were "scaled up" to run longer.  Third best time of 20 runs to eliminate outliers. The 4.075s time for shock is not a typo/transposition.
+
+### Time to compile the mc compiler
+| Benchmark | Mc compile time | Mc+Squint time (optimized compiler) | Gcc -O3 time |
 | --- | --- | --- | --- |
-| mc.c | ***0.073s*** | 0.476s | 7.07s |
+| mc.c | ***0.034s*** | 0.457s | 7.057s |
 
-| Benchmark |  Mc .text size | Mc+Squint .text | Gcc -O3 .text | Notes |
+### Size of .txt section, executed subset
+| Benchmark |  Mc .text size | Mc+Squint .text (optimized) | Gcc -O3 .text | Notes |
 | --- | --- | --- | --- | --- |
-| bezier.c | 3376 | 1020 | ***768*** | recursive |
-| duff.c | 2972 | 520 | ***412*** | unusual |
-| maze.c | 6568 | 2488 | ***1752*** | misc |
-| shock.c | 7844 | ***2112*** | 3388 | floating point |
-| mc.c | 183248 | 85568 | ***59124*** | full compiler |
+| bezier.c | 3376 | 1016 | ***768*** | recursive |
+| duff.c | 2972 | 504 | ***412*** | unusual |
+| maze.c | 6568 | 2444 | ***1752*** | misc |
+| shock.c | 7824 | ***2096*** | 2200 | floating point |
+| mc.c | 203888 | 88176 | ***62892*** | full compiler |
 
 ## Assembly language quality
 
