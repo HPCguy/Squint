@@ -99,6 +99,9 @@ bench: $(EXEC) $(OBJ_DIR)/$(BIN)-opt
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/lulesh_p-opt $(TEST_DIR)/extra/lulesh_p.c
 	$(Q) scripts/peep $(OBJ_DIR)/lulesh_p-opt -e
 	$(Q) time $(ARM_EXEC) $(OBJ_DIR)/lulesh_p-opt
+	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/lulesh_s-opt $(TEST_DIR)/extra/lulesh_s.c
+	$(Q) scripts/peep $(OBJ_DIR)/lulesh_s-opt -e
+	$(Q) time $(ARM_EXEC) $(OBJ_DIR)/lulesh_s-opt
 	$(VECHO) "\n\n"
 	$(Q)$(ARM_EXEC) $(OBJ_DIR)/$(BIN)-opt $(OP) -o $(OBJ_DIR)/nbody_arr-opt $(TEST_DIR)/extra/nbody_arr.c
 	$(Q) scripts/peep $(OBJ_DIR)/nbody_arr-opt -e

@@ -2872,10 +2872,17 @@ static void apply_peepholes9(int *instInfo, int *funcBegin, int *funcEnd,
          scanm1 = active_inst(scan, -1);
          if ((*scanm1 & 0xffef0000) == 0xe3a00000) { // mov rd, #N
             int addend, high, low, off = arith_off(*scanm1);
-            // a mul has less latency than two dependent eqns
-            // so temporarily disable case where "(off & 1) == 0"
-            if (off < 0 || (off & 1) == 0 || popcount32b(off) != 2) continue;
+            // MUL has less latency than two dependent eqns
+            // so "temporarily" disable case where "(off & 1) == 0"
+            if (off < 0 || (off & 1) == 0) continue;
+            int nbits = popcount32b(off);
+            int ss = 32 - nbits - clz(off); // subend shift
+            int tval = off + ((1 << ss) - 1);
+            if ( ! (nbits == 2 || (nbits > 2 && ((tval+1) & tval) == 0)))
+               continue;
+            int op = (nbits == 2) ? 0xe0800000 : 0xe0600000; // add : rsb
             if (off & 1) {
+               if (nbits > 2) off += 2;
                addend = (((*scanm1 & RI_Rd) >> 12) == (*scan & RI_Rm)) ?
                      ((*scan & RI_Rs) >> 8) : (*scan & RI_Rm);
                high = 31 - clz(--off);
@@ -2883,15 +2890,21 @@ static void apply_peepholes9(int *instInfo, int *funcBegin, int *funcEnd,
                if (depInited) instInfo[scanm1 - funcBegin] = 0;
             }
             else {
-               high = 31 - clz(off);
-               low = 31 - clz(off - (1 << high));
-               high -= low;
-               addend = (*scanm1 & RI_Rd) >> 12;
+               if (nbits == 2) {
+                  high = 31 - clz(off);
+                  low = 31 - clz(off - (1 << high));
+                  high -= low;
+               }
+               else { // subtraction
+                  high = 31 - clz(off) - ss + 1;
+                  low = ss;
+               }
+               addend = (*scanm1 & RI_Rd) >> 12; // or subend
                *scanm1 = 0xe1a00000 | (*scanm1 & RI_Rd) | (low << 7) |
-               ((addend == (*scan & RI_Rm)) ?
-                ((*scan & RI_Rs) >> 8) : (*scan & RI_Rm));
+                         ((addend == (*scan & RI_Rm)) ?
+                         ((*scan & RI_Rs) >> 8) : (*scan & RI_Rm));
             }
-            *scan = 0xe0800000 | ((*scan & RI_Rn) >> 4) | (high << 7) |
+            *scan = op | ((*scan & RI_Rn) >> 4) | (high << 7) |
                     (addend << 16) | addend;
          }
       }
