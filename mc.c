@@ -26,6 +26,10 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 
+#ifndef __MC__
+#define clz __builtin_clz
+#endif
+
 int *n;             // current position in emitted abstract syntax tree
                     // With an AST, the compiler is not limited to generate
                     // code on the fly with parsing.
@@ -3123,6 +3127,17 @@ int addcnst(int val)
    return i; // byte offset
 }
 
+int gen_arith_off(int vval)
+{
+   int nbits = popcount32(vval);
+   int val = (nbits <= 8) ? vval : ~vval;
+   if (val == 0) return (nbits ? (1 << 31) : 0);
+   int highBit = 32 - (clz(val) & 0x1e); // need an even number of bits
+   int lowBit = (highBit <= 8) ? 0 : (highBit - 8);
+   return (val & ~(0xff << lowBit)) ? -1 : ( ((nbits <= 8) ? 0 : (1 << 31)) |
+          (((16 - (lowBit >> 1)) & 0xf) << 8) | ((val >> lowBit) & 0xff));
+}
+
 int *codegen(int *jitmem, int *jitmap)
 {
    int i, ii, jj, kk, tmp, c, ni, nf, sz, cnstBlk;
@@ -3155,32 +3170,30 @@ int *codegen(int *jitmem, int *jitmap)
       jitmap[pc++ - text] = (int) je;
       switch (i) {
       case LEA:
-         tmp = *pc++;
-         if (tmp >= 64 || tmp <= -64) {
-            if (!imm0) { imm = 1; imm0 = je; }
-            if (tmp >= 64) {
-               *il++ = (int) (je++); *iv++ = addcnst(tmp * 4);
-               *je++ = 0xe08b0000;   // add r0, fp, r0
-            } else {
-               *il++ = (int) (je++); *iv++ = addcnst(-tmp * 4);
-               *je++ = 0xe04b0000;   // sub r0, fp, r0
-            }
+         tmp = (*pc++) * 4;
+         c = 0xe08b0000; // add r0, fp, r0
+         if (tmp < 0) {
+            tmp = -tmp;
+            c = 0xe04b0000; // sub r0, fp, r0
          }
-         else if (tmp >= 0)
-            *je++ = 0xe28b0000 | tmp * 4;     // add r0, fp, #(tmp)
+         ii = gen_arith_off(tmp);
+         if (ii < 0) {
+            if (!imm0) { imm = 1; imm0 = je; }
+            *il++ = (int) (je++); *iv++ = addcnst(tmp);
+            *je++ = c;
+         }
          else
-            *je++ = 0xe24b0000 | (-tmp) * 4;  // sub r0, fp, #(tmp)
+            *je++ = c | (1 << 25) | ii;
          break;
       case IMM:
          tmp = *pc++;
-         if (0 <= tmp && tmp < 256)
-            *je++ = 0xe3a00000 + tmp;         // mov r0, #tmp
-         else if (-256 <= tmp && tmp < 0)
-            *je++ = 0xe3e00000 + -(tmp+1);    // mvn r0, #tmp
-         else {
+         ii = gen_arith_off(tmp);
+         if (ii == -1) {
              if (!imm0) { imm = 1; imm0 = je; }
              *il++ = (int) (je++); *iv++ = addcnst(tmp);
          }
+         else
+            *je++ = ((ii<0) ? 0xe3e00000 : 0xe3a00000) | (ii & 0xfff);
          break;
       case IMMF:
          tmp = (int) *pc++;
