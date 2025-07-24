@@ -131,7 +131,7 @@ static int popcount32b(int ii)
    return (i * 0x01010101) >> 24; // horizontal sum of bytes
 }
 
-int avail_reg(int base)
+static int avail_reg(int base)
 {
    int i;
    int mask = 1;
@@ -145,13 +145,13 @@ int avail_reg(int base)
 
 /* The ARM processor allows use of pc-relative constants */
 
-int arith_off(int inst)
+static int arith_off(int inst)
 {
    return ((inst & 0xf00) == 0) ? (inst & 0xff) :
           ((inst & 0xff) << (16 - ((inst >> 8) & 0x0f)) * 2);
 }
 
-int gen_arith_off(int val)
+static int gen_arith_help(int val)
 {
    int highBit = 32 - (clz(val) & 0x1e); // need an even number of bits
    int lowBit = (highBit <= 8) ? 0 : (highBit - 8);
@@ -272,36 +272,6 @@ static void destroy_const_map()
    }
    free(cnst_bit);
    free(cnst_pool);
-}
-
-/* convert special ARM consts to mov immediate */
-static void const_imm_opt(int *begin, int *end)
-{
-   int i;
-
-   for (i = 0; i < cnst_pool_size; ++i) {
-      int iaddr = cnst_pool[i].data_addr/4;
-      int val = cbegin[iaddr];
-      int aoff = gen_arith_off(val);
-
-      if (aoff != -1 || (-256 <= val && val < 0)) {
-         struct ia_s *inst = cnst_pool[i].inst;
-         while (inst != 0) {
-            struct ia_s *next = inst->next;
-            int *newinst = cbegin + inst->inst_addr/4;
-            if ((*newinst & 0xffbf0f00) != 0xed9f0a00) { // vldr
-               if (aoff != -1) {
-                  *newinst = 0xe3a00000 | (*newinst & RI_Rd) | aoff; // mov
-               }
-               else {
-                  *newinst = 0xe3e00000 | (*newinst & RI_Rd) | -(val+1); // mvn
-               }
-               delete_const(&cbegin[iaddr], newinst);
-            }
-            inst = next;
-         }
-      }
-   }
 }
 
 static void pack_const(int start)
@@ -965,8 +935,8 @@ static void apply_peepholes1(int *funcBegin, int *funcEnd)
                 scan[4] == 0xe0410000) &&  // sub  r0, r1, r0
                scan[1] == 0xe52d0004 && // push {r0}
                scan[3] == 0xe49d1004) { // pop  {r1}
-         int aoff = gen_arith_off(arith_off(*scan) +
-                                  arith_off(scan[2])*(isAdd ? -1 : 1));
+         int aoff = gen_arith_help(arith_off(*scan) +
+                                   arith_off(scan[2])*(isAdd ? -1 : 1));
          if (aoff != -1) {
             scan[4] = (*scan & 0xfffff000) | aoff;
             scan[3] = scan[2] = scan[1] = scan[0] = NOP;
@@ -2870,8 +2840,17 @@ static void apply_peepholes9(int *instInfo, int *funcBegin, int *funcEnd,
       if ((*scan & 0xfff000f0) == 0xe0000090) { // mul rn, rm, rd
          if (is_const(scan)) continue;
          scanm1 = active_inst(scan, -1);
-         if ((*scanm1 & 0xffef0000) == 0xe3a00000) { // mov rd, #N
-            int addend, high, low, off = arith_off(*scanm1);
+         if ((((*scan & RI_Rm) << 12) == (*scanm1 & RI_Rd) ||
+              ((*scan & RI_Rs) <<  4) == (*scanm1 & RI_Rd))   &&
+             ((*scanm1 & 0xffef0000) == 0xe3a00000 || // mov rd, #N
+              (*scanm1 & 0xffff0000) == 0xe59f0000)) { // ldr rd, [pc, #X]
+            int addend, high, low, off, *cnstPtr = 0;
+            if ((*scanm1 & 0xffff0000) == 0xe59f0000) {
+               cnstPtr = scanm1 + 2 + ((*scanm1 & 0xfff) / 4);
+               off = *cnstPtr ;
+            }
+            else
+               off = arith_off(*scanm1);
             // MUL has less latency than two dependent eqns
             // so "temporarily" disable case where "(off & 1) == 0"
             if (off < 0 || (off & 1) == 0) continue;
@@ -2880,6 +2859,7 @@ static void apply_peepholes9(int *instInfo, int *funcBegin, int *funcEnd,
             int tval = off + ((1 << ss) - 1);
             if ( ! (nbits == 2 || (nbits > 2 && ((tval+1) & tval) == 0)))
                continue;
+            if (cnstPtr) delete_const(cnstPtr, scanm1);
             int op = (nbits == 2) ? 0xe0800000 : 0xe0600000; // add : rsb
             if (off & 1) {
                if (nbits > 2) off += 2;
@@ -5524,7 +5504,6 @@ int *squint_opt(int *begin, int *end) // "end" points past last inst
    int noFloatConst;
 
    create_const_map(begin, end);
-   const_imm_opt(begin, end);
 
    int iregMask = 0x000057f8; // r3-10, r12(ip), r14(lr) available
    int fregMask = 0xfffffffc; // 32 FP registers available
@@ -5655,6 +5634,9 @@ int *squint_opt(int *begin, int *end) // "end" points past last inst
          // if (noFloatConst)
          //    simplify_frame(funcBegin, retAddr); Also,
          //    re-enable guard at top of rename_register1()
+
+         if (*(funcBegin - 1) == NOP && funcBegin[2] == 0xe24dd000)
+            funcBegin[2] = NOP; // remove sub sp, sp, #0
 
          // relocate_nop *must* be the last optimization on a
          // function due to 'destructive' remapping of const_data
