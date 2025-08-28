@@ -182,7 +182,7 @@ struct member_s {
 // tokens and classes (operators last and in precedence order)
 // ( >= 128 so not to collide with ASCII-valued tokens)
 enum {
-   Func=128, Syscall, Main, ClearCache, Fneg, Fabs, Sqrt, Clz,
+   Func=128, Syscall, Main, ClearCache, Mvr, Fneg, Fabs, Sqrt, Clz,
    Glo, Par, Loc, Keyword, Id, Load,
    Enter, Num, NumF, TypeId,
    Typedef, Enum, Char, Int, Float, Struct, Union,
@@ -347,16 +347,17 @@ enum {
    FABS, /* 52 float fabsf(float); */
    SQRT, /* 53 float sqrtf(float); */
    CLZ,  /* 54 int clz(int); */
-   SYSC, /* 55 system call */
-   CLCA, /* 56 clear cache, used by JIT compilation */
+   MVR,  /* 55 int ARMreg(int n);  mov r0, rn */
+   SYSC, /* 56 system call */
+   CLCA, /* 57 clear cache, used by JIT compilation */
 
-   VENT, /* 57 Needed fo Varargs ABI, which requires 8-byte stack align */
-   VLEV, /* 58 */
+   VENT, /* 58 Needed fo Varargs ABI, which requires 8-byte stack align */
+   VLEV, /* 59 */
 
-   PHD,  /* 59 PeepHole Disable next assembly instruction in optimizer */
-   PHF,  /* 60 Inform peephole optimizer a function call is beginning */
-   PHR0, /* 61 Inform PeepHole optimizer that R0 holds a return value */
-   CBLK, /* 62 Statement boundary -- good place to store istream const */
+   PHD,  /* 60 PeepHole Disable next assembly instruction in optimizer */
+   PHF,  /* 61 Inform peephole optimizer a function call is beginning */
+   PHR0, /* 62 Inform PeepHole optimizer that R0 holds a return value */
+   CBLK, /* 63 Statement boundary -- good place to store istream const */
 
    INVALID
 };
@@ -371,8 +372,8 @@ char *strrchr(char *s, int c);
 #endif
 
 #ifdef SQUINT_SO
-#ifndef __MC__
 int *squint_opt(int *begin, int *end);
+#ifndef __MC__
 #include "squint.c"
 #endif
 #endif
@@ -714,6 +715,7 @@ new_block_def:
                case 'f': tkv.i = '\f'; break; // form feed
                case 'r': tkv.i = '\r'; break; // carriage return
                case '0': tkv.i = '\0'; break; // an int with value 0
+               case 'e': tkv.i = 0x1b; break; // ESC
                }
             }
             if (tl == '"') *data++ = tkv.i;
@@ -1073,7 +1075,7 @@ resolve_fnproto:
             if (fidx == numfspec || numpts == INL_LEV) inln_func = 0; // warn?
             else { tsi = 0; saven = n; }
          }
-         if (peephole && (d->class < Fneg || d->class > Clz) && !inln_func) {
+         if (peephole && (d->class < Mvr || d->class > Clz) && !inln_func) {
             *--n = Phf; c = n;
          }
          parg = 1;
@@ -1109,6 +1111,9 @@ resolve_fnproto:
          tt[0] += (nf << 6) + t;
          if (d->ftype[0] && (d->ftype[0] != tt[0] || d->ftype[1] != tt[1]) )
             fatal("argument type mismatch");
+         if (t == 1 && d->class == Mvr &&
+             !(n[1] == Num && n[2] >= 0 && n[2] <= 15))
+            fatal("Argument to ARMreg must be 0 <= literal_const <= 15");
          if (inln_func && !deadzone) {
             int i, args;
             int old;
@@ -2195,6 +2200,7 @@ void gen(int *n)
    case Fabs:
    case Sqrt:
    case Clz:  b = (int *) n[1]; gen(b + 1); *++e = n[2]; break;
+   case Mvr:  b = (int *) n[1]; *++e = MVR; *++e = b[2]; break;
    case While:
    case DoWhile:
       if (i == While && n[3] != 2) { *++e = JMP; a = ++e; }
@@ -2483,7 +2489,7 @@ do_typedef:
                   // then type plus `PTR` indicates what kind of pointer
                   while (tk == Mul) { next(); ty += PTR; }
                   if (tk != Id) fatal("bad struct member definition");
-                  sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2];
+                  sz = (ty >= PTR) ? sizeof(int) : tsize[ty >> 2]; tt = sz;
                   struct member_s *m = (struct member_s *)
                                        malloc(sizeof(struct member_s));
                   m->hash = id->hash; m->id = id->name; m->etype = 0; next();
@@ -2493,7 +2499,7 @@ do_typedef:
                      ty = (j + PTR) | nf;
                      ++tokloc;
                   }
-                  sz = (sz + (sizeof(int) - 1)) & -sizeof(int);
+                  if (tt != 1 && (i & 3) != 0) i += sizeof(int) - (i & 3);
                   m->offset = i;
                   m->type = ty;
                   m->next = members[bt >> 2];
@@ -2508,7 +2514,10 @@ do_typedef:
             }
             tokloc = toksav; symlh = osymh; symlt = osymt;
             next();
-            if (atk != Union) tsize[bt >> 2] = i;
+            if (atk != Union) {
+               if ((i & 3) != 0) i += sizeof(int) - (i & 3);
+               tsize[bt >> 2] = i;
+            }
          }
          break;
       }
@@ -2632,7 +2641,7 @@ do_typedef:
                          "SHL  SHR  ADD  SUB  MUL  DIV  MOD  RMUL "
                          "ADDF SUBF MULF DIVF FTOI ITOF "
                          "EQF  NEF  GEF  LTF  GTF  LEF  "
-                         "FNEG FABS SQRT CLZ  SYSC CLCA "
+                         "FNEG FABS SQRT CLZ  MVR  SYSC CLCA "
                          "VENT VLEV PHD  PHF  PHR0 CBLK" [*++le *5]);
                   if (*le < ADJ) {
                      struct ident_s *scan;
@@ -2669,6 +2678,9 @@ do_typedef:
                      printf(" %d\n", *le & 0xf);
                   } else if (*le == SYSC) {
                      printf(" %s\n", ef_cache[*(++le)]->name);
+                  } else if (*le == MVR) {
+                     ++le;
+                     printf(" r%d\n", *le);
                   }
                   else printf("\n");
                }
@@ -3428,6 +3440,7 @@ int *codegen(int *jitmem, int *jitmap)
       case FABS: *je++ = 0xeeb00ac0; break;      // fabss  s0, s0
       case SQRT: *je++ = 0xeeb10ac0; break;      // fsqrts s0, s0
       case CLZ:  *je++ = 0xe1600010; break;      // clz    r0, r0
+      case MVR:  *je++ = 0xe1a00000 | *pc++; break; // mov r0, rX
       case VENT:
          if (peephole) *je++ = 0xe1a01001;  // mov r1, r1
          *je++ = 0xe08d0000; // add r0, sp, r0
@@ -3683,7 +3696,7 @@ struct Elf32_Sym {
    int st_size;  // [Elf32_Word] Size of the symbol
    char st_info; // [unsigned] Symbol's type and binding attributes
    char st_other;// [unsigned] Must be zero; reserved
-   char st_shndx, st_shndx_1, st_shndx_2, st_shndx_3; // [Elf32_Half]
+   char st_shndx;// [Elf32_Half]
                  // Which section (header table index) it's defined
 };
 
@@ -3811,7 +3824,7 @@ void elf32_init(int poolsz)
    ef_getidx("__libc_start_main"); // slot 0 of external func cache
 }
 
-int elf32(int poolsz, int *main, int elf_fd)
+int elf32(int poolsz, int *main, int elf_fd, int dbg)
 {
    int i;
    char *freecode = (char *) malloc(poolsz);
@@ -4134,6 +4147,12 @@ int elf32(int poolsz, int *main, int elf_fd)
 
    *((int *) (code + 0x28)) = reloc_bl(plt_func_addr[0] - code_addr - 0x28);
 
+   if (dbg) { // replace push {fp, lr} with bkpt 0x0000 @main() entry
+      int *main_fin = (int *)(code + 68);
+      main_fin = main_fin + 2 + (*main_fin & 0x00ffffff);
+      *main_fin = 0xe1200070; // bkpt 0x0000
+   }
+
    // Copy the generated binary.
    memcpy(code_addr, code,  je - code);
 
@@ -4221,6 +4240,7 @@ int main(int argcc, char **argvv)
    char **argv;
    int *textp;
    char *datap;
+   int dbg = 0;
 
 #ifdef SQUINT_SO
    peephole = 1;
@@ -4240,7 +4260,7 @@ int main(int argcc, char **argvv)
    p = "typedef enum char int float struct union "
        "sizeof return goto break continue "
        "if do while for switch case default else inline "
-       "void main __clear_cache fnegf fabsf sqrtf clz";
+       "void main __clear_cache ARMreg fnegf fabsf sqrtf clz";
 
    // call "next" to create symbol table entry.
    // store the keyword's token type in the symbol table entry's "tk" field.
@@ -4254,6 +4274,8 @@ int main(int argcc, char **argvv)
    struct ident_s *idmain = id; id->class = Main; // keep track of main
                                 id->ftype[0] = 0;
    next(); id->class = ClearCache; id->type = INT; id->val = CLCA;
+   next(); id->class = Mvr; id->type = INT;
+           id->val = MVR; id->ftype[0] = 1;
    next(); id->class = Fneg; id->type = FLOAT;
            id->val = FNEG; id->ftype[0] = 0x1041;
    next(); id->class = Fabs; id->type = FLOAT;
@@ -4290,6 +4312,8 @@ int main(int argcc, char **argvv)
          src = ((*argv)[2] == 'i') ? 2 : 1; --argc; ++argv;
       } else if ((*argv)[1] == 'r') {
          single_exit = 1; --argc; ++argv;
+      } else if ((*argv)[1] == 'd') {
+         dbg = 1; --argc; ++argv;
       } else if (!strcmp(*argv, "-fsigned-char")) {
          signed_char = 1; --argc; ++argv;
       } else if ((*argv)[1] == 'O' && (*argv)[2] == 'p') {
@@ -4377,7 +4401,7 @@ int main(int argcc, char **argvv)
    }
    if (fdeferr) exit(-1);
 
-   int ret = elf ? elf32(poolsz, (int *) idmain->val, elf_fd) :
+   int ret = elf ? elf32(poolsz, (int *) idmain->val, elf_fd, dbg) :
                    jit(poolsz,   (int *) idmain->val, argc, argv);
    free(freep);
    free(textp);

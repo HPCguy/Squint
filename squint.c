@@ -5672,6 +5672,7 @@ int main(int argc, char *argv[])
    int fd, retVal = 0;
    int offset, length;
    int *mem;
+   int inst;
 
    if (argc == 5 && argv[4][0] == '-' && argv[4][1] == 'e')
       extra_opt = 0;
@@ -5694,27 +5695,38 @@ int main(int argc, char *argv[])
       printf("could not open file %s\n", argv[1]);
       retVal = -2;
    }
-
    else if (lseek(fd, (off_t) offset, SEEK_SET) != offset) {
       printf("could not seek to offset %x in file %s.\n", offset, argv[1]);
       retVal = -1;
    }
-
    else if (read(fd, mem, (size_t)length) != length) {
       printf("could not read %x bytes from file %s.\n", length, argv[1]);
       retVal = -1;
    }
 
-   else if (!squint_opt(mem, mem + length/4)) {
-      printf("Compile with mc -Op flag to enable peephole optimizer\n");
+   if (retVal == 0) { // guard bkpt before optimization
+      int *main_fin = (mem + 17);
+      main_fin = main_fin + 2 + (*main_fin & 0x00ffffff);
+      if ((inst = *main_fin) == 0xe1200070) // bkpt 0x0000
+         *main_fin = 0xe92d4800; // push {fp, lr}
    }
 
+   if (retVal == 0 && !squint_opt(mem, mem + length/4)) {
+      printf("Compile with mc -Op flag to enable peephole optimizer\n");
+      retVal = -1;
+   }
    else if (lseek(fd, (off_t) offset, SEEK_SET) != offset) {
       printf("could not seek to offset %x in file %s.\n", offset, argv[1]);
       retVal = -1;
    }
 
-   else if (write(fd, mem, (size_t)length) != length) {
+   if (retVal == 0 && inst == 0xe1200070) {
+      int *main_fin = (mem + 17);
+      main_fin = main_fin + 2 + (*main_fin & 0x00ffffff);
+      *main_fin = inst;
+   }
+
+   if (retVal == 0 && write(fd, mem, (size_t)length) != length) {
       printf("error occured attempting to write file %s\n", argv[1]);
       retVal = -1;
    }
@@ -5722,7 +5734,8 @@ int main(int argc, char *argv[])
    if (retVal != -2) close(fd);
    free(mem);
 
-   printf("executable file %s was optimized.\n", argv[1]);
+   printf("executable file %s was%soptimized.\n",
+          argv[1], (retVal ? " not " : " "));
 
    return retVal;
 }
