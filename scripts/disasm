@@ -3,7 +3,7 @@ if [ "$#" != "1" ]; then
     echo "Usage: disasm <mc ELF executable file>"
     exit
 fi
-DD_BYTES=`readelf -a $1 2>/dev/null | awk '/\.text.*PROGBITS/ { s = sprintf("skip=%d", "0x" $6) ; c = sprintf("count=%d", "0x" $7) ; print s, c }'`
-dd bs=1 if=$1 of=$1.asmtmp $DD_BYTES
-objdump -b binary -m arm -D $1.asmtmp
+DD_BYTES=`readelf -a $1 2>/dev/null | awk '/\.text.*PROGBITS/ { s = sprintf("skip=%d", "0x" $(NF-6)) ; c = sprintf("count=%d", "0x" $(NF-5)) ; print s, c }'`
+dd bs=1 if=$1 of=$1.asmtmp $DD_BYTES >& /dev/null
+objdump -b binary -m arm -D $1.asmtmp | tail --lines=+8
 rm $1.asmtmp

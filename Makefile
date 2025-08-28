@@ -145,7 +145,7 @@ $(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(BIN) $(OBJ_DIR)/$(BIN) $(OBJ_DIR)/$(BIN)-opt
 
 show_asm:
 	cd $(OBJ_DIR); for name in * ; do echo $${name};\
-    ../scripts/disasm $${name} | egrep -v nop | tail --lines=+28 | \
+    ../scripts/disasm $${name} | egrep -v nop | tail --lines=+21 | \
     awk '/e92d4[80]00/{print "--func--"}1' > ../$(ASM_DIR)/$${name}.s; done
 
 ## Print available build targets
