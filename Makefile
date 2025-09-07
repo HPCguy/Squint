@@ -12,7 +12,7 @@ TEST_OBJ = $(TEST_SRC:.c=.o)
 
 BIN = mc
 PEEP = squint
-EXEC = $(BIN) $(BIN)-native $(PEEP) $(BIN)-so # $(BIN)o
+EXEC = $(BIN) $(BIN)-native $(PEEP) $(BIN)-so cdb # $(BIN)o
 
 include mk/arm.mk
 include mk/common.mk
@@ -70,6 +70,9 @@ $(PEEP): $(BIN) $(PEEP).c
 # 	$(Q)$(ARM_EXEC) rm $(PEEP).tmp
 # 	$(Q)$(ARM_EXEC) touch ./$(BIN)o
 
+cdb: $(BIN) cdb.c
+	$(VECHO) "  CC+LD\t\t$@\n"
+	$(Q)$(ARM_EXEC) ./$(BIN) -o cdb cdb.c
 
 ## Run tests and show message
 check: $(EXEC) $(TEST_OBJ)
