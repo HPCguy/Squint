@@ -13,6 +13,8 @@ an arm-linux-gnueabihf-gcc (cross) compiler installed.  Finally, see the
 "Discussion" tab above for instructions on using this compiler with an
 ARM Chromebook.
 
+A debugger has recently been added as outline [below](#debugger)
+
 > [!IMPORTANT]  
 > The mc compiler (extended version of AMaCC compiler) is relatively bug free.
 > That said, the optimizer that lives inside the compiler (squint) can be buggy,
@@ -422,6 +424,18 @@ void ComputeFaceInfo(int numFace, float *mass, float *momentum, float *energy,
 By the end of 2030, I expect to have automatic vectorization and/or parallelization working
 in my HPC compiler.  The HPC extensions/restrictions make it "natural" to manage
 parallel partitions, unlike the mess created by C standard semantics.
+
+## Debugger
+
+I have been unable to find a debugger that can debug MC ELF files.  Therefore, I
+wrote one.  The cdb debugger supports 'next', 'step', and 'continue' functionality.
+It will automatically stop at hard faults, or you can comple with the mc compiler
+using the "-d" command line option, and the debugger will stop in main.
+
+```
+$ ./mc-so -d -o assign tests/assign.c
+$ ./cdb assign
+```
 
 ## Prerequisites
 * This compiler project depends on several GNU/Linux behaviors, and it
