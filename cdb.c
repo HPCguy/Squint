@@ -36,6 +36,8 @@
 #define STDIN_FILENO  0
 #define STDOUT_FILENO 1
 
+#define O_RDONLY 0
+
 typedef int FILE;
 #define TIOCGWINSZ 21523
 
@@ -60,9 +62,7 @@ struct termios {
 #define ECHO     8
 #define VTIME    5
 #define VMIN     6
-#endif
 
-#ifdef __MC__
 typedef int pid_t;
 
 #define PTRACE_TRACEME     0
@@ -82,8 +82,8 @@ struct user_regs
 {
   ireg_t uregs[18];
 };
-
 #endif
+
 #ifndef __MC__
 typedef unsigned long ireg_t;
 #endif
@@ -363,20 +363,20 @@ int bp_toggle(pid_t child, char *bkpt_idx, ireg_t addr, int inst,
 //    This is the actual ptrace debugger
 //   ========================================================
 
-void debug(pid_t child, char *trace_executable_name) 
+void debug(pid_t child, char *trace_executable_name, ireg_t text_base_ptr)
 {
    int fp[96]; // stack window
    char oline[128];
    struct termios tty, tty2;
-   char hl[64];
+   char hl[64]; // highlights
    char format[32];
-   char **text = 0;
+   char **text = 0; // disassmebly lines
    int max_asm_width;
    struct user_regs iregs;
    int wait_status;
-   ireg_t text_base_ptr, curr_fp, curr_sp;
+   ireg_t curr_FP, curr_SP;
    int ub, lb;
-   int ll = 1;
+   int ll = 1; // line lock: 0 = move cursor, 1 = scroll
 
    // Run until bkpt instruction encountered
    waitpid(child, &wait_status, 0);
@@ -401,15 +401,13 @@ void debug(pid_t child, char *trace_executable_name)
       bp_info[i].flags = i+1;
    bp_info[MAX_BP-1].flags = -1;
 
-   // On ARM Linux, R6 contains text segment base address at this point
    ptrace(PTRACE_GETREGS, child, 0, &iregs);
-   text_base_ptr = iregs.uregs[6];
    ireg_t addr = iregs.uregs[15];
    int inst = ptrace(PTRACE_PEEKTEXT, child, addr, 0);
-   int ci = (addr - text_base_ptr) / sizeof(inst);
+   int ci = (addr - text_base_ptr) / sizeof(inst); // current instruction
 
    if (estat == SIGTRAP) { // BKPT_INST
-      // software breakpoint reached (cyan, continuable)
+      // software breakpoint reached (continuable)
       if (inst != BKPT_INST) {
          printf("Breakpoint was not set in executable.\n");
          return;
@@ -446,21 +444,39 @@ void debug(pid_t child, char *trace_executable_name)
    memcpy(&w[ASM_BP], &w[ASM_USR], sizeof(struct win));
    resize_fp_win(&w[FP]);
 
-   // iregs.uregs[13] is sp (before add fp, sp, #0 instr)
-   curr_fp = iregs.uregs[13]; // push {fp, lr} hasn't happened yet
+   curr_FP = iregs.uregs[11]; // push {fp, lr} hasn't happened yet
 
-   struct win *dw = &w[ASM_BP];  // disassembly window
-   struct win *fw = dw;           // set focus window for cursor
+   struct win *dw = &w[ll ? ASM_BP : ASM_USR]; // disassembly window
+   struct win *fw = dw;               // set focus window for cursor
    do {
-      curr_sp = iregs.uregs[13];
+      curr_SP = iregs.uregs[13];
       if (redraw) {
+         int hf[24]; // highlighted FPs
+         int nhf = 0;
          int asm_height = w[ASM_USR].lly - w[ASM_USR].uly + 1;
          // stack values automatically shown if window is wide enough
-         show_fp = (cns_width - max_asm_width) >= 16 || fw == &w[FP];
+         show_fp = curr_FP != 0 &&
+                   ((cns_width - max_asm_width) >= 16 || fw == &w[FP]);
 
-         if (show_fp)
-            get_frame_slice(child, fp, curr_fp-(asm_height+w[FP].uly)*4,
-                            asm_height);
+         if (show_fp) {
+            get_frame_slice(child, fp, curr_FP-(asm_height+w[FP].uly)*4,
+                            asm_height+1);
+
+            // highlight whole chain of frame pointers as long as
+            // current FP is included in the visible sliding window
+            int scan = (asm_height+w[FP].uly);
+            if (scan > 0 && scan < asm_height && fp[scan] != 0) {
+               hf[nhf++] = scan;
+               scan = (hf[nhf++] = scan + (fp[scan] - curr_FP)/4);
+               while(scan < asm_height && fp[scan] != 0 && nhf < 24) {
+                  scan = (hf[nhf] = scan + (fp[scan] - fp[hf[nhf-2]])/4);
+                  printf("%d\n", scan);
+                  ++nhf;
+               }
+               if (scan >= asm_height) --nhf;
+               --nhf; // set current highlight for later testing
+            }
+         }
 
          // clear screen, hide cursor
          sprintf(oline, "\e[H\e[2J\e[?25l");
@@ -475,7 +491,7 @@ void debug(pid_t child, char *trace_executable_name)
         
          int j = -w[FP].uly*4;
          int k = asm_height;
-         int ma = k*4 + curr_fp-(asm_height+w[FP].uly)*4;
+         int ma = k*4 + curr_FP-(asm_height+w[FP].uly)*4;
          for (int i = dw->uly; i <= dw->lly; ++i) {
             // handle disassembly window
             {
@@ -507,10 +523,14 @@ void debug(pid_t child, char *trace_executable_name)
                hl[0] = 0;
                if (j == -(w[FP].uly + w[FP].yoff)*4)
                   strcat(hl, "1;32"); // bright green fore
-               if (ma == curr_sp)
+               if (ma == curr_SP)
                   strcat(hl, hl[0] ? ";44" : "44"); // blue bkg
-               else if (ma == curr_fp)
+               else if (ma == curr_FP)
                   strcat(hl, hl[0] ? ";46" : "46"); // cyan bkg
+               else if (nhf > 0 && hf[nhf] == k) { // other frames
+                  strcat(hl, hl[0] ? ";43" : "43"); // yellow bkg
+                  --nhf;
+               }
                if (hl[0]) {
                   sprintf(oline, "\e[%sm", hl);
                   write(STDOUT_FILENO, oline, strlen(oline));
@@ -654,8 +674,8 @@ void debug(pid_t child, char *trace_executable_name)
          recenter_inst(&w[ASM_BP], ci);
 
          ptrace(PTRACE_GETREGS, child, 0, &iregs);
-         if (iregs.uregs[11] != 0 && curr_fp != iregs.uregs[11]) {
-            curr_fp = iregs.uregs[11];
+         if (iregs.uregs[11] != 0 && curr_FP != iregs.uregs[11]) {
+            curr_FP = iregs.uregs[11];
          }
          redraw = 1;
       }
@@ -696,8 +716,8 @@ bl_ret:
          // center ASM_BP window at current bkpt
          recenter_inst(&w[ASM_BP], ci);
 
-         if (iregs.uregs[11] != 0 && curr_fp != iregs.uregs[11]) {
-            curr_fp = iregs.uregs[11];
+         if (iregs.uregs[11] != 0 && curr_FP != iregs.uregs[11]) {
+            curr_FP = iregs.uregs[11];
          }
          redraw = 1;
       }
@@ -794,6 +814,13 @@ bl_ret:
    printf("\e[?25h\n"); // show cursor
    tcsetattr(STDIN_FILENO, TCSANOW, &tty);
    
+   if (text) { // free all allocated memory
+      for (int i=insts-1; i >= 0; --i) {
+         free(text[i]); text[i] = 0;
+      }
+      free(text); text = 0;
+   }
+
    if ((wait_status & 0x7f) == 0) { // Normal program exit
       printf("program %s ran to completion, exit status = %d\n",
          trace_executable_name, estat | ((estat & 0x80) ? 0xffffff00 : 0));
@@ -809,6 +836,14 @@ int main(int argc, char **argv)
       return 1;
    }
     
+   int elf_hdr[8];
+   int fd = open(argv[1], O_RDONLY);
+   if (fd == -1 || read(fd, elf_hdr, 32) != 32) {
+      printf("Could not read trace file, %s\n", argv[1]);
+      return 1;
+   }
+   close(fd);
+
    child = fork();
    if (child == 0) {
       // this scope executes the child process
@@ -825,7 +860,7 @@ int main(int argc, char **argv)
                args[4], args[5], args[6], args[7]);
       }
    } else { 
-      debug(child, argv[1]);
+      debug(child, argv[1], elf_hdr[6]);
    }
    return 0;
 }

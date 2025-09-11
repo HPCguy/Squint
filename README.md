@@ -13,7 +13,7 @@ an arm-linux-gnueabihf-gcc (cross) compiler installed.  Finally, see the
 "Discussion" tab above for instructions on using this compiler with an
 ARM Chromebook.
 
-A debugger has recently been added as outline [below](#debugger)
+A debugger has recently been added as outlined [below](#debugger)
 
 > [!IMPORTANT]  
 > The mc compiler (extended version of AMaCC compiler) is relatively bug free.
@@ -430,7 +430,7 @@ parallel partitions, unlike the mess created by C standard semantics.
 I have been unable to find a debugger that can debug MC ELF files.  Therefore, I
 wrote one.  The cdb debugger supports 'next', 'step', and 'continue' functionality.
 It will automatically stop at hard faults, or you can comple with the mc compiler
-using the "-d" command line option, and the debugger will stop in main.
+using the "-d" command line option, and the debugger will stop at top of main().
 
 ```
 $ ./mc-so -d -o assign tests/assign.c
