@@ -33,12 +33,12 @@
 //   =============================================
 
 #ifdef __MC__
+typedef int FILE;
 #define STDIN_FILENO  0
 #define STDOUT_FILENO 1
 
 #define O_RDONLY 0
 
-typedef int FILE;
 #define TIOCGWINSZ 21523
 
 typedef char   cc_t;
@@ -96,6 +96,7 @@ int cns_width, cns_height, cns_height_old, cns_width_old, show_fp;
 int win_flags = 33; // bit 0 = ireg, 1 = vfp regs, 2-3 = output (tri-state)
 int redraw = 1;
 int insts = 0;
+int resurrect_bp = -1;
 
 #define MAX_BP 120
 struct {
@@ -325,6 +326,15 @@ int bp_toggle(pid_t child, char *bkpt_idx, ireg_t addr, int inst,
               int bp_type, int admin) 
 {
    int bp_idx;
+   if (resurrect_bp != -1) {
+      if ((bp_info[resurrect_bp].flags & BP_SYS) == 0 &&
+          ptrace(PTRACE_POKETEXT, child,
+                 bp_info[resurrect_bp].addr, BKPT_INST) < 0) {
+         perror("PTRACE_POKETEXT set breakpoint error");
+         return 1;
+      }
+      resurrect_bp = -1;
+   }
    if (*bkpt_idx == 0) {
       *bkpt_idx = bp_free_head + 1;
       bp_idx = *bkpt_idx - 1;
@@ -338,23 +348,31 @@ int bp_toggle(pid_t child, char *bkpt_idx, ireg_t addr, int inst,
          perror("PTRACE_POKETEXT set breakpoint error");
          return 1;
       }
-      bp_info[bp_idx].flags = bp_type;
+      bp_info[bp_idx].flags = bp_type + ((bp_type & BP_SDB) ? 8 : 0);
    }
    else { // guaranteed admin == 0 here
       bp_idx = *bkpt_idx - 1;
-      bp_info[bp_idx].flags =
-         bp_info[bp_idx].flags & ~(bp_type & ~BP_SYS);
-      if (bp_info[bp_idx].flags == 0) { // close out bp
+      int bpf = bp_info[bp_idx].flags ;
+      bpf = (bpf & ~(bp_type & ~BP_SYS)) - ((bpf & BP_SDB) ? 8 : 0);
+      if ((bpf & 7) == 0) { // close out bp
          if (ptrace(PTRACE_POKETEXT, child,
                     bp_info[bp_idx].addr, bp_info[bp_idx].inst) < 0) {
             perror("PTRACE_POKETEXT restore inst at bkpt");
             return 1;
          }
-         bp_info[bp_idx].addr = 0; // mark as unused
-         bp_info[bp_idx].flags = bp_free_head;
-         bp_free_head = bp_idx;
-         *bkpt_idx = 0;
+         if (bpf & 0xf8) { // return from func-call not depleted yet
+            bp_info[bp_idx].flags =bpf | BP_SDB;
+            resurrect_bp = bp_idx;
+         }
+         else {
+            bp_info[bp_idx].addr = 0; // mark as unused
+            bp_info[bp_idx].flags = bp_free_head;
+            bp_free_head = bp_idx;
+            *bkpt_idx = 0;
+         }
       }
+      else
+         bp_info[bp_idx].flags = bpf;
    }
    return 0;
 }
@@ -470,7 +488,6 @@ void debug(pid_t child, char *trace_executable_name, ireg_t text_base_ptr)
                scan = (hf[nhf++] = scan + (fp[scan] - curr_FP)/4);
                while(scan < asm_height && fp[scan] != 0 && nhf < 24) {
                   scan = (hf[nhf] = scan + (fp[scan] - fp[hf[nhf-2]])/4);
-                  printf("%d\n", scan);
                   ++nhf;
                }
                if (scan >= asm_height) --nhf;
@@ -498,7 +515,7 @@ void debug(pid_t child, char *trace_executable_name, ireg_t text_base_ptr)
                int bp_flag = bkpt[i] ? bp_info[bkpt[i]-1].flags : 0;
                hl[0] = 0;
                // red should mean impassable fault (aka cont/run impossible)
-               if (i == dw->uly + dw->yoff)
+               if (fw != &w[FP] && i == dw->uly + dw->yoff)
                   strcat(hl, "1;32"); // bright green fore
                if (bp_flag & BP_SYS)
                   strcat(hl, hl[0] ? ";41" : "41"); // red bkg
@@ -521,7 +538,7 @@ void debug(pid_t child, char *trace_executable_name, ireg_t text_base_ptr)
             }
             if (show_fp) { // handle stack frame information
                hl[0] = 0;
-               if (j == -(w[FP].uly + w[FP].yoff)*4)
+               if (fw == &w[FP] && j == -(w[FP].uly + w[FP].yoff)*4)
                   strcat(hl, "1;32"); // bright green fore
                if (ma == curr_SP)
                   strcat(hl, hl[0] ? ";44" : "44"); // blue bkg
@@ -582,9 +599,17 @@ void debug(pid_t child, char *trace_executable_name, ireg_t text_base_ptr)
          fw = ((fw == dw) ? &w[FP] : dw);
          redraw = 1;
       }
-      else if (ch == '0' && fw == &w[FP]) { // move focus to FP
-         resize_fp_win(&w[FP]);
-         if (show_fp) redraw = 1;
+      else if (ch == '0') {
+         if (fw == &w[FP]) { // move focus to FP
+            resize_fp_win(&w[FP]);
+            if (show_fp) redraw = 1;
+         }
+         else if (fw == &w[ASM_USR]) {
+            if (memcmp(&w[ASM_USR], &w[ASM_BP], sizeof(struct win))) {
+               memcpy(&w[ASM_USR], &w[ASM_BP], sizeof(struct win));
+               redraw = 1;
+            }
+         }
       }
       else if ((ch == 'n' || ch == 's') &&  // 'next' or 'step' instruction
                (bp_info[bkpt[ci]-1].flags & BP_SYS) == 0) {
@@ -623,7 +648,8 @@ void debug(pid_t child, char *trace_executable_name, ireg_t text_base_ptr)
                   break;
             }
             else
-               bp_info[bkpt[ci+1]-1].flags |= BP_SDB;
+               bp_info[bkpt[ci+1]-1].flags =
+                  (bp_info[bkpt[ci+1]-1].flags + 8) | BP_SDB;
          }
          if (bt) {
             int offset =
@@ -701,8 +727,8 @@ bl_ret:
 
          if (((wait_status & 0xff) != 0x7f)) break; // normal termination
          else if (estat == SIGTRAP) {
-            bp_info[bkpt[ci]-1].flags |= BP_SDB ;
             inst = bp_info[bkpt[ci]-1].inst;
+            bp_info[bkpt[ci]-1].flags |= BP_SDB;
          }
          else { // not a bkpt, so serious error
             if (bkpt[ci] != 0 &&
@@ -835,7 +861,7 @@ int main(int argc, char **argv)
       printf("%s <executable to debug>\n", argv[0]);
       return 1;
    }
-    
+
    int elf_hdr[8];
    int fd = open(argv[1], O_RDONLY);
    if (fd == -1 || read(fd, elf_hdr, 32) != 32) {
