@@ -12,27 +12,10 @@ int hull_area(int *x, int *y)
     return ((area < 0) ? -area : area) / 2;
 }
 
-int lx = 1 << 31, ly = 1 << 31;
-
-void cubic_bezier(int *px, int *py, int threshold)
+void split_hull(int px[4], int py[4], int x[7], int y[7])
 {
-    if (hull_area(px, py) < threshold) {
-        for (int i = 0; i < 4; ++i) {
-            if (lx != px[i] || ly != py[i]) {
-                lx = px[i];
-                ly = py[i];
-                printf("(%d.%s, %d.%s)\n", lx / 8, frac[lx % 8], ly / 8,
-                       frac[ly % 8]);
-            }
-        }
-        return;
-    }
-
-    int tx, ty;
-    int x[7], y[7];
-
-    tx = (px[1] + px[2]) / 2;
-    ty = (py[1] + py[2]) / 2;
+    int tx = (px[1] + px[2]) / 2;
+    int ty = (py[1] + py[2]) / 2;
 
     x[0] = px[0];
     y[0] = py[0];
@@ -52,6 +35,28 @@ void cubic_bezier(int *px, int *py, int threshold)
     x[3] = (x[2] + x[4]) / 2;
     y[3] = (y[2] + y[4]) / 2;
 
+    return;
+}
+
+
+int lx = 1 << 31, ly = 1 << 31;
+
+void cubic_bezier(int *px, int *py, int threshold)
+{
+    if (hull_area(px, py) < threshold) {
+        for (int i = 0; i < 4; ++i) {
+            if (lx != px[i] || ly != py[i]) {
+                lx = px[i];
+                ly = py[i];
+                printf("(%d.%s, %d.%s)\n", lx / 8, frac[lx % 8], ly / 8,
+                       frac[ly % 8]);
+            }
+        }
+        return;
+    }
+
+    int x[7], y[7];
+    split_hull(px, py, x, y);
     cubic_bezier(x, y, threshold);
     cubic_bezier(&x[3], &y[3], threshold);
 }

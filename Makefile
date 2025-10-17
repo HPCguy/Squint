@@ -70,9 +70,9 @@ $(PEEP): $(BIN) $(PEEP).c
 # 	$(Q)$(ARM_EXEC) rm $(PEEP).tmp
 # 	$(Q)$(ARM_EXEC) touch ./$(BIN)o
 
-cdb: $(BIN) cdb.c
+cdb: $(BIN)-so cdb.c
 	$(VECHO) "  CC+LD\t\t$@\n"
-	$(Q)$(ARM_EXEC) ./$(BIN) -o cdb cdb.c
+	$(Q)$(ARM_EXEC) ./$(BIN)-so -o cdb cdb.c
 
 ## Run tests and show message
 check: $(EXEC) $(TEST_OBJ)
