@@ -1675,14 +1675,16 @@ void CalcMonotonicQGradientsForElems(Real_t *x, Real_t *y, Real_t *z,
                                      Index_t numElem)
 {
    for (Index_t i=0; i<numElem; ++i) {
-      Real_t ptiny = 1.0e-36;
-      Real_t  ax,  ay,  az;
-      Real_t dxv, dyv, dzv;
-      Real_t dxi, dyi, dzi;
-      Real_t dxj, dyj, dzj;
-      Real_t dxk, dyk, dzk;
+      Real_t ptiny := 1.0e-36;
+      Real_t ax1, ay1, az1;
+      Real_t ax2, ay2, az2;
+      Real_t ax3, ay3, az3;
 
-      Index_t *elemToNode = &nodelist[8*i];
+      Real_t dxv1, dyv1, dzv1;
+      Real_t dxv2, dyv2, dzv2;
+      Real_t dxv3, dyv3, dzv3;
+
+      Index_t *elemToNode = &nodelist[i*8];
       Index_t n0 := elemToNode[0];
       Index_t n1 := elemToNode[1];
       Index_t n2 := elemToNode[2];
@@ -1696,118 +1698,122 @@ void CalcMonotonicQGradientsForElems(Real_t *x, Real_t *y, Real_t *z,
       Real_t norm = ONE / ( vol + ptiny );
 
       {
-         Real_t x0 = x[n0];
-         Real_t x1 = x[n1];
-         Real_t x2 = x[n2];
-         Real_t x3 = x[n3];
-         Real_t x4 = x[n4];
-         Real_t x5 = x[n5];
-         Real_t x6 = x[n6];
-         Real_t x7 = x[n7];
+         Real_t dxi, dyi, dzi;
+         Real_t dxj, dyj, dzj;
+         Real_t dxk, dyk, dzk;
 
-         Real_t y0 = y[n0];
-         Real_t y1 = y[n1];
-         Real_t y2 = y[n2];
-         Real_t y3 = y[n3];
-         Real_t y4 = y[n4];
-         Real_t y5 = y[n5];
-         Real_t y6 = y[n6];
-         Real_t y7 = y[n7];
+         {
+            Real_t x0 = x[n0];
+            Real_t x1 = x[n1];
+            Real_t x2 = x[n2];
+            Real_t x3 = x[n3];
+            Real_t x4 = x[n4];
+            Real_t x5 = x[n5];
+            Real_t x6 = x[n6];
+            Real_t x7 = x[n7];
+            dxj = -0.25f*((x0 + x1 + x5 + x4) - (x3 + x2 + x6 + x7));
+            dxi = 0.25f*((x1 + x2 + x6 + x5) - (x0 + x3 + x7 + x4));
+            dxk = 0.25f*((x4 + x5 + x6 + x7) - (x0 + x1 + x2 + x3));
+         }
 
-         Real_t z0 = z[n0];
-         Real_t z1 = z[n1];
-         Real_t z2 = z[n2];
-         Real_t z3 = z[n3];
-         Real_t z4 = z[n4];
-         Real_t z5 = z[n5];
-         Real_t z6 = z[n6];
-         Real_t z7 = z[n7];
+         {
+            Real_t y0 = y[n0];
+            Real_t y1 = y[n1];
+            Real_t y2 = y[n2];
+            Real_t y3 = y[n3];
+            Real_t y4 = y[n4];
+            Real_t y5 = y[n5];
+            Real_t y6 = y[n6];
+            Real_t y7 = y[n7];
+            dyj = -0.25f*((y0 + y1 + y5 + y4) - (y3 + y2 + y6 + y7));
+            dyi = 0.25f*((y1 + y2 + y6 + y5) - (y0 + y3 + y7 + y4));
+            dyk = 0.25f*((y4 + y5 + y6 + y7) - (y0 + y1 + y2 + y3));
+         }
 
-         dxj = -0.25f*((x0 + x1 + x5 + x4) - (x3 + x2 + x6 + x7));
-         dyj = -0.25f*((y0 + y1 + y5 + y4) - (y3 + y2 + y6 + y7));
-         dzj = -0.25f*((z0 + z1 + z5 + z4) - (z3 + z2 + z6 + z7));
+         {
+            Real_t z0 = z[n0];
+            Real_t z1 = z[n1];
+            Real_t z2 = z[n2];
+            Real_t z3 = z[n3];
+            Real_t z4 = z[n4];
+            Real_t z5 = z[n5];
+            Real_t z6 = z[n6];
+            Real_t z7 = z[n7];
+            dzj = -0.25f*((z0 + z1 + z5 + z4) - (z3 + z2 + z6 + z7));
+            dzi = 0.25f*((z1 + z2 + z6 + z5) - (z0 + z3 + z7 + z4));
+            dzk = 0.25f*((z4 + z5 + z6 + z7) - (z0 + z1 + z2 + z3));
+         }
 
-         dxi = 0.25f*((x1 + x2 + x6 + x5) - (x0 + x3 + x7 + x4));
-         dyi = 0.25f*((y1 + y2 + y6 + y5) - (y0 + y3 + y7 + y4));
-         dzi = 0.25f*((z1 + z2 + z6 + z5) - (z0 + z3 + z7 + z4));
+         ax1 = dyi*dzj - dzi*dyj;
+         ay1 = dzi*dxj - dxi*dzj;
+         az1 = dxi*dyj - dyi*dxj;
 
-         dxk = 0.25f*((x4 + x5 + x6 + x7) - (x0 + x1 + x2 + x3));
-         dyk = 0.25f*((y4 + y5 + y6 + y7) - (y0 + y1 + y2 + y3));
-         dzk = 0.25f*((z4 + z5 + z6 + z7) - (z0 + z1 + z2 + z3));
+         ax2 = dyj*dzk - dzj*dyk;
+         ay2 = dzj*dxk - dxj*dzk;
+         az2 = dxj*dyk - dyj*dxk;
+
+         ax3 = dyk*dzi - dzk*dyi;
+         ay3 = dzk*dxi - dxk*dzi;
+         az3 = dxk*dyi - dyk*dxi;
+      }
+
+      {
+         Real_t xv0 = xd[n0];
+         Real_t xv1 = xd[n1];
+         Real_t xv2 = xd[n2];
+         Real_t xv3 = xd[n3];
+         Real_t xv4 = xd[n4];
+         Real_t xv5 = xd[n5];
+         Real_t xv6 = xd[n6];
+         Real_t xv7 = xd[n7];
+         dxv1 = 0.25f*((xv4 + xv5 + xv6 + xv7) - (xv0 + xv1 + xv2 + xv3));
+         dxv2 = 0.25f*((xv1 + xv2 + xv6 + xv5) - (xv0 + xv3 + xv7 + xv4));
+         dxv3 = -0.25f*((xv0 + xv1 + xv5 + xv4) - (xv3 + xv2 + xv6 + xv7));
+      }
+
+      {
+         Real_t yv0 = yd[n0];
+         Real_t yv1 = yd[n1];
+         Real_t yv2 = yd[n2];
+         Real_t yv3 = yd[n3];
+         Real_t yv4 = yd[n4];
+         Real_t yv5 = yd[n5];
+         Real_t yv6 = yd[n6];
+         Real_t yv7 = yd[n7];
+         dyv1 = 0.25f*((yv4 + yv5 + yv6 + yv7) - (yv0 + yv1 + yv2 + yv3));
+         dyv2 = 0.25f*((yv1 + yv2 + yv6 + yv5) - (yv0 + yv3 + yv7 + yv4));
+         dyv3 = -0.25f*((yv0 + yv1 + yv5 + yv4) - (yv3 + yv2 + yv6 + yv7));
+      }
+
+      {
+         Real_t zv0 = zd[n0];
+         Real_t zv1 = zd[n1];
+         Real_t zv2 = zd[n2];
+         Real_t zv3 = zd[n3];
+         Real_t zv4 = zd[n4];
+         Real_t zv5 = zd[n5];
+         Real_t zv6 = zd[n6];
+         Real_t zv7 = zd[n7];
+         dzv1 = 0.25f*((zv4 + zv5 + zv6 + zv7) - (zv0 + zv1 + zv2 + zv3));
+         dzv2 = 0.25f*((zv1 + zv2 + zv6 + zv5) - (zv0 + zv3 + zv7 + zv4));
+         dzv3 = -0.25f*((zv0 + zv1 + zv5 + zv4) - (zv3 + zv2 + zv6 + zv7));
       }
 
       /* find delvk and delxk ( i cross j ) */
 
-      ax = dyi*dzj - dzi*dyj;
-      ay = dzi*dxj - dxi*dzj;
-      az = dxi*dyj - dyi*dxj;
-
-      // i type and rhs type conflict?
-      delx_zeta[i] = ( vol / sqrtf( ax*ax + ay*ay + az*az + ptiny ) );
-
-      Real_t xv0 = xd[n0];
-      Real_t xv1 = xd[n1];
-      Real_t xv2 = xd[n2];
-      Real_t xv3 = xd[n3];
-      Real_t xv4 = xd[n4];
-      Real_t xv5 = xd[n5];
-      Real_t xv6 = xd[n6];
-      Real_t xv7 = xd[n7];
-
-      Real_t yv0 = yd[n0];
-      Real_t yv1 = yd[n1];
-      Real_t yv2 = yd[n2];
-      Real_t yv3 = yd[n3];
-      Real_t yv4 = yd[n4];
-      Real_t yv5 = yd[n5];
-      Real_t yv6 = yd[n6];
-      Real_t yv7 = yd[n7];
-
-      Real_t zv0 = zd[n0];
-      Real_t zv1 = zd[n1];
-      Real_t zv2 = zd[n2];
-      Real_t zv3 = zd[n3];
-      Real_t zv4 = zd[n4];
-      Real_t zv5 = zd[n5];
-      Real_t zv6 = zd[n6];
-      Real_t zv7 = zd[n7];
-
-      dxv = 0.25f*((xv4 + xv5 + xv6 + xv7) - (xv0 + xv1 + xv2 + xv3));
-      dyv = 0.25f*((yv4 + yv5 + yv6 + yv7) - (yv0 + yv1 + yv2 + yv3));
-      dzv = 0.25f*((zv4 + zv5 + zv6 + zv7) - (zv0 + zv1 + zv2 + zv3));
-
-      delv_zeta[i] = ( ax*dxv + ay*dyv + az*dzv ) * norm;
+      delx_zeta[i] = ( vol / sqrtf( ax1*ax1 + ay1*ay1 + az1*az1 + ptiny ) );
+      delv_zeta[i] = ( ax1*dxv1 + ay1*dyv1 + az1*dzv1 ) * norm;
 
       /* find delxi and delvi ( j cross k ) */
 
-      ax = dyj*dzk - dzj*dyk;
-      ay = dzj*dxk - dxj*dzk;
-      az = dxj*dyk - dyj*dxk;
-
-      delx_xi[i] = vol / sqrtf(ax*ax + ay*ay + az*az + ptiny);
-
-      dxv = 0.25f*((xv1 + xv2 + xv6 + xv5) - (xv0 + xv3 + xv7 + xv4));
-      dyv = 0.25f*((yv1 + yv2 + yv6 + yv5) - (yv0 + yv3 + yv7 + yv4));
-      dzv = 0.25f*((zv1 + zv2 + zv6 + zv5) - (zv0 + zv3 + zv7 + zv4));
-
-      delv_xi[i] = ( ax*dxv + ay*dyv + az*dzv ) * norm;
+      delx_xi[i] = vol / sqrtf(ax2*ax2 + ay2*ay2 + az2*az2 + ptiny);
+      delv_xi[i] = ( ax2*dxv2 + ay2*dyv2 + az2*dzv2 ) * norm;
 
       /* find delxj and delvj ( k cross i ) */
 
-      ax = dyk*dzi - dzk*dyi;
-      ay = dzk*dxi - dxk*dzi;
-      az = dxk*dyi - dyk*dxi;
-
-      delx_eta[i] = vol / sqrtf(ax*ax + ay*ay + az*az + ptiny);
-
-      dxv = -0.25f*((xv0 + xv1 + xv5 + xv4) - (xv3 + xv2 + xv6 + xv7));
-      dyv = -0.25f*((yv0 + yv1 + yv5 + yv4) - (yv3 + yv2 + yv6 + yv7));
-      dzv = -0.25f*((zv0 + zv1 + zv5 + zv4) - (zv3 + zv2 + zv6 + zv7));
-
-      // i is int type and ax is Real_t == mismatch
-      delv_eta[i] = ( ax*dxv + ay*dyv + az*dzv ) * norm;
+      delx_eta[i] = vol / sqrtf(ax3*ax3 + ay3*ay3 + az3*az3 + ptiny);
+      delv_eta[i] = ( ax3*dxv3 + ay3*dyv3 + az3*dzv3 ) * norm;
    }
-
 }
 
 void CalcMonotonicQRegionForElems(int *elemBC,
@@ -1961,7 +1967,7 @@ void CalcMonotonicQForElems(Domain *domain)
       //
       // initialize parameters
       // 
-       Real_t ptiny = 1.e-36;
+      Real_t ptiny := 1.e-36;
 
       CalcMonotonicQRegionForElems(
                            domain->elemBC,
